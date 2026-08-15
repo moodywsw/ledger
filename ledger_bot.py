@@ -22,6 +22,12 @@ What this does NOT do yet:
 Env vars required:
   HELIUS_API_KEY   - from https://helius.dev (free tier is fine to start)
 
+Optional:
+  ANTHROPIC_API_KEY - enables periodic market/trend research (see
+                       run_market_research below). Without it, that
+                       part is silently skipped — everything else
+                       still works.
+
 Install:
   pip install requests --break-system-packages
 """
@@ -40,6 +46,10 @@ HELIUS_API_KEY = os.environ.get("HELIUS_API_KEY", "")
 HELIUS_BASE_URL = "https://api.helius.xyz/v0"
 HELIUS_RPC_URL = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
 
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
+ANTHROPIC_MODEL = "claude-sonnet-4-6"
+
 # Discord webhook URL — this is Ledger's public voice. Get one from
 # a Discord channel: Edit Channel -> Integrations -> Webhooks -> New
 # Webhook -> Copy URL. Leave blank to run silently (console only).
@@ -55,29 +65,70 @@ WHALE_VALUE_USD_THRESHOLD = 100_000
 
 JUPITER_PRICE_API = "https://lite-api.jup.ag/price/v3"
 
+# Maps Helius's internal source codes to readable platform names —
+# without this, the "Source" field would show raw codes like
+# "PUMP_AMM" or worse, unrecognized values, instead of "Pump.fun".
+SOURCE_DISPLAY_NAMES = {
+    "PUMP_AMM": "Pump.fun",
+    "PUMPFUN": "Pump.fun",
+    "RAYDIUM": "Raydium",
+    "ORCA": "Orca",
+    "JUPITER": "Jupiter",
+    "METEORA": "Meteora",
+    "PHOENIX": "Phoenix",
+    "OPENBOOK": "OpenBook",
+}
+
+
+def get_source_display_name(source_code: str) -> str:
+    """Turns a raw Helius source code into a readable platform name."""
+    if not source_code:
+        return "Unknown Platform"
+    return SOURCE_DISPLAY_NAMES.get(
+        source_code.upper(),
+        source_code.replace("_", " ").title(),  # graceful fallback for unmapped codes
+    )
+
 # Wallets to watch now live in wallets.json, not here — edit that file
 # to add/remove/swap tracked traders without touching this code.
 WALLETS_CONFIG_FILE = Path("wallets.json")
 
 
-def speak(message: str, embed_extra: dict = None):
+# Consistent color palette for Ledger's Discord embeds
+COLOR_BUY = 0x3b82f6       # blue — new position opened
+COLOR_PROFIT = 0x22c55e    # green — profit taken/locked in
+COLOR_LOSS = 0xef4444      # red — stop-loss / losing close
+COLOR_NEUTRAL = 0x64748b   # slate — informational
+COLOR_STRONG_SIGNAL = 0xf59e0b  # amber — whale-backed thesis
+
+
+def speak(title: str, description: str, color: int = COLOR_NEUTRAL, fields: list = None):
     """
-    Ledger's public voice. Prints to console always, and — if
-    DISCORD_WEBHOOK_URL is configured — also posts to Discord under
-    his name/avatar. Silently skips Discord if not configured, so this
-    is safe to call everywhere without breaking anything.
+    Ledger's public voice. Always prints a plain-text line to the
+    console (for logs), and — if DISCORD_WEBHOOK_URL is configured —
+    posts a clean, consistently styled embed to Discord instead of
+    raw bracket-tagged text. Silently skips Discord if not configured.
     """
-    print(message)
+    print(f"{title} — {description}")
     if not DISCORD_WEBHOOK_URL:
         return
+
+    embed = {
+        "title": title,
+        "color": color,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    if description:
+        embed["description"] = description
+    if fields:
+        embed["fields"] = fields
+
     payload = {
         "username": LEDGER_DISCORD_NAME,
-        "content": message,
+        "embeds": [embed],
     }
     if LEDGER_DISCORD_AVATAR_URL:
         payload["avatar_url"] = LEDGER_DISCORD_AVATAR_URL
-    if embed_extra:
-        payload["embeds"] = [embed_extra]
     try:
         requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=10)
     except Exception as e:
@@ -90,20 +141,28 @@ def speak(message: str, embed_extra: dict = None):
 def load_wallets():
     """
     Loads the watchlist from wallets.json.
-    Returns (watched_wallets: list[str], wallet_handles: dict[str, str]).
+    Returns (watched_wallets, wallet_handles, priority_wallets):
+      - watched_wallets: list[str]
+      - wallet_handles: dict[str, str]
+      - priority_wallets: set[str] — wallets marked "priority": true in
+        the config get treated as maximum-conviction signals always,
+        regardless of portfolio value. Use this for traders whose
+        track record/influence is trusted independent of net worth
+        (e.g. a well-known figure whose calls move markets).
     """
     if not WALLETS_CONFIG_FILE.exists():
         print(f"[WARN] {WALLETS_CONFIG_FILE} not found — no wallets loaded.")
-        return [], {}
+        return [], {}, set()
 
     data = json.loads(WALLETS_CONFIG_FILE.read_text())
     entries = data.get("wallets", [])
     watched = [e["address"] for e in entries]
     handles = {e["address"]: e["handle"] for e in entries}
-    return watched, handles
+    priority = {e["address"] for e in entries if e.get("priority")}
+    return watched, handles, priority
 
 
-WATCHED_WALLETS, WALLET_HANDLES = load_wallets()
+WATCHED_WALLETS, WALLET_HANDLES, PRIORITY_WALLETS = load_wallets()
 
 # Poll interval — how often to check each wallet for new buys.
 # Kept conservative (2 min) to stay comfortably inside Helius's free
@@ -140,8 +199,10 @@ class PaperPosition:
     opened_at: str
     opened_by: str = ""  # wallet address that triggered this position
     symbol: str = ""  # resolved ticker/name, e.g. "$BONK" — may be empty if unresolved
+    risk_level: str = "🟡 High"  # 🟢 Lower (whale-backed) or 🟡 High (scout/unconfirmed)
     initial_recovered: bool = False   # has the original capital been sold back out?
-    next_scaleout_multiple: float = 2.0  # entry-price multiple for the next 25% trim
+    peak_price: float = 0.0  # highest price seen since initial capital was recovered — powers the trailing stop
+    is_narrative: bool = False  # matched an active viral narrative (see NARRATIVES_FILE) — gets a wider trailing stop
 
 
 @dataclass
@@ -287,6 +348,151 @@ def get_token_metadata(mint: str) -> dict:
         return {"symbol": "", "name": ""}
 
 
+# ── Market research (merged from the standalone market_intel.py) ─────
+#
+# This used to run as a separate Railway service. It's folded in here
+# instead because Railway doesn't share files between services — a
+# separate service writing market_intel.json couldn't be read by this
+# one anyway. Running it in the same process as the trading loop means
+# narrative detection below actually has real data to check against,
+# with no extra infrastructure. (If you still have a standalone
+# ledger-market-intel service running, it's now redundant — safe to
+# pause/delete it, since this replaces what it did.)
+
+INTEL_FILE = Path("market_intel.json")
+MAX_INTEL_ENTRIES_KEPT = 30
+MARKET_RESEARCH_EVERY_N_CYCLES = 120  # ~every 4 hours at 120s/cycle
+
+MARKET_RESEARCH_PROMPT = """You're researching the current state of the \
+Solana memecoin market for a trader persona named Ledger. Search for \
+what's happening RIGHT NOW — the last 24-48 hours — and summarize in \
+a tight, practical way:
+
+1. What's the overall market mood in the Solana trenches (risk-on / \
+risk-off / choppy)?
+2. Any narrative or "meta" that's clearly rotating in or out right now?
+3. Any major single events worth knowing (a big rug, a major KOL call, \
+a notable launch)?
+4. Any viral internet trend, meme, sound, phrase, or challenge right \
+now — on TikTok or elsewhere — that Solana memecoins are being named \
+after or riding. These often drive much larger and longer moves than \
+typical trenches narratives, since the audience comes from outside \
+crypto entirely — flag these as potential "gems" worth watching \
+closely rather than exiting early.
+
+Keep the whole summary under 200 words, dense factual notes, no \
+pleasantries. This feeds another AI as context, not a person.
+
+End with one extra line, exactly in this format (empty if nothing \
+qualifies): TREND_KEYWORDS: word1, word2, word3
+Short keywords/phrases tied to CURRENTLY viral trends that a token \
+name or symbol might reference — these are what mark a token as a
+potential narrative "gem" instead of a normal solo pump."""
+
+
+def extract_trend_keywords(summary: str) -> list:
+    for line in summary.splitlines():
+        if line.strip().upper().startswith("TREND_KEYWORDS:"):
+            raw = line.split(":", 1)[1].strip()
+            return [kw.strip() for kw in raw.split(",") if kw.strip()]
+    return []
+
+
+def run_market_research() -> str:
+    if not ANTHROPIC_API_KEY:
+        raise RuntimeError("ANTHROPIC_API_KEY not set — skipping market research.")
+    headers = {
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
+    payload = {
+        "model": ANTHROPIC_MODEL,
+        "max_tokens": 600,
+        "messages": [{"role": "user", "content": MARKET_RESEARCH_PROMPT}],
+        "tools": [{"type": "web_search_20250305", "name": "web_search"}],
+    }
+    resp = requests.post(ANTHROPIC_API_URL, headers=headers, json=payload, timeout=60)
+    resp.raise_for_status()
+    data = resp.json()
+    text_parts = [b["text"] for b in data.get("content", []) if b.get("type") == "text"]
+    return "\n".join(text_parts).strip()
+
+
+def save_market_intel(summary: str):
+    entries = []
+    if INTEL_FILE.exists():
+        try:
+            entries = json.loads(INTEL_FILE.read_text())
+        except json.JSONDecodeError:
+            entries = []
+    entries.append({
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "summary": summary,
+        "tiktok_keywords": extract_trend_keywords(summary),  # kept as tiktok_keywords for compatibility
+    })
+    entries = entries[-MAX_INTEL_ENTRIES_KEPT:]
+    INTEL_FILE.write_text(json.dumps(entries, indent=2))
+    print(f"Saved market research. Log now has {len(entries)} entries.")
+
+
+def do_market_research_pass():
+    """Runs one research pass and saves it — called periodically from main()."""
+    print("Ledger is researching the market for trend/gem signals...")
+    try:
+        summary = run_market_research()
+        print(f"\n{summary}\n")
+        save_market_intel(summary)
+    except Exception as e:
+        print(f"[ERROR] market research pass failed: {e}")
+
+
+# ── Narrative awareness ──────────────────────────────────────────────
+
+# Reads the same file market_intel.py writes to — its research pass
+# extracts TikTok-viral keywords and stores them in the latest entry.
+# One source of truth for narrative data, instead of a second file
+# that would need to stay in sync with it.
+NARRATIVES_FILE = Path("market_intel.json")
+
+# Narrative-driven tokens (a viral trend spreading across many launches
+# at once, especially TikTok-driven ones) behave very differently from
+# a normal solo pump — they can pull back hard and keep climbing,
+# since the whole crowd is still rotating in. A tight 20% trailing
+# stop would cut these far too early. This wider stop gives a genuine
+# narrative room to breathe.
+TRAILING_STOP_PCT_NARRATIVE = 0.40  # vs the normal 20% (TRAILING_STOP_PCT below)
+
+
+def check_is_narrative_token(name: str, symbol: str) -> bool:
+    """
+    Checks whether a token's name/symbol matches a TikTok-viral
+    keyword from market_intel.py's most recent research pass. Returns
+    False gracefully if that file doesn't exist yet (e.g.
+    market_intel.py hasn't run yet) or holds no matching keyword —
+    narrative detection is a bonus signal, never a requirement for
+    normal operation.
+    """
+    if not NARRATIVES_FILE.exists():
+        return False
+    try:
+        entries = json.loads(NARRATIVES_FILE.read_text())
+    except json.JSONDecodeError:
+        return False
+    if not entries:
+        return False
+
+    keywords = entries[-1].get("tiktok_keywords", [])
+    if not keywords:
+        return False
+
+    combined = f"{name} {symbol}".lower()
+    for keyword in keywords:
+        if keyword.lower() in combined:
+            return True
+    return False
+
+
 # ── Wallet watching ──────────────────────────────────────────────────
 
 def get_wallet_transactions(wallet_address: str, limit: int = 10):
@@ -349,18 +555,22 @@ def generate_thesis(token: str, wallet: str, signal_strength: str) -> str:
     (e.g. the Anthropic API) once you want genuinely reasoned theses
     instead of templated ones — this keeps the scaffold runnable
     without an extra API dependency for now.
+
+    Tone: polished, professional trader — precise language, correct
+    grammar, sparing and purposeful emoji use. Confident without slang.
     """
     name = WALLET_HANDLES.get(wallet, wallet[:6] + "...")
     templates = {
         "strong": (
-            f"{name} just aped into ${token} and this wallet's "
-            f"been right more than wrong. Volume's confirming, not just "
-            f"one guy's bag. Sizing in — scout position, not full send."
+            f"{name} has taken a position here, and this wallet's track record commands attention. "
+            f"The accompanying volume supports genuine demand rather than an isolated purchase. "
+            f"I am allocating a measured position — scouting the opportunity rather than committing in full, "
+            f"until the thesis proves out further. 📈"
         ),
         "weak": (
-            f"{name} bought ${token} but it's a thin signal on "
-            f"its own. Watching, not touching yet — need volume or a "
-            f"second wallet to confirm before I'm in."
+            f"{name} has entered a position, though the signal remains thin on its own. "
+            f"I am monitoring closely and will require confirming volume, or a second wallet acting in concert, "
+            f"before committing capital. 🔍"
         ),
     }
     return templates.get(signal_strength, templates["weak"])
@@ -384,7 +594,7 @@ def can_open_position(state: LedgerState, size_sol: float) -> tuple[bool, str]:
     return True, "ok"
 
 
-def open_paper_position(state: LedgerState, token: str, price: float, size_sol: float, opened_by: str = ""):
+def open_paper_position(state: LedgerState, token: str, price: float, size_sol: float, opened_by: str = "", strength: str = "weak"):
     ok, reason = can_open_position(state, size_sol)
     if not ok:
         print(f"[BLOCKED] {token}: {reason}")
@@ -392,6 +602,8 @@ def open_paper_position(state: LedgerState, token: str, price: float, size_sol: 
 
     metadata = get_token_metadata(token)
     symbol = f"${metadata['symbol']}" if metadata.get("symbol") else ""
+    risk_level = "🟢 Lower Risk (whale-backed)" if strength == "strong" else "🟡 High Risk (scout)"
+    is_narrative = check_is_narrative_token(metadata.get("name", ""), metadata.get("symbol", ""))
 
     state.balance_sol -= size_sol
     state.open_positions[token] = PaperPosition(
@@ -401,6 +613,8 @@ def open_paper_position(state: LedgerState, token: str, price: float, size_sol: 
         opened_at=datetime.now(timezone.utc).isoformat(),
         opened_by=opened_by,
         symbol=symbol,
+        risk_level=risk_level,
+        is_narrative=is_narrative,
     ).__dict__
     state.trades_this_hour.append(time.time())
     state.trade_log.append({
@@ -413,11 +627,20 @@ def open_paper_position(state: LedgerState, token: str, price: float, size_sol: 
         "at": datetime.now(timezone.utc).isoformat(),
     })
     display_name = symbol if symbol else token
-    speak(f"[PAPER OPEN] {display_name} @ {price} size {size_sol} SOL")
+    narrative_tag = "\n🌊 **Narrative Play** — wider trailing stop applied" if is_narrative else ""
+    speak(
+        title=f"{display_name} — Position Opened",
+        description=(
+            f"**Risk:** {risk_level}\n"
+            f"**Entry:** ${price:.6g}  •  **Size:** {size_sol} SOL{narrative_tag}"
+        ),
+        color=COLOR_BUY,
+        fields=[{"name": "CA", "value": token, "inline": False}],
+    )
     state.save()
 
 
-def partial_close_paper_position(state: LedgerState, token: str, exit_price: float, fraction: float):
+def partial_close_paper_position(state: LedgerState, token: str, exit_price: float, fraction: float, reason: str = "✂️ Scaled Out"):
     """
     Sells a FRACTION of the current remaining position, not the whole
     thing — used for scaling out (recover initial capital, then trim
@@ -439,9 +662,19 @@ def partial_close_paper_position(state: LedgerState, token: str, exit_price: flo
         "exit_price": exit_price,
         "fraction_sold": fraction,
         "pnl_sol": pnl,
+        "risk_level": pos.get("risk_level", ""),
         "at": datetime.now(timezone.utc).isoformat(),
     })
-    speak(f"[SCALE OUT] {token} @ {exit_price} sold {fraction:.0%} of position, pnl {pnl:+.4f} SOL, {pos['size_sol']:.4f} SOL remaining")
+    display_name = pos.get("symbol") or token
+    speak(
+        title=f"{display_name} — {reason}",
+        description=(
+            f"**Sold:** {fraction:.0%} of position at ${exit_price:.6g}\n"
+            f"**PnL:** {pnl:+.4f} SOL  •  **Remaining:** {pos['size_sol']:.4f} SOL"
+        ),
+        color=COLOR_PROFIT if pnl >= 0 else COLOR_LOSS,
+        fields=[{"name": "CA", "value": token, "inline": False}],
+    )
 
     if pos["size_sol"] < 0.001:  # fully drained — close it out entirely
         del state.open_positions[token]
@@ -450,7 +683,7 @@ def partial_close_paper_position(state: LedgerState, token: str, exit_price: flo
     state.save()
 
 
-def close_paper_position(state: LedgerState, token: str, exit_price: float):
+def close_paper_position(state: LedgerState, token: str, exit_price: float, reason: str = None):
     pos = state.open_positions.pop(token, None)
     if not pos:
         return
@@ -462,29 +695,47 @@ def close_paper_position(state: LedgerState, token: str, exit_price: float):
         "token": token,
         "exit_price": exit_price,
         "pnl_sol": pnl,
+        "risk_level": pos.get("risk_level", ""),
         "at": datetime.now(timezone.utc).isoformat(),
     })
-    speak(f"[PAPER CLOSE] {token} @ {exit_price} pnl {pnl:+.4f} SOL")
+    display_name = pos.get("symbol") or token
+    status = reason or ("✅ Position Closed" if pnl >= 0 else "❌ Position Closed")
+    speak(
+        title=f"{display_name} — {status}",
+        description=(
+            f"**Exit:** ${exit_price:.6g}  •  **PnL:** {pnl:+.4f} SOL"
+        ),
+        color=COLOR_PROFIT if pnl >= 0 else COLOR_LOSS,
+        fields=[{"name": "CA", "value": token, "inline": False}],
+    )
     state.save()
 
 
 # Exit rules — coherent with Ledger's "balanced" persona: cuts losers
-# fast, recovers initial capital early, then lets the rest ride and
-# trims into strength instead of an all-or-nothing exit.
-STOP_LOSS_PCT = -0.25            # close everything if down 25%
+# fast, recovers initial capital early, then lets the rest ride with a
+# TRAILING stop instead of a fixed profit target. There's no hard
+# ceiling on the upside — a trailing stop locks in gains only once
+# momentum genuinely reverses, rather than capping wins at an
+# arbitrary "sell at 2x/4x" ladder. This is the "profit-taker, not
+# moonbag-holder" behavior: it never sells purely because a price
+# level was hit, only because the position gave back real ground.
+STOP_LOSS_PCT = -0.25            # close everything if down 25% from entry
 INITIAL_RECOVERY_PCT = 0.40      # at +40%, sell enough to recoup the original capital
-SCALEOUT_FRACTION = 0.25         # after that, trim 25% of what's left at each further 2x
+TRAILING_STOP_PCT = 0.20         # after that, close if price pulls back 20% from its peak
 
 
 def check_open_positions(state: LedgerState):
     """
     Checks every open paper position against current price and applies
     the staged exit strategy:
-      1. Stop-loss: down 25% -> close the whole thing, no hesitation.
+      1. Stop-loss: down 25% from entry -> close the whole thing.
       2. At +40%: sell just enough to recover the original capital
          (position keeps running "on house money" after this).
-      3. From there, every further 2x (from entry price) -> trim 25%
-         of whatever's left, letting a trimmed core keep riding.
+      3. From there: track the highest price seen (the "peak"). If
+         price pulls back 20% from that peak, close what's left. No
+         fixed take-profit level — a position at 3x can keep running
+         to 10x as long as it doesn't give back 20% off its high; it
+         only exits when momentum actually breaks.
     Run this every cycle so positions aren't left unmonitored.
     """
     if not state.open_positions:
@@ -505,8 +756,7 @@ def check_open_positions(state: LedgerState):
         EPSILON = 1e-9  # avoids floating-point precision misses at exact thresholds
 
         if change_pct <= STOP_LOSS_PCT + EPSILON:
-            speak(f"[STOP LOSS] {mint} down {change_pct:.1%}, cutting it — no hesitation.")
-            close_paper_position(state, mint, current_price)
+            close_paper_position(state, mint, current_price, reason="🛑 Stop Loss")
             continue
 
         if not pos["initial_recovered"]:
@@ -516,20 +766,27 @@ def check_open_positions(state: LedgerState):
                 # the position returns exactly the initial size_sol.
                 current_multiple = 1 + change_pct
                 fraction_to_recover_capital = 1 / current_multiple
-                speak(f"[INITIAL OUT] {mint} up {change_pct:.1%} — pulling the initial capital back out.")
-                partial_close_paper_position(state, mint, current_price, fraction_to_recover_capital)
+                partial_close_paper_position(
+                    state, mint, current_price, fraction_to_recover_capital,
+                    reason="💰 Capital Recovered"
+                )
                 if mint in state.open_positions:
                     state.open_positions[mint]["initial_recovered"] = True
-                    state.open_positions[mint]["next_scaleout_multiple"] = 2.0
+                    state.open_positions[mint]["peak_price"] = current_price
                     state.save()
         else:
-            next_multiple = pos["next_scaleout_multiple"]
-            if current_price >= pos["entry_price"] * next_multiple - EPSILON:
-                speak(f"[SCALEOUT TRIGGER] {mint} hit {next_multiple}x entry — trimming 25% of what's left.")
-                partial_close_paper_position(state, mint, current_price, SCALEOUT_FRACTION)
-                if mint in state.open_positions:
-                    state.open_positions[mint]["next_scaleout_multiple"] = next_multiple * 2
-                    state.save()
+            peak_price = max(pos.get("peak_price", 0) or 0, current_price)
+            if peak_price != pos.get("peak_price"):
+                state.open_positions[mint]["peak_price"] = peak_price
+                state.save()
+
+            applicable_trailing_pct = TRAILING_STOP_PCT_NARRATIVE if pos.get("is_narrative") else TRAILING_STOP_PCT
+            pullback_from_peak = (peak_price - current_price) / peak_price
+            if pullback_from_peak >= applicable_trailing_pct - EPSILON:
+                reason = "📉 Trailing Stop — Profit Locked"
+                if pos.get("is_narrative"):
+                    reason = "📉 Narrative Trailing Stop — Profit Locked"
+                close_paper_position(state, mint, current_price, reason=reason)
 
 
 # ── Real execution (disabled — future step, not wired up yet) ───────
@@ -549,6 +806,107 @@ def execute_real_trade(*args, **kwargs):
     # sign with the bot's dedicated wallet keypair, send via RPC.
 
 
+# ── Performance analysis — "learning from losses" ────────────────────
+
+MONTHLY_PROFIT_GOAL_USD = 500  # paper-trading target — see note in recap message
+PERFORMANCE_RECAP_EVERY_N_CYCLES = 720  # ~once/day at 120s/cycle
+
+
+def compute_performance_stats(state: LedgerState) -> dict:
+    """
+    Analyzes closed/partial-closed trades to answer the question that
+    actually matters: is this working, and for which kind of signal?
+    This is what "learning from losses" means in practice here — not
+    a black-box that rewires itself, but real numbers Ledger (and you)
+    can look at and use to judge whether whale-backed signals are
+    actually outperforming scout plays, or whether the strategy needs
+    to change.
+    """
+    exits = [t for t in state.trade_log if t["action"] in ("close", "partial_close")]
+    if not exits:
+        return {"total_exits": 0}
+
+    def win_rate(entries):
+        if not entries:
+            return None
+        wins = sum(1 for t in entries if t["pnl_sol"] > 0)
+        return wins / len(entries) * 100
+
+    whale_exits = [t for t in exits if "Lower Risk" in t.get("risk_level", "")]
+    scout_exits = [t for t in exits if "Lower Risk" not in t.get("risk_level", "")]
+
+    return {
+        "total_exits": len(exits),
+        "win_rate_pct": win_rate(exits),
+        "whale_win_rate_pct": win_rate(whale_exits),
+        "whale_exit_count": len(whale_exits),
+        "scout_win_rate_pct": win_rate(scout_exits),
+        "scout_exit_count": len(scout_exits),
+        "total_pnl_sol": sum(t["pnl_sol"] for t in exits),
+    }
+
+
+def get_month_start_iso() -> str:
+    now = datetime.now(timezone.utc)
+    return datetime(now.year, now.month, 1, tzinfo=timezone.utc).isoformat()
+
+
+def compute_monthly_pnl_usd(state: LedgerState, sol_price_usd: float) -> float:
+    """
+    Sums realized PnL from trade_log entries dated within the current
+    calendar month, converted to USD — this is what gets compared
+    against MONTHLY_PROFIT_GOAL_USD. Paper trading only for now; this
+    tracks whether the STRATEGY would be on pace for the goal, not
+    real money.
+    """
+    month_start = get_month_start_iso()
+    monthly_pnl_sol = sum(
+        t["pnl_sol"] for t in state.trade_log
+        if t["action"] in ("close", "partial_close") and t.get("at", "") >= month_start
+    )
+    return monthly_pnl_sol * sol_price_usd
+
+
+def post_performance_recap(state: LedgerState):
+    """
+    Posts a periodic honest report card to Discord: win rate overall
+    and by signal type, plus progress toward the $500/month paper
+    goal. This is the surfacing half of "learning from losses" — the
+    other half is you (or a future automated step) actually adjusting
+    strategy based on what this shows, e.g. sizing down scout plays
+    further if their win rate stays well below whale-backed ones.
+    """
+    stats = compute_performance_stats(state)
+    if stats["total_exits"] == 0:
+        return  # nothing closed yet — nothing to report
+
+    sol_prices = get_token_prices_usd([SOL_MINT])
+    sol_price_usd = sol_prices.get(SOL_MINT, 0)
+    monthly_pnl_usd = compute_monthly_pnl_usd(state, sol_price_usd) if sol_price_usd else None
+
+    lines = [
+        f"**Overall win rate:** {stats['win_rate_pct']:.0f}% ({stats['total_exits']} exits)",
+    ]
+    if stats["whale_win_rate_pct"] is not None:
+        lines.append(f"**Whale-backed win rate:** {stats['whale_win_rate_pct']:.0f}% ({stats['whale_exit_count']} exits)")
+    if stats["scout_win_rate_pct"] is not None:
+        lines.append(f"**Scout win rate:** {stats['scout_win_rate_pct']:.0f}% ({stats['scout_exit_count']} exits)")
+    lines.append(f"**Total realized PnL:** {stats['total_pnl_sol']:+.4f} SOL")
+
+    if monthly_pnl_usd is not None:
+        progress_pct = max(0, monthly_pnl_usd) / MONTHLY_PROFIT_GOAL_USD * 100
+        lines.append(
+            f"\n**Monthly goal progress:** ${monthly_pnl_usd:+.2f} / ${MONTHLY_PROFIT_GOAL_USD} "
+            f"({progress_pct:.0f}%) — paper trading, not real funds yet"
+        )
+
+    speak(
+        title="📊 Performance Recap",
+        description="\n".join(lines),
+        color=COLOR_PROFIT if stats["total_pnl_sol"] >= 0 else COLOR_LOSS,
+    )
+
+
 # ── Main loop ─────────────────────────────────────────────────────────
 
 def main():
@@ -562,7 +920,7 @@ def main():
         cycle_count += 1
 
         # Reload every cycle — edit wallets.json anytime, no restart needed
-        watched_wallets, wallet_handles = load_wallets()
+        watched_wallets, wallet_handles, priority_wallets = load_wallets()
         globals()["WALLET_HANDLES"] = wallet_handles  # generate_thesis() reads this
 
         if not watched_wallets:
@@ -580,6 +938,19 @@ def main():
                 tag = " [WHALE]" if wallet in whale_wallets else ""
                 print(f"  {handle}: ${val:,.0f}{tag}")
 
+        # Performance recap — the "learning from losses" surfacing step
+        if cycle_count % PERFORMANCE_RECAP_EVERY_N_CYCLES == 0:
+            try:
+                post_performance_recap(state)
+            except Exception as e:
+                print(f"[ERROR] performance recap failed: {e}")
+
+        # Market/trend research — powers narrative ("gem") detection above.
+        # Runs on cycle 1 too, so there's data available from the start
+        # instead of waiting 4 hours for the first pass.
+        if ANTHROPIC_API_KEY and (cycle_count == 1 or cycle_count % MARKET_RESEARCH_EVERY_N_CYCLES == 0):
+            do_market_research_pass()
+
         for wallet in watched_wallets:
             try:
                 txs = get_wallet_transactions(wallet)
@@ -590,19 +961,34 @@ def main():
                     state.seen_signatures.append(buy["signature"])
 
                     token = buy["mint"]
-                    strength = "strong" if wallet in whale_wallets else "weak"
+                    is_priority = wallet in priority_wallets
+                    strength = "strong" if (is_priority or wallet in whale_wallets) else "weak"
                     thesis = generate_thesis(token, wallet, strength)
 
-                    embed = {
-                        "title": f"New thesis {'💎' if strength == 'strong' else '👀'}",
-                        "description": thesis,
-                        "color": 0x22c55e if strength == "strong" else 0x94a3b8,
-                        "fields": [
-                            {"name": "Mint", "value": token, "inline": False},
-                            {"name": "Signal", "value": strength, "inline": True},
+                    metadata = get_token_metadata(token)
+                    display_symbol = f"${metadata['symbol']}" if metadata.get("symbol") else token[:6] + "..."
+                    if is_priority:
+                        risk_level = "🔵 Priority Trader — Maximum Conviction"
+                    else:
+                        risk_level = "🟢 Lower Risk (whale-backed)" if strength == "strong" else "🟡 High Risk (scout)"
+                    trader_name = WALLET_HANDLES.get(wallet, wallet[:6] + "...")  # "..." kept for unknown handles
+                    platform_name = get_source_display_name(buy["source"])
+
+                    additional_message = (
+                        f"**Risk Assessment:** {risk_level}\n"
+                        f"**Trader:** {trader_name}  •  **Platform:** {platform_name}"
+                    )
+
+                    speak(
+                        title=f"📊 {display_symbol}",
+                        description="",
+                        color=COLOR_STRONG_SIGNAL if strength == "strong" else COLOR_NEUTRAL,
+                        fields=[
+                            {"name": "CA:", "value": f"`{token}`", "inline": False},
+                            {"name": "🧠 Thesis", "value": thesis, "inline": False},
+                            {"name": "ℹ️ Additional Notes", "value": additional_message, "inline": False},
                         ],
-                    }
-                    speak(f"[THESIS] {thesis}\n  mint: {token} | amount: {buy['amount']} | source: {buy['source']}", embed_extra=embed)
+                    )
 
                     prices = get_token_prices_usd([token])
                     entry_price = prices.get(token)
@@ -613,7 +999,7 @@ def main():
                     # Whale-backed signals get sized bigger; everything
                     # else is a small scout position, capped either way.
                     size_sol = min(0.2 if strength == "strong" else 0.05, MAX_POSITION_SOL)
-                    open_paper_position(state, token, entry_price, size_sol, opened_by=wallet)
+                    open_paper_position(state, token, entry_price, size_sol, opened_by=wallet, strength=strength)
             except Exception as e:
                 print(f"[ERROR] wallet {wallet}: {e}")
             time.sleep(0.3)  # spread requests out across the cycle

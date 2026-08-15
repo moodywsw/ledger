@@ -32,6 +32,7 @@
     {"handle": "nfd", "address": "BvoCFJSmrUKn37nYiEMW6CJxb9ogPRmS4fqVbuhinWQq"},
     {"handle": "GuavaGuy2001", "address": "C481ZKiw4TZGs4EjNkhm6TB7s17swzmqAmCcNm73vGnW"},
     {"handle": "Notepad_H", "address": "FY919jJnaRo55UZ3H9cnm1xKi9pyEG2m2oSakBifx5PN"},
-    {"handle": "surveillor", "address": "G2vhbPCG5jAbBjFCJnLBbGJco93r3iw1WuvL8csvJMD"}
+    {"handle": "surveillor", "address": "G2vhbPCG5jAbBjFCJnLBbGJco93r3iw1WuvL8csvJMD"},
+    {"handle": "ansem", "address": "GV6UUmNxz2RpKxmNAPadYKb7uQpszwqQAu3qLJxVdC52", "priority": true}
   ]
 }
