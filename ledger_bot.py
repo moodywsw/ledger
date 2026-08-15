@@ -106,26 +106,33 @@ def speak(title: str, description: str, color: int = COLOR_NEUTRAL, fields: list
     """
     Ledger's public voice. Always prints a plain-text line to the
     console (for logs), and — if DISCORD_WEBHOOK_URL is configured —
-    posts a clean, consistently styled embed to Discord instead of
-    raw bracket-tagged text. Silently skips Discord if not configured.
+    posts a normal Discord message (not an embed/card) built from
+    markdown, in the requested layout: bold title, then each field
+    as its own bold-labeled section. `color` is accepted but unused
+    for Discord now (plain messages have no color) — kept so callers
+    don't need changes.
     """
     print(f"{title} — {description}")
+
+    lines = [f"**{title}**"]
+    if description:
+        lines.append(description)
+    if fields:
+        for f in fields:
+            lines.append(f"**{f['name']}**\n{f['value']}")
+    text = "\n\n".join(lines)
+
     if not DISCORD_WEBHOOK_URL:
         return
 
-    embed = {
-        "title": title,
-        "color": color,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-    if description:
-        embed["description"] = description
-    if fields:
-        embed["fields"] = fields
+    # Discord's message content cap is 2000 chars — trim defensively
+    # so an unusually long thesis can't silently fail to send.
+    if len(text) > 1990:
+        text = text[:1987] + "..."
 
     payload = {
         "username": LEDGER_DISCORD_NAME,
-        "embeds": [embed],
+        "content": text,
     }
     if LEDGER_DISCORD_AVATAR_URL:
         payload["avatar_url"] = LEDGER_DISCORD_AVATAR_URL
@@ -198,7 +205,7 @@ class PaperPosition:
     size_sol: float
     opened_at: str
     opened_by: str = ""  # wallet address that triggered this position
-    symbol: str = ""  # resolved ticker/name, e.g. "$BONK" — may be empty if unresolved
+    symbol: str = ""  # resolved ticker/name, e.g. "BONK" (no $ prefix) — may be empty if unresolved
     risk_level: str = "🟡 High"  # 🟢 Lower (whale-backed) or 🟡 High (scout/unconfirmed)
     initial_recovered: bool = False   # has the original capital been sold back out?
     peak_price: float = 0.0  # highest price seen since initial capital was recovered — powers the trailing stop
@@ -601,7 +608,7 @@ def open_paper_position(state: LedgerState, token: str, price: float, size_sol: 
         return
 
     metadata = get_token_metadata(token)
-    symbol = f"${metadata['symbol']}" if metadata.get("symbol") else ""
+    symbol = metadata.get("symbol", "")  # no "$" prefix — avoids triggering another bot's ticker auto-detection
     risk_level = "🟢 Lower Risk (whale-backed)" if strength == "strong" else "🟡 High Risk (scout)"
     is_narrative = check_is_narrative_token(metadata.get("name", ""), metadata.get("symbol", ""))
 
@@ -632,7 +639,7 @@ def open_paper_position(state: LedgerState, token: str, price: float, size_sol: 
         title=f"{display_name} — Position Opened",
         description=(
             f"**Risk:** {risk_level}\n"
-            f"**Entry:** ${price:.6g}  •  **Size:** {size_sol} SOL{narrative_tag}"
+            f"**Entry:** {price:.6g} USD  •  **Size:** {size_sol} SOL{narrative_tag}"
         ),
         color=COLOR_BUY,
         fields=[{"name": "CA", "value": token, "inline": False}],
@@ -669,7 +676,7 @@ def partial_close_paper_position(state: LedgerState, token: str, exit_price: flo
     speak(
         title=f"{display_name} — {reason}",
         description=(
-            f"**Sold:** {fraction:.0%} of position at ${exit_price:.6g}\n"
+            f"**Sold:** {fraction:.0%} of position at {exit_price:.6g} USD\n"
             f"**PnL:** {pnl:+.4f} SOL  •  **Remaining:** {pos['size_sol']:.4f} SOL"
         ),
         color=COLOR_PROFIT if pnl >= 0 else COLOR_LOSS,
@@ -703,7 +710,7 @@ def close_paper_position(state: LedgerState, token: str, exit_price: float, reas
     speak(
         title=f"{display_name} — {status}",
         description=(
-            f"**Exit:** ${exit_price:.6g}  •  **PnL:** {pnl:+.4f} SOL"
+            f"**Exit:** {exit_price:.6g} USD  •  **PnL:** {pnl:+.4f} SOL"
         ),
         color=COLOR_PROFIT if pnl >= 0 else COLOR_LOSS,
         fields=[{"name": "CA", "value": token, "inline": False}],
@@ -896,7 +903,7 @@ def post_performance_recap(state: LedgerState):
     if monthly_pnl_usd is not None:
         progress_pct = max(0, monthly_pnl_usd) / MONTHLY_PROFIT_GOAL_USD * 100
         lines.append(
-            f"\n**Monthly goal progress:** ${monthly_pnl_usd:+.2f} / ${MONTHLY_PROFIT_GOAL_USD} "
+            f"\n**Monthly goal progress:** {monthly_pnl_usd:+.2f} / {MONTHLY_PROFIT_GOAL_USD} USD "
             f"({progress_pct:.0f}%) — paper trading, not real funds yet"
         )
 
@@ -966,7 +973,7 @@ def main():
                     thesis = generate_thesis(token, wallet, strength)
 
                     metadata = get_token_metadata(token)
-                    display_symbol = f"${metadata['symbol']}" if metadata.get("symbol") else token[:6] + "..."
+                    display_symbol = metadata.get("symbol") or token[:6] + "..."  # no "$" — avoids triggering another bot
                     if is_priority:
                         risk_level = "🔵 Priority Trader — Maximum Conviction"
                     else:
