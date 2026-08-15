@@ -22,8 +22,7 @@ Install:
   pip install requests --break-system-packages
 
 Usage:
-  python3 market_intel.py          # run once
-  (set up a Scheduled Deployment in Replit to run this every few hours)
+  python3 market_intel.py          # runs forever, researching every 4 hours
 """
 
 import os
@@ -39,6 +38,7 @@ MODEL = "claude-sonnet-4-6"
 
 INTEL_FILE = Path("market_intel.json")
 MAX_ENTRIES_KEPT = 30  # keep the log from growing forever — rolls off old entries
+RESEARCH_INTERVAL_SECONDS = 4 * 60 * 60  # how often to run a fresh research pass
 
 RESEARCH_PROMPT = """You're researching the current state of the Solana \
 memecoin market for a trader persona named Ledger. Search for what's \
@@ -108,10 +108,13 @@ def get_latest_intel(n: int = 3) -> list:
 
 
 if __name__ == "__main__":
-    print("Ledger is researching the market...")
-    try:
-        summary = run_research()
-        print(f"\n{summary}\n")
-        save_finding(summary)
-    except Exception as e:
-        print(f"[ERROR] research run failed: {e}")
+    while True:
+        print("Ledger is researching the market...")
+        try:
+            summary = run_research()
+            print(f"\n{summary}\n")
+            save_finding(summary)
+        except Exception as e:
+            print(f"[ERROR] research run failed: {e}")
+        print(f"Sleeping {RESEARCH_INTERVAL_SECONDS // 3600}h until next research pass...")
+        time.sleep(RESEARCH_INTERVAL_SECONDS)
