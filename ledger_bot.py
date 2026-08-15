@@ -27,6 +27,11 @@ Optional:
                        run_market_research below). Without it, that
                        part is silently skipped — everything else
                        still works.
+  BIRDEYE_API_KEY   - enables real chart/market-structure analysis
+                       (higher-highs/higher-lows, break of structure)
+                       fed into conviction analysis. Free tier at
+                       birdeye.so. Without it, conviction analysis
+                       just skips the chart-structure input.
 
 Install:
   pip install requests --break-system-packages
@@ -49,6 +54,9 @@ HELIUS_RPC_URL = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_MODEL = "claude-sonnet-4-6"
+
+BIRDEYE_API_KEY = os.environ.get("BIRDEYE_API_KEY", "")
+BIRDEYE_OHLCV_URL = "https://public-api.birdeye.so/defi/v3/ohlcv"
 
 # Discord webhook URL — this is Ledger's public voice. Get one from
 # a Discord channel: Edit Channel -> Integrations -> Webhooks -> New
@@ -119,7 +127,14 @@ def speak(title: str, description: str, color: int = COLOR_NEUTRAL, fields: list
         lines.append(description)
     if fields:
         for f in fields:
-            lines.append(f"**{f['name']}**\n{f['value']}")
+            if "\n" in f["value"]:
+                # Multi-line value (e.g. a bulleted notes block) — label
+                # on its own line, content below it.
+                lines.append(f"**{f['name']}**\n{f['value']}")
+            else:
+                # Single-line value — label and value together, matching
+                # the requested "**CA:** address" / "**Thesis** text" style.
+                lines.append(f"**{f['name']}** {f['value']}")
     text = "\n\n".join(lines)
 
     if not DISCORD_WEBHOOK_URL:
@@ -192,6 +207,13 @@ MAX_POSITION_SOL = 0.5        # max size of any single paper position
 MAX_DAILY_LOSS_SOL = 2.0      # bot stops opening new positions past this
 MAX_TRADES_PER_HOUR = 10      # circuit breaker against runaway logic
 STARTING_PAPER_BALANCE_SOL = 20.0
+
+# Position size scales continuously with conviction (the risk_score
+# from analyze_conviction), between these two bounds — a risk_score
+# of 0 (safest) gets MAX_CONVICTION_SIZE_SOL, a risk_score of 10
+# (riskiest that still passed) gets MIN_SCOUT_SIZE_SOL.
+MIN_SCOUT_SIZE_SOL = 0.02
+MAX_CONVICTION_SIZE_SOL = 0.25
 
 # ── State ────────────────────────────────────────────────────────────
 
@@ -327,14 +349,16 @@ def request_with_backoff(method, url, max_retries=5, **kwargs):
 
 def get_token_metadata(mint: str) -> dict:
     """
-    Resolves a mint address to its real symbol/name via Helius's DAS
-    API (getAsset) — this is what turns an unreadable address like
-    'H3mqq7...' into something like '$MOONCAT'. Returns {"symbol": ...,
-    "name": ...}, with empty strings if metadata isn't available (very
-    new/unlisted tokens sometimes have no metadata yet).
+    Resolves a mint address to its real symbol/name/description via
+    Helius's DAS API (getAsset) — this is what turns an unreadable
+    address like 'H3mqq7...' into something like 'MOONCAT', and pulls
+    the coin's "lore" (its description, when the launch included one)
+    for conviction analysis to reference. Returns {"symbol": ...,
+    "name": ..., "description": ...}, with empty strings if metadata
+    isn't available (very new/unlisted tokens sometimes have none yet).
     """
     if not HELIUS_API_KEY:
-        return {"symbol": "", "name": ""}
+        return {"symbol": "", "name": "", "description": ""}
     payload = {
         "jsonrpc": "2.0",
         "id": "ledger",
@@ -349,10 +373,11 @@ def get_token_metadata(mint: str) -> dict:
         return {
             "symbol": metadata.get("symbol", ""),
             "name": metadata.get("name", ""),
+            "description": metadata.get("description", ""),
         }
     except Exception as e:
         print(f"[WARN] metadata lookup failed for {mint}: {e}")
-        return {"symbol": "", "name": ""}
+        return {"symbol": "", "name": "", "description": ""}
 
 
 # ── Market research (merged from the standalone market_intel.py) ─────
@@ -556,31 +581,266 @@ def extract_new_buys(transactions: list, wallet_address: str) -> list:
 
 # ── Ledger's voice ───────────────────────────────────────────────────
 
-def generate_thesis(token: str, wallet: str, signal_strength: str) -> str:
-    """
-    Placeholder thesis generator. Swap this for a real call to an LLM
-    (e.g. the Anthropic API) once you want genuinely reasoned theses
-    instead of templated ones — this keeps the scaffold runnable
-    without an extra API dependency for now.
+# ── Chart / market structure analysis ─────────────────────────────────
+#
+# Implements the guide's core chart-reading concept: a chart is either
+# printing higher highs + higher lows (uptrend), lower highs + lower
+# lows (downtrend), or neither (choppy/sideways) — and a "break of
+# structure" (price failing to hold a level that previously held)
+# signals a real change in who's in control. This feeds real price
+# history into conviction analysis instead of just current spot price.
 
-    Tone: polished, professional trader — precise language, correct
-    grammar, sparing and purposeful emoji use. Confident without slang.
+SWING_PIVOT_WINDOW = 2  # candles on each side used to confirm a swing high/low
+MIN_CANDLES_FOR_STRUCTURE = 8  # below this, there's not enough history to read
+
+
+def get_ohlcv_candles(mint: str, interval: str = "5m", hours_back: int = 4) -> list:
     """
-    name = WALLET_HANDLES.get(wallet, wallet[:6] + "...")
-    templates = {
-        "strong": (
-            f"{name} has taken a position here, and this wallet's track record commands attention. "
-            f"The accompanying volume supports genuine demand rather than an isolated purchase. "
-            f"I am allocating a measured position — scouting the opportunity rather than committing in full, "
-            f"until the thesis proves out further. 📈"
-        ),
-        "weak": (
-            f"{name} has entered a position, though the signal remains thin on its own. "
-            f"I am monitoring closely and will require confirming volume, or a second wallet acting in concert, "
-            f"before committing capital. 🔍"
-        ),
+    Fetches recent candlestick data for a token via Birdeye's OHLCV V3
+    API. Returns a list of {time, open, high, low, close, volume}
+    dicts in chronological order, or an empty list if unavailable
+    (no API key, brand-new token with no history yet, API error) —
+    callers must handle the empty case gracefully, never assume data.
+    """
+    if not BIRDEYE_API_KEY:
+        return []
+
+    now = int(time.time())
+    time_from = now - hours_back * 3600
+
+    headers = {
+        "X-API-KEY": BIRDEYE_API_KEY,
+        "x-chain": "solana",
+        "accept": "application/json",
     }
-    return templates.get(signal_strength, templates["weak"])
+    params = {
+        "address": mint,
+        "type": interval,
+        "time_from": time_from,
+        "time_to": now,
+        "mode": "range",
+        "currency": "usd",
+    }
+    try:
+        resp = requests.get(BIRDEYE_OHLCV_URL, headers=headers, params=params, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        items = data.get("data", {}).get("items", [])
+        candles = [
+            {
+                "time": c.get("unix_time", c.get("unixTime")),
+                "open": c.get("o"),
+                "high": c.get("h"),
+                "low": c.get("l"),
+                "close": c.get("c"),
+                "volume": c.get("v"),
+            }
+            for c in items
+        ]
+        candles.sort(key=lambda c: c["time"] or 0)
+        return candles
+    except Exception as e:
+        print(f"[WARN] OHLCV fetch failed for {mint}: {e}")
+        return []
+
+
+def detect_market_structure(candles: list) -> dict:
+    """
+    Reads market structure from candle data: finds swing highs/lows
+    (local peaks/troughs confirmed by neighboring candles on each
+    side), then compares the two most recent of each to classify the
+    trend as uptrend (higher highs + higher lows), downtrend (lower
+    highs + lower lows), or choppy (neither). Also flags a "break of
+    structure" — current price violating the most recent swing
+    low in an uptrend, or swing high in a downtrend — since that's
+    the single clearest signal something has changed.
+
+    Returns {"trend": "uptrend"|"downtrend"|"choppy"|"insufficient_data",
+    "break_of_structure": str or None, "note": str} — always returns
+    a usable dict, never raises, so a thin/missing chart history never
+    blocks a trading decision.
+    """
+    if len(candles) < MIN_CANDLES_FOR_STRUCTURE:
+        return {
+            "trend": "insufficient_data",
+            "break_of_structure": None,
+            "note": "Not enough price history yet to read market structure — token is likely very new.",
+        }
+
+    w = SWING_PIVOT_WINDOW
+    highs = [c["high"] for c in candles]
+    lows = [c["low"] for c in candles]
+
+    swing_highs = []
+    swing_lows = []
+    for i in range(w, len(candles) - w):
+        window_highs = highs[i - w:i + w + 1]
+        window_lows = lows[i - w:i + w + 1]
+        if highs[i] == max(window_highs):
+            swing_highs.append((i, highs[i]))
+        if lows[i] == min(window_lows):
+            swing_lows.append((i, lows[i]))
+
+    if len(swing_highs) < 2 or len(swing_lows) < 2:
+        return {
+            "trend": "insufficient_data",
+            "break_of_structure": None,
+            "note": "No clear swing points formed yet — price action too choppy or too short to read.",
+        }
+
+    prev_high, last_high = swing_highs[-2][1], swing_highs[-1][1]
+    prev_low, last_low = swing_lows[-2][1], swing_lows[-1][1]
+
+    higher_highs = last_high > prev_high
+    higher_lows = last_low > prev_low
+    lower_highs = last_high < prev_high
+    lower_lows = last_low < prev_low
+
+    if higher_highs and higher_lows:
+        trend = "uptrend"
+    elif lower_highs and lower_lows:
+        trend = "downtrend"
+    else:
+        trend = "choppy"
+
+    current_price = candles[-1]["close"]
+    bos = None
+    if trend == "uptrend" and current_price < last_low:
+        bos = "bearish break — price fell below the most recent higher low"
+    elif trend == "downtrend" and current_price > last_high:
+        bos = "bullish break — price pushed above the most recent lower high"
+
+    note = f"Market structure: {trend}."
+    if bos:
+        note += f" {bos}."
+
+    return {"trend": trend, "break_of_structure": bos, "note": note}
+
+
+def analyze_conviction(
+    token: str,
+    metadata: dict,
+    trigger_wallet_handle: str,
+    trigger_platform: str,
+    is_priority_wallet: bool,
+    is_whale_wallet: bool,
+) -> dict:
+    """
+    Ledger's actual judgment call — replaces the old static templates.
+    Uses Claude to independently evaluate whether a detected buy is
+    genuinely worth entering, instead of automatically mirroring every
+    wallet buy. Considers the coin's own lore/theme (not just "a
+    wallet bought it"), recent market/narrative context, and how much
+    weight the triggering wallet's track record deserves.
+
+    Returns:
+        {
+          "conviction": "buy" or "pass",
+          "risk_score": int 0-10 (0 = safest, 10 = most reckless),
+          "thesis": str — 2-3 sentences, professional, mentions the
+                     coin's lore/theme when known,
+          "independent": bool — True if the reasoning stands on the
+                     coin's own merits, False if primarily following
+                     the triggering wallet's lead
+        }
+
+    Falls back to a simple always-pass-through rule (old behavior) if
+    ANTHROPIC_API_KEY isn't configured, so the bot still runs without
+    it — just without independent judgment.
+    """
+    name = metadata.get("name", "") or token
+    symbol = metadata.get("symbol", "") or "UNKNOWN"
+    description = metadata.get("description", "") or "no description available"
+
+    if not ANTHROPIC_API_KEY:
+        # No independent judgment available — fall back to treating
+        # every detected buy as a pass-through scout position, same
+        # as the original design, clearly marked as wallet-following.
+        return {
+            "conviction": "buy",
+            "risk_score": 3 if (is_priority_wallet or is_whale_wallet) else 7,
+            "thesis": f"{trigger_wallet_handle} has taken a position here. No independent analysis available (ANTHROPIC_API_KEY not set) — sizing based on wallet trust alone.",
+            "independent": False,
+        }
+
+    wallet_trust = (
+        "a priority trader whose calls are trusted at maximum conviction"
+        if is_priority_wallet else
+        "a whale-tier wallet (6-figure+ portfolio)"
+        if is_whale_wallet else
+        "a standard tracked wallet, no special trust level"
+    )
+
+    recent_intel = ""
+    if INTEL_FILE.exists():
+        try:
+            entries = json.loads(INTEL_FILE.read_text())
+            if entries:
+                recent_intel = entries[-1].get("summary", "")
+        except json.JSONDecodeError:
+            pass
+
+    candles = get_ohlcv_candles(token)
+    structure = detect_market_structure(candles)
+
+    prompt = f"""You are Ledger, a professional, disciplined Solana memecoin trader. A wallet you track just bought a token. Evaluate independently whether YOU would enter this position — do not simply mirror the wallet's action.
+
+Core principles you trade by:
+- Never borrow conviction. A wallet buying something is one input, not a reason on its own. Ask: if I found this token myself with no wallet attached, would I still buy it?
+- Watch for "vamping" — when a narrative or trend goes viral, multiple competing tokens often launch around the same theme, and the crowd frequently buys the wrong (non-canonical) one before the real one is confirmed. If this token's appeal rests on a trend/narrative match, weigh how likely it is to be the token the community actually rallies around, versus a copycat that gets abandoned once the "real" one is identified. Treat unclear canonical status as a reason to raise the risk score, not to pass outright — being early on the right one is valuable, but so is being honest about the uncertainty.
+- Read the market regime from your own recent research before sizing conviction — the same setup deserves more caution in quiet/risk-off conditions than in active/risk-on ones.
+- A thesis should be something you could defend in two sentences. If you can't articulate a concrete reason beyond "the wallet bought it," that's a signal to pass or mark the risk high.
+
+Token name: {name}
+Ticker: {symbol}
+Lore/description: {description}
+Mint: {token}
+
+Triggering wallet: {trigger_wallet_handle} ({wallet_trust})
+Detected on: {trigger_platform}
+
+Recent market context (your own research, may be empty if none yet — use this to judge the current market regime and whether this token matches a live narrative you're already tracking, including vamping risk if multiple tokens could be riding the same trend):
+{recent_intel or "none available yet"}
+
+Chart / market structure for this specific token ({structure['trend']}):
+{structure['note']}
+Treat "insufficient_data" as neutral — don't penalize a token just for being too new to have chart history yet. But an actual downtrend or a bearish break of structure is a real reason for caution, and an uptrend or bullish break supports the thesis. The chart confirms or challenges a thesis, it never replaces one.
+
+Decide independently: does this token's own merit (its theme, timing, narrative fit, canonical-vs-copycat likelihood, and current chart structure) plus the wallet signal add up to a real position — or is this just noise not worth capital?
+
+Respond with ONLY valid JSON, no other text, no markdown code fences:
+{{"conviction": "buy" or "pass", "risk_score": <integer 0-10, 0=safest 10=most reckless>, "thesis": "<2-3 sentences, professional trader voice, correct grammar, reference the coin's lore/theme if known, no slang, never use a dollar sign character>", "independent": <true if your reasoning stands on the coin's own merit beyond just following the wallet, false if you are primarily following the wallet's lead>}}"""
+
+    headers = {
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
+    payload = {
+        "model": ANTHROPIC_MODEL,
+        "max_tokens": 400,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+
+    try:
+        resp = requests.post(ANTHROPIC_API_URL, headers=headers, json=payload, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        text = "".join(b["text"] for b in data.get("content", []) if b.get("type") == "text").strip()
+        # Strip accidental code fences, just in case
+        if text.startswith("```"):
+            text = text.strip("`").lstrip("json").strip()
+        result = json.loads(text)
+
+        result["conviction"] = result.get("conviction", "pass")
+        result["risk_score"] = max(0, min(10, int(result.get("risk_score", 10))))
+        result["thesis"] = result.get("thesis", "").replace("$", "")  # extra safety net
+        result["independent"] = bool(result.get("independent", False))
+        return result
+    except Exception as e:
+        print(f"[WARN] conviction analysis failed for {token}: {e} — defaulting to pass (skip, don't guess)")
+        return {"conviction": "pass", "risk_score": 10, "thesis": "", "independent": False}
+
 
 
 # ── Paper trading engine ─────────────────────────────────────────────
@@ -634,16 +894,11 @@ def open_paper_position(state: LedgerState, token: str, price: float, size_sol: 
         "at": datetime.now(timezone.utc).isoformat(),
     })
     display_name = symbol if symbol else token
-    narrative_tag = "\n🌊 **Narrative Play** — wider trailing stop applied" if is_narrative else ""
-    speak(
-        title=f"{display_name} — Position Opened",
-        description=(
-            f"**Risk:** {risk_level}\n"
-            f"**Entry:** {price:.6g} USD  •  **Size:** {size_sol} SOL{narrative_tag}"
-        ),
-        color=COLOR_BUY,
-        fields=[{"name": "CA", "value": token, "inline": False}],
-    )
+    narrative_tag = " [Narrative Play — wider trailing stop applied]" if is_narrative else ""
+    # No separate Discord post here — the caller (main loop) sends one
+    # single combined message per buy, including this position's size
+    # and the resulting balance, instead of a second message.
+    print(f"{display_name} — Position Opened — Entry: {price:.6g} USD  •  Size: {size_sol} SOL{narrative_tag}")
     state.save()
 
 
@@ -673,14 +928,20 @@ def partial_close_paper_position(state: LedgerState, token: str, exit_price: flo
         "at": datetime.now(timezone.utc).isoformat(),
     })
     display_name = pos.get("symbol") or token
+    notes = (
+        f"• **Sold:** {fraction:.0%} of position at {exit_price:.6g} USD\n"
+        f"• **PnL:** {pnl:+.4f} SOL\n"
+        f"• **Amount Sold:** {sell_size:.4f} SOL  •  **Remaining Position:** {pos['size_sol']:.4f} SOL\n"
+        f"• **Current Balance:** {state.balance_sol:.4f} SOL"
+    )
     speak(
-        title=f"{display_name} — {reason}",
-        description=(
-            f"**Sold:** {fraction:.0%} of position at {exit_price:.6g} USD\n"
-            f"**PnL:** {pnl:+.4f} SOL  •  **Remaining:** {pos['size_sol']:.4f} SOL"
-        ),
+        title=f"📊 {display_name} — {reason}",
+        description="",
         color=COLOR_PROFIT if pnl >= 0 else COLOR_LOSS,
-        fields=[{"name": "CA", "value": token, "inline": False}],
+        fields=[
+            {"name": "CA:", "value": token, "inline": False},
+            {"name": "ℹ️ Additional Notes", "value": notes, "inline": False},
+        ],
     )
 
     if pos["size_sol"] < 0.001:  # fully drained — close it out entirely
@@ -707,13 +968,20 @@ def close_paper_position(state: LedgerState, token: str, exit_price: float, reas
     })
     display_name = pos.get("symbol") or token
     status = reason or ("✅ Position Closed" if pnl >= 0 else "❌ Position Closed")
+    notes = (
+        f"• **Exit:** {exit_price:.6g} USD\n"
+        f"• **PnL:** {pnl:+.4f} SOL\n"
+        f"• **Amount Sold:** {pos['size_sol']:.4f} SOL (full position)\n"
+        f"• **Current Balance:** {state.balance_sol:.4f} SOL"
+    )
     speak(
-        title=f"{display_name} — {status}",
-        description=(
-            f"**Exit:** {exit_price:.6g} USD  •  **PnL:** {pnl:+.4f} SOL"
-        ),
+        title=f"📊 {display_name} — {status}",
+        description="",
         color=COLOR_PROFIT if pnl >= 0 else COLOR_LOSS,
-        fields=[{"name": "CA", "value": token, "inline": False}],
+        fields=[
+            {"name": "CA:", "value": token, "inline": False},
+            {"name": "ℹ️ Additional Notes", "value": notes, "inline": False},
+        ],
     )
     state.save()
 
@@ -969,43 +1237,71 @@ def main():
 
                     token = buy["mint"]
                     is_priority = wallet in priority_wallets
-                    strength = "strong" if (is_priority or wallet in whale_wallets) else "weak"
-                    thesis = generate_thesis(token, wallet, strength)
-
-                    metadata = get_token_metadata(token)
-                    display_symbol = metadata.get("symbol") or token[:6] + "..."  # no "$" — avoids triggering another bot
-                    if is_priority:
-                        risk_level = "🔵 Priority Trader — Maximum Conviction"
-                    else:
-                        risk_level = "🟢 Lower Risk (whale-backed)" if strength == "strong" else "🟡 High Risk (scout)"
+                    is_whale = wallet in whale_wallets
                     trader_name = WALLET_HANDLES.get(wallet, wallet[:6] + "...")  # "..." kept for unknown handles
                     platform_name = get_source_display_name(buy["source"])
 
-                    additional_message = (
-                        f"**Risk Assessment:** {risk_level}\n"
-                        f"**Trader:** {trader_name}  •  **Platform:** {platform_name}"
+                    metadata = get_token_metadata(token)
+                    display_symbol = metadata.get("symbol") or token[:6] + "..."  # no "$" — avoids triggering another bot
+
+                    analysis = analyze_conviction(
+                        token, metadata, trader_name, platform_name, is_priority, is_whale
                     )
 
-                    speak(
-                        title=f"📊 {display_symbol}",
-                        description="",
-                        color=COLOR_STRONG_SIGNAL if strength == "strong" else COLOR_NEUTRAL,
-                        fields=[
-                            {"name": "CA:", "value": f"`{token}`", "inline": False},
-                            {"name": "🧠 Thesis", "value": thesis, "inline": False},
-                            {"name": "ℹ️ Additional Notes", "value": additional_message, "inline": False},
-                        ],
-                    )
+                    if analysis["conviction"] != "buy":
+                        print(f"  [PASS] {display_symbol} — no independent conviction, skipping (not posted).")
+                        continue
 
+                    # Fetch price BEFORE posting, so the single message can
+                    # include the actual size bought and resulting balance
+                    # — no second "position opened" message needed.
                     prices = get_token_prices_usd([token])
                     entry_price = prices.get(token)
                     if entry_price is None:
                         print(f"  [SKIP] no price data for {token} yet — can't size a position.")
                         continue
 
-                    # Whale-backed signals get sized bigger; everything
-                    # else is a small scout position, capped either way.
-                    size_sol = min(0.2 if strength == "strong" else 0.05, MAX_POSITION_SOL)
+                    risk_score = analysis["risk_score"]
+                    risk_bucket = "🟢" if risk_score <= 3 else "🟡" if risk_score <= 6 else "🔴"
+
+                    # Size scales continuously with conviction (risk_score),
+                    # not just two fixed tiers — concentrated conviction on
+                    # your best-scoring ideas beats spreading evenly thin.
+                    # risk_score 0 (safest) -> MAX_CONVICTION_SIZE_SOL;
+                    # risk_score 10 (riskiest) -> MIN_SCOUT_SIZE_SOL.
+                    size_sol = MIN_SCOUT_SIZE_SOL + (MAX_CONVICTION_SIZE_SOL - MIN_SCOUT_SIZE_SOL) * (1 - risk_score / 10)
+                    size_sol = min(size_sol, MAX_POSITION_SOL)
+                    strength = "strong" if (is_priority or is_whale) else "weak"
+
+                    ok, block_reason = can_open_position(state, size_sol)
+                    if not ok:
+                        print(f"  [BLOCKED] {display_symbol}: {block_reason}")
+                        continue
+
+                    balance_after = state.balance_sol - size_sol
+                    notes_lines = [
+                        f"• **Risk Assessment:** {risk_bucket} {risk_score}/10",
+                        f"• **Amount Bought:** {size_sol:.4f} SOL",
+                        f"• **Current Balance:** {balance_after:.4f} SOL",
+                    ]
+                    if not analysis["independent"]:
+                        # Only credit/mention the wallet when the call actually
+                        # followed its lead — an independent call stands on
+                        # its own, with no wallet name attached.
+                        notes_lines.append(f"• **Trader:** {trader_name}  •  **Platform:** {platform_name}")
+                    additional_message = "\n".join(notes_lines)
+
+                    speak(
+                        title=f"📊 {display_symbol}",
+                        description="",
+                        color=COLOR_STRONG_SIGNAL if is_priority or is_whale else COLOR_NEUTRAL,
+                        fields=[
+                            {"name": "CA:", "value": token, "inline": False},
+                            {"name": "🧠 Thesis", "value": analysis["thesis"], "inline": False},
+                            {"name": "ℹ️ Additional Notes", "value": additional_message, "inline": False},
+                        ],
+                    )
+
                     open_paper_position(state, token, entry_price, size_sol, opened_by=wallet, strength=strength)
             except Exception as e:
                 print(f"[ERROR] wallet {wallet}: {e}")
