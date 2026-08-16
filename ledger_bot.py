@@ -74,6 +74,10 @@ BIRDEYE_OHLCV_URL = "https://public-api.birdeye.so/defi/v3/ohlcv"
 # a Discord channel: Edit Channel -> Integrations -> Webhooks -> New
 # Webhook -> Copy URL. Leave blank to run silently (console only).
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
+# Supports posting to multiple channels: set this env var to several
+# webhook URLs separated by commas (e.g. "https://.../1,https://.../2")
+# to post every message to all of them.
+DISCORD_WEBHOOK_URLS = [u.strip() for u in DISCORD_WEBHOOK_URL.split(",") if u.strip()]
 LEDGER_DISCORD_NAME = "Ledger"
 LEDGER_DISCORD_AVATAR_URL = os.environ.get("LEDGER_AVATAR_URL", "")  # optional
 
@@ -149,7 +153,7 @@ def speak(title: str, description: str, color: int = COLOR_NEUTRAL, fields: list
                 lines.append(f"**{f['name']}** {f['value']}")
     text = "\n\n".join(lines)
 
-    if not DISCORD_WEBHOOK_URL:
+    if not DISCORD_WEBHOOK_URLS:
         return
 
     # Discord's message content cap is 2000 chars — trim defensively
@@ -163,13 +167,16 @@ def speak(title: str, description: str, color: int = COLOR_NEUTRAL, fields: list
     }
     if LEDGER_DISCORD_AVATAR_URL:
         payload["avatar_url"] = LEDGER_DISCORD_AVATAR_URL
-    try:
-        requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=10)
-    except Exception as e:
-        # Never let a Discord hiccup take down the trading loop — this
-        # is called from critical paths (stop-loss, position opens),
-        # so it must fail silently and let the bot keep running.
-        print(f"[WARN] Discord post failed: {e}")
+
+    for webhook_url in DISCORD_WEBHOOK_URLS:
+        try:
+            requests.post(webhook_url, json=payload, timeout=10)
+        except Exception as e:
+            # Never let a Discord hiccup take down the trading loop — this
+            # is called from critical paths (stop-loss, position opens),
+            # so it must fail silently and let the bot keep running. One
+            # channel failing doesn't stop the others from getting posted.
+            print(f"[WARN] Discord post failed for one webhook: {e}")
 
 
 def load_wallets():
