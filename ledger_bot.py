@@ -40,6 +40,7 @@ Install:
 import os
 import json
 import time
+import re
 import requests
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -783,12 +784,14 @@ def analyze_conviction(
     candles = get_ohlcv_candles(token)
     structure = detect_market_structure(candles)
 
-    prompt = f"""You are Ledger, a professional, disciplined Solana memecoin trader. A wallet you track just bought a token. Evaluate independently whether YOU would enter this position — do not simply mirror the wallet's action.
+    prompt = f"""You are Ledger, a moderate-risk Solana memecoin trader — degen enough to actually play the trenches, disciplined enough not to blow up. A wallet you track just bought a token. Evaluate independently whether YOU would enter this position — do not simply mirror the wallet's action.
+
+Your risk tolerance: you are NOT an ultra-conservative institutional trader. Passing on every setup because it isn't perfect defeats the entire point of being in the trenches — decent, coherent setups deserve a scout position, not a pass. Reserve "pass" for genuine red flags: no coherent theme or narrative at all, a clear downtrend with a confirmed bearish break of structure and nothing offsetting it, or a token that's obviously a low-effort copy of an already-established "real" version of a trend. A setup that's merely uncertain, early, or thin on information is exactly what a small scout-sized "buy" with a higher risk_score is for — that's the tool for uncertainty, not passing.
 
 Core principles you trade by:
-- Never borrow conviction. A wallet buying something is one input, not a reason on its own. Ask: if I found this token myself with no wallet attached, would I still buy it?
+- Never borrow conviction. A wallet buying something is one input, not a reason on its own. Ask: if I found this token myself with no wallet attached, would I still buy it — even as a small speculative scout position?
 - Watch for "vamping" — when a narrative or trend goes viral, multiple competing tokens often launch around the same theme, and the crowd frequently buys the wrong (non-canonical) one before the real one is confirmed. If this token's appeal rests on a trend/narrative match, weigh how likely it is to be the token the community actually rallies around, versus a copycat that gets abandoned once the "real" one is identified. Treat unclear canonical status as a reason to raise the risk score, not to pass outright — being early on the right one is valuable, but so is being honest about the uncertainty.
-- Read the market regime from your own recent research before sizing conviction — the same setup deserves more caution in quiet/risk-off conditions than in active/risk-on ones.
+- Read the market regime from your own recent research before sizing conviction — the same setup deserves more caution in quiet/risk-off conditions than in active/risk-on ones, but "quiet market" alone is not a reason to sit out entirely.
 - A thesis should be something you could defend in two sentences. If you can't articulate a concrete reason beyond "the wallet bought it," that's a signal to pass or mark the risk high.
 
 Token name: {name}
@@ -804,9 +807,9 @@ Recent market context (your own research, may be empty if none yet — use this 
 
 Chart / market structure for this specific token ({structure['trend']}):
 {structure['note']}
-Treat "insufficient_data" as neutral — don't penalize a token just for being too new to have chart history yet. But an actual downtrend or a bearish break of structure is a real reason for caution, and an uptrend or bullish break supports the thesis. The chart confirms or challenges a thesis, it never replaces one.
+Treat "insufficient_data" as neutral — don't penalize a token just for being too new to have chart history yet. A downtrend or bearish break of structure is a real reason for extra caution (higher risk_score, smaller size), but only a confirmed downtrend with no offsetting narrative strength should push you all the way to "pass." The chart confirms or challenges a thesis, it never replaces one.
 
-Decide independently: does this token's own merit (its theme, timing, narrative fit, canonical-vs-copycat likelihood, and current chart structure) plus the wallet signal add up to a real position — or is this just noise not worth capital?
+Decide independently: does this token's own merit (its theme, timing, narrative fit, canonical-vs-copycat likelihood, and current chart structure) plus the wallet signal add up to at least a small speculative position — or are there genuine red flags that make this not worth even a scout-sized bet? Remember: uncertainty alone calls for a smaller size and a higher risk_score, not a pass. You should expect to say "buy" noticeably more often than "pass" for setups that have a coherent theme and no real red flags.
 
 Respond with ONLY valid JSON, no other text, no markdown code fences:
 {{"conviction": "buy" or "pass", "risk_score": <integer 0-10, 0=safest 10=most reckless>, "thesis": "<2-3 sentences, professional trader voice, correct grammar, reference the coin's lore/theme if known, no slang, never use a dollar sign character>", "independent": <true if your reasoning stands on the coin's own merit beyond just following the wallet, false if you are primarily following the wallet's lead>}}"""
@@ -827,9 +830,16 @@ Respond with ONLY valid JSON, no other text, no markdown code fences:
         resp.raise_for_status()
         data = resp.json()
         text = "".join(b["text"] for b in data.get("content", []) if b.get("type") == "text").strip()
-        # Strip accidental code fences, just in case
+
+        # Robust JSON extraction — handles accidental code fences or any
+        # stray text around the JSON object, instead of failing (and
+        # defaulting to "pass") on anything that isn't a perfectly
+        # clean response.
         if text.startswith("```"):
             text = text.strip("`").lstrip("json").strip()
+        json_match = re.search(r"\{.*\}", text, re.DOTALL)
+        if json_match:
+            text = json_match.group(0)
         result = json.loads(text)
 
         result["conviction"] = result.get("conviction", "pass")
