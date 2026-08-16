@@ -204,15 +204,6 @@ WATCHED_WALLETS, WALLET_HANDLES, PRIORITY_WALLETS = load_wallets()
 # — no need to pay, just don't hammer it.
 POLL_SECONDS = 120
 
-# Balance checks (for whale ranking) are expensive relative to how
-# often they actually change — no need to check every cycle. This
-# checks balances once every N cycles instead of every single one.
-# NOTE: Helius's Wallet API balances endpoint costs 100 credits PER
-# CALL (their pricing) — with 32 wallets, that's 3,200 credits every
-# time this runs. Checking once a day (rather than every 20 min) keeps
-# this comfortably inside free-tier monthly credit limits.
-BALANCE_RECHECK_EVERY_N_CYCLES = 720  # ~once/day at 120s/cycle
-
 # ── Risk limits (hard-coded, not suggestions) ───────────────────────────
 
 MAX_POSITION_SOL = 0.5        # max size of any single paper position
@@ -307,6 +298,13 @@ CUPSEY_DEV_SELL_EXIT_THRESHOLD_PCT = 0.5  # if the dev's holding drops to ≤50%
 # ── State ────────────────────────────────────────────────────────────
 
 STATE_FILE = Path("ledger_state.json")
+
+# Set RESET_STATE_ON_BOOT=true (Railway Variables) to wipe the saved
+# paper trading state on the next restart — useful for a clean start
+# (e.g. switching to a new starting balance) without needing shell
+# access to the container. Remember to unset it afterward, or it'll
+# wipe progress on every future restart too.
+RESET_STATE_ON_BOOT = os.environ.get("RESET_STATE_ON_BOOT", "false").lower() == "true"
 
 
 @dataclass
@@ -846,13 +844,77 @@ def detect_market_structure(candles: list) -> dict:
     return {"trend": trend, "break_of_structure": bos, "note": note}
 
 
+def copy_priority_wallet_entry(
+    token: str, wallet: str, trader_name: str, platform_name: str, metadata: dict, state: "LedgerState"
+):
+    """
+    Directly mirrors a priority wallet's buy — no independent-conviction
+    gate, no "pass" possible, since a priority wallet is trusted enough
+    to copy outright. Uses the SAME sniper-style execution as Sniper
+    Mode (Cupsey exit ladder via check_sniper_positions, percentage-of-
+    bankroll sizing) rather than the main patient trailing-stop
+    strategy — this is deliberate, per instruction to keep the sniper
+    strategy for these copies specifically.
+    """
+    display_symbol = metadata.get("symbol") or token[:6] + "..."
+
+    prices = get_token_prices_usd([token])
+    entry_price = prices.get(token)
+    if entry_price is None:
+        print(f"  [SKIP] {display_symbol}: no price data yet for priority copy.")
+        return
+
+    # Priority copies get double the normal sniper allocation — the
+    # extra weight IS the "priority" treatment, on top of always
+    # copying regardless of independent judgment.
+    size_sol = max(SNIPER_MIN_POSITION_SOL, state.balance_sol * SNIPER_POSITION_SIZE_PCT * 2)
+    size_sol = min(size_sol, MAX_POSITION_SOL)
+
+    ok, block_reason = can_open_position(state, size_sol)
+    if not ok:
+        print(f"  [BLOCKED] {display_symbol}: {block_reason}")
+        return
+
+    dev_pct = get_dev_holding_pct(token, wallet)
+    top10_pct = get_top10_holder_pct(token)
+
+    balance_after = state.balance_sol - size_sol
+    notes_lines = [
+        f"• **Strategy:** Priority Copy (Sniper Exit)",
+        f"• **Trader:** {trader_name}  •  **Platform:** {platform_name}",
+    ]
+    if top10_pct is not None:
+        notes_lines.append(f"• **Top 10 Holders:** {top10_pct:.1f}%")
+    notes_lines.append(f"• **Amount Bought:** {size_sol:.4f} SOL")
+    notes_lines.append(f"• **Current Balance:** {balance_after:.4f} SOL")
+
+    speak(
+        title=f"⭐ {display_symbol}",
+        description="",
+        color=COLOR_STRONG_SIGNAL,
+        fields=[
+            {"name": "CA:", "value": token, "inline": False},
+            {"name": "🧠 Thesis", "value": f"{trader_name} entered — mirroring directly on priority trust.", "inline": False},
+            {"name": "ℹ️ Additional Notes", "value": "\n".join(notes_lines), "inline": False},
+        ],
+    )
+
+    open_paper_position(state, token, entry_price, size_sol, opened_by=wallet, strength="strong")
+    if token in state.open_positions:
+        # Tagged to contain "Sniper" so it correctly routes through
+        # check_sniper_positions (the Cupsey ladder), not the main
+        # trailing-stop logic — see the substring check in both.
+        state.open_positions[token]["risk_level"] = "⭐ Priority Copy (Sniper)"
+        state.open_positions[token]["original_size_sol"] = size_sol
+        state.open_positions[token]["entry_dev_holding_pct"] = dev_pct
+        state.save()
+
+
 def analyze_conviction(
     token: str,
     metadata: dict,
     trigger_wallet_handle: str,
     trigger_platform: str,
-    is_priority_wallet: bool,
-    is_whale_wallet: bool,
 ) -> dict:
     """
     Ledger's actual judgment call — replaces the old static templates.
@@ -887,18 +949,12 @@ def analyze_conviction(
         # as the original design, clearly marked as wallet-following.
         return {
             "conviction": "buy",
-            "risk_score": 3 if (is_priority_wallet or is_whale_wallet) else 7,
+            "risk_score": 7,
             "thesis": f"{trigger_wallet_handle} has taken a position here. No independent analysis available (ANTHROPIC_API_KEY not set) — sizing based on wallet trust alone.",
             "independent": False,
         }
 
-    wallet_trust = (
-        "a priority trader whose calls are trusted at maximum conviction"
-        if is_priority_wallet else
-        "a whale-tier wallet (6-figure+ portfolio)"
-        if is_whale_wallet else
-        "a standard tracked wallet, no special trust level"
-    )
+    wallet_trust = "a standard tracked wallet, no special trust level"  # priority wallets never reach this function — see copy_priority_wallet_entry
 
     recent_intel = ""
     if INTEL_FILE.exists():
@@ -1218,11 +1274,11 @@ def check_sniper_positions(state: LedgerState):
     """
     Cupsey-style exit for Sniper Mode positions — a staged take-profit
     ladder (sell half at 2x, another chunk at 4x, let a small trimmed
-    remainder ride under the main patient trailing-stop logic), a wide
-    stop-loss (-35%, matching the realistic range rather than an
-    overly tight guess), a dev-sell trigger (exit immediately if the
-    creator wallet appears to be dumping), and a 10-minute backstop so
-    nothing lingers forever even if none of the above ever fires.
+    remainder ride under the main patient logic), a wide stop-loss
+    (-35%, matching the realistic range rather than an overly tight
+    guess), a dev-sell trigger (exit immediately if the creator wallet
+    appears to be dumping), and a 10-minute backstop so nothing lingers
+    forever even if none of the above ever fires.
     """
     sniper_mints = [
         m for m, pos in state.open_positions.items()
@@ -1788,6 +1844,10 @@ def scan_sniper_pending(state: "LedgerState"):
 # ── Main loop ─────────────────────────────────────────────────────────
 
 def main():
+    if RESET_STATE_ON_BOOT and STATE_FILE.exists():
+        STATE_FILE.unlink()
+        print(f"[RESET] RESET_STATE_ON_BOOT is set — wiped {STATE_FILE}, starting fresh at {STARTING_PAPER_BALANCE_SOL} SOL. Remember to unset this variable so it doesn't wipe progress again on the next restart.")
+
     state = LedgerState.load()
     print(f"Ledger booting up. Paper balance: {state.balance_sol} SOL")
 
@@ -1799,7 +1859,7 @@ def main():
               f"age window {preset['age_min_minutes']}-{preset['age_max_minutes']} min, "
               f"max top10 {preset['top10_holders_max_pct']}%")
 
-    whale_wallets = set()
+    whale_wallets = set()  # kept for backward compatibility with functions below, always empty now
     cycle_count = 0
 
     while True:
@@ -1817,16 +1877,6 @@ def main():
             print(f"No wallets in {WALLETS_CONFIG_FILE} — add some and it'll pick them up next cycle.")
             time.sleep(POLL_SECONDS)
             continue
-
-        # Balance/whale check is expensive — only do it occasionally,
-        # not every single cycle, to keep well within free-tier limits
-        if cycle_count == 1 or cycle_count % BALANCE_RECHECK_EVERY_N_CYCLES == 0:
-            print(f"Checking total portfolio value for {len(watched_wallets)} wallets to flag whales...")
-            ranked = rank_wallets_by_balance(watched_wallets)
-            whale_wallets = {w for w, _, val in ranked if val >= WHALE_VALUE_USD_THRESHOLD}
-            for wallet, handle, val in ranked[:5]:
-                tag = " [WHALE]" if wallet in whale_wallets else ""
-                print(f"  {handle}: ${val:,.0f}{tag}")
 
         # Performance recap — the "learning from losses" surfacing step
         if cycle_count % PERFORMANCE_RECAP_EVERY_N_CYCLES == 0:
@@ -1852,16 +1902,23 @@ def main():
 
                     token = buy["mint"]
                     is_priority = wallet in priority_wallets
-                    is_whale = wallet in whale_wallets
                     trader_name = WALLET_HANDLES.get(wallet, wallet[:6] + "...")  # "..." kept for unknown handles
                     platform_name = get_source_display_name(buy["source"])
 
                     metadata = get_token_metadata(token)
                     display_symbol = metadata.get("symbol") or token[:6] + "..."  # no "$" — avoids triggering another bot
 
-                    analysis = analyze_conviction(
-                        token, metadata, trader_name, platform_name, is_priority, is_whale
-                    )
+                    if is_priority:
+                        # Priority wallets are trusted enough to mirror
+                        # directly — no independent-conviction gate, no
+                        # "pass" possible. Uses the sniper-style Cupsey
+                        # exit ladder, not the main patient trailing stop,
+                        # per your instruction to keep the sniper strategy
+                        # for these copies.
+                        copy_priority_wallet_entry(token, wallet, trader_name, platform_name, metadata, state)
+                        continue
+
+                    analysis = analyze_conviction(token, metadata, trader_name, platform_name)
 
                     if analysis["conviction"] != "buy":
                         print(f"  [PASS] {display_symbol} — no independent conviction, skipping (not posted).")
@@ -1886,7 +1943,7 @@ def main():
                     # risk_score 10 (riskiest) -> MIN_SCOUT_SIZE_SOL.
                     size_sol = MIN_SCOUT_SIZE_SOL + (MAX_CONVICTION_SIZE_SOL - MIN_SCOUT_SIZE_SOL) * (1 - risk_score / 10)
                     size_sol = min(size_sol, MAX_POSITION_SOL)
-                    strength = "strong" if (is_priority or is_whale) else "weak"
+                    strength = "weak"  # priority wallets never reach here — they branch off above into copy_priority_wallet_entry
 
                     ok, block_reason = can_open_position(state, size_sol)
                     if not ok:
@@ -1909,7 +1966,7 @@ def main():
                     speak(
                         title=f"📊 {display_symbol}",
                         description="",
-                        color=COLOR_STRONG_SIGNAL if is_priority or is_whale else COLOR_NEUTRAL,
+                        color=COLOR_NEUTRAL,
                         fields=[
                             {"name": "CA:", "value": token, "inline": False},
                             {"name": "🧠 Thesis", "value": analysis["thesis"], "inline": False},
