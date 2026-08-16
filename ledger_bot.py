@@ -53,7 +53,7 @@ HELIUS_RPC_URL = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
-ANTHROPIC_MODEL = "claude-sonnet-4-6"
+ANTHROPIC_MODEL = "claude-sonnet-5"
 
 BIRDEYE_API_KEY = os.environ.get("BIRDEYE_API_KEY", "")
 BIRDEYE_OHLCV_URL = "https://public-api.birdeye.so/defi/v3/ohlcv"

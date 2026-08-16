@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
-MODEL = "claude-sonnet-4-6"
+MODEL = "claude-sonnet-5"
 
 INTEL_FILE = Path("market_intel.json")
 MAX_ENTRIES_KEPT = 30  # keep the log from growing forever — rolls off old entries
