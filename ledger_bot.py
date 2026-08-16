@@ -32,15 +32,26 @@ Optional:
                        fed into conviction analysis. Free tier at
                        birdeye.so. Without it, conviction analysis
                        just skips the chart-structure input.
+  SNIPER_MODE_ENABLED - set to "true" to enable Sniper Mode: a
+                       separate, fast, filter-based strategy that
+                       enters new Pump.fun launches directly (dev buy
+                       size + holder concentration filters, ~50% of
+                       launches that pass), instead of only trading on
+                       wallet-detected buys. Off by default. Requires
+                       the "websockets" package (see Install below).
 
 Install:
-  pip install requests --break-system-packages
+  pip install requests websockets --break-system-packages
 """
 
 import os
 import json
 import time
 import re
+import random
+import threading
+import queue
+import asyncio
 import requests
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -207,7 +218,7 @@ BALANCE_RECHECK_EVERY_N_CYCLES = 720  # ~once/day at 120s/cycle
 MAX_POSITION_SOL = 0.5        # max size of any single paper position
 MAX_DAILY_LOSS_SOL = 2.0      # bot stops opening new positions past this
 MAX_TRADES_PER_HOUR = 10      # circuit breaker against runaway logic
-STARTING_PAPER_BALANCE_SOL = 20.0
+STARTING_PAPER_BALANCE_SOL = 1.0  # start small, degen-mode: aim to grow this fast, reset if wiped out
 
 # Position size scales continuously with conviction (the risk_score
 # from analyze_conviction), between these two bounds — a risk_score
@@ -215,6 +226,83 @@ STARTING_PAPER_BALANCE_SOL = 20.0
 # (riskiest that still passed) gets MIN_SCOUT_SIZE_SOL.
 MIN_SCOUT_SIZE_SOL = 0.02
 MAX_CONVICTION_SIZE_SOL = 0.25
+
+# ── Sniper Mode ──────────────────────────────────────────────────────
+#
+# A separate, faster, more mechanical strategy from the main wallet-
+# tracking one: enters new Pump.fun launches directly, before there's
+# any wallet signal or chart history — pure speed. Off by default —
+# set SNIPER_MODE_ENABLED=true to turn it on.
+SNIPER_MODE_ENABLED = os.environ.get("SNIPER_MODE_ENABLED", "true").lower() == "true"  # on by default now
+SNIPER_WS_URL = "wss://pumpdev.io/ws"  # same free, unofficial feed as pumpfun_listener.py
+SNIPER_ACTIVE_PRESET = os.environ.get("SNIPER_PRESET", "hyper_early_scalp")
+
+SNIPER_SELECTION_RATE = 0.5       # of launches that pass the safety filters, snipe ~50% (a coin flip)
+SNIPER_MIN_DEV_BUY_SOL = 0.5      # below this, strongly correlates with instant rugs
+SNIPER_POSITION_SIZE_PCT = 0.015  # 1.5% of current bankroll per trade (1-2% range) — scales
+                                   # automatically as the bankroll grows toward 10 SOL or resets to 1
+SNIPER_MIN_POSITION_SOL = 0.005   # floor, so sizing doesn't round down to something meaningless
+SNIPER_MIN_LIQUIDITY_USD = 1_000     # below this, a launch is too thin to trade safely
+SNIPER_MAX_ENTRY_MARKET_CAP_USD = 250_000  # above this, it's no longer an "early" entry
+SNIPER_MAX_QUEUE_DRAIN_PER_CYCLE = 20   # cap how many freshly-launched tokens enter the pending list per cycle
+SNIPER_MAX_PENDING_EVAL_PER_CYCLE = 20  # cap how many pending (aging-in) candidates get evaluated per cycle
+SNIPER_CHECK_INTERVAL_SECONDS = 20      # sniper positions get checked this often, not the full 2-min main cycle
+
+# Filter presets, using the exact thresholds shared — only the fields
+# marked below are actually enforced. Several fields from the original
+# preset (snipers %, insiders %, bundle %, pro traders %, audit score,
+# Dex Paid) are NOT enforced — there's no free/available data source
+# for them (they require proprietary wallet-clustering and bundling
+# analysis that specialized paid tools like Axiom provide). Treat
+# those as "not implemented," not as silently passing — being honest
+# about this gap matters more than faking a filter.
+SNIPER_PRESETS = {
+    "hyper_early_scalp": {
+        "bonding_curve_min_pct": 0, "bonding_curve_max_pct": 15,
+        "age_min_minutes": 2, "age_max_minutes": 45,
+        "top10_holders_max_pct": 35,
+        "dev_holding_max_pct": 10,
+        "min_holders": 50,
+        "require_socials": True,
+        "require_ca_ends_pump": True,
+    },
+    "early_momentum_swing": {
+        "bonding_curve_min_pct": 15, "bonding_curve_max_pct": 45,
+        "age_min_minutes": 10, "age_max_minutes": 180,
+        "top10_holders_max_pct": 30,
+        "dev_holding_max_pct": 12,
+        "min_holders": None,
+        "require_socials": False,
+        "require_ca_ends_pump": False,
+    },
+    "narrative_filter_hunt": {
+        "bonding_curve_min_pct": 10, "bonding_curve_max_pct": 60,
+        "age_min_minutes": 30, "age_max_minutes": 720,
+        "top10_holders_max_pct": 28,
+        "dev_holding_max_pct": 10,
+        "min_holders": 300,
+        "require_socials": True,
+        "require_ca_ends_pump": False,
+        "keywords_include": ["ai", "agent", "game", "tool", "analytics", "points", "infra", "depin", "studio"],
+        "keywords_exclude": ["anti-sell", "reflection", "transfer tax", "rebase"],
+    },
+}
+
+# Cupsey-style exit rules, applied specifically to Sniper Mode positions —
+# recalibrated to a staged take-profit ladder instead of one small fixed
+# target, per the more detailed breakdown: sell half at 2x, another chunk
+# at 3-5x, let a small trimmed remainder ride under the main patient
+# trailing-stop logic once both rungs have fired. Stop-loss widened to
+# match the realistic -30% to -40% range instead of the earlier -10%
+# guess. Max hold is now a backstop safety net, not the primary exit —
+# the TP ladder and SL do most of the work.
+CUPSEY_TP1_MULTIPLE = 2.0          # sell CUPSEY_TP1_FRACTION of the position at 2x entry price
+CUPSEY_TP1_FRACTION = 0.50
+CUPSEY_TP2_MULTIPLE = 4.0          # sell CUPSEY_TP2_FRACTION (of the ORIGINAL size) at 4x (middle of 3-5x)
+CUPSEY_TP2_FRACTION = 0.30
+CUPSEY_STOP_LOSS_PCT = -0.35       # middle of the realistic -30% to -40% range
+CUPSEY_MAX_HOLD_SECONDS = 600      # backstop only — 10 min, well past the 2x/4x targets' realistic window
+CUPSEY_DEV_SELL_EXIT_THRESHOLD_PCT = 0.5  # if the dev's holding drops to ≤50% of what it was at entry, exit — a real sell-off signal
 
 # ── State ────────────────────────────────────────────────────────────
 
@@ -233,6 +321,10 @@ class PaperPosition:
     initial_recovered: bool = False   # has the original capital been sold back out?
     peak_price: float = 0.0  # highest price seen since initial capital was recovered — powers the trailing stop
     is_narrative: bool = False  # matched an active viral narrative (see NARRATIVES_FILE) — gets a wider trailing stop
+    original_size_sol: float = 0.0  # sniper TP2 sizes off the ORIGINAL position, not what's left after TP1
+    tp1_hit: bool = False  # has the 2x staged take-profit already fired?
+    tp2_hit: bool = False  # has the 4x staged take-profit already fired?
+    entry_dev_holding_pct: float = None  # dev's % holding at entry — used to detect a dev sell-off
 
 
 @dataclass
@@ -243,6 +335,8 @@ class LedgerState:
     trade_log: list = field(default_factory=list)
     trades_this_hour: list = field(default_factory=list)  # timestamps
     seen_signatures: list = field(default_factory=list)   # avoid re-processing the same tx
+    total_resets: int = 0             # how many times the bankroll has been wiped out and restarted
+    daily_target_hit_this_run: bool = False  # so the 10-SOL milestone only announces once per run
 
     def save(self):
         # Cap seen_signatures so this doesn't grow forever
@@ -255,6 +349,40 @@ class LedgerState:
             data = json.loads(STATE_FILE.read_text())
             return cls(**data)
         return cls()
+
+
+def get_top10_holder_pct(mint: str) -> float:
+    """
+    Returns the percentage of total token supply held by the top 10
+    accounts, using standard (free) Solana RPC methods — no paid data
+    service needed. This is one of the most commonly cited sniper
+    safety filters: heavy concentration in a handful of wallets means
+    those wallets can crash the price by selling at will.
+
+    Returns None if unavailable (RPC error, token too new to have
+    indexed supply data yet) — callers must treat that as "unknown,"
+    never as "safe."
+    """
+    if not HELIUS_API_KEY:
+        return None
+    try:
+        supply_payload = {"jsonrpc": "2.0", "id": 1, "method": "getTokenSupply", "params": [mint]}
+        supply_resp = request_with_backoff("POST", HELIUS_RPC_URL, json=supply_payload, timeout=15)
+        supply_data = supply_resp.json()
+        total_supply = float(supply_data.get("result", {}).get("value", {}).get("uiAmount") or 0)
+        if total_supply <= 0:
+            return None
+
+        largest_payload = {"jsonrpc": "2.0", "id": 1, "method": "getTokenLargestAccounts", "params": [mint]}
+        largest_resp = request_with_backoff("POST", HELIUS_RPC_URL, json=largest_payload, timeout=15)
+        largest_data = largest_resp.json()
+        accounts = largest_data.get("result", {}).get("value", [])[:10]
+        top10_amount = sum(float(a.get("uiAmount") or 0) for a in accounts)
+
+        return (top10_amount / total_supply) * 100
+    except Exception as e:
+        print(f"[WARN] holder concentration check failed for {mint}: {e}")
+        return None
 
 
 def get_wallet_total_value_usd(wallet_address: str) -> float:
@@ -1021,12 +1149,24 @@ def check_open_positions(state: LedgerState):
          fixed take-profit level — a position at 3x can keep running
          to 10x as long as it doesn't give back 20% off its high; it
          only exits when momentum actually breaks.
+
+    Skips positions tagged "🎯 Sniper Play" — those use the separate,
+    much faster Cupsey-style exit logic in check_sniper_positions()
+    instead, since sniped positions are a different strategy entirely
+    (fast scalp, never held long) from the patient trailing-stop
+    approach here.
+
     Run this every cycle so positions aren't left unmonitored.
     """
     if not state.open_positions:
         return
 
-    mints = list(state.open_positions.keys())
+    mints = [
+        m for m, pos in state.open_positions.items()
+        if "Sniper" not in pos.get("risk_level", "")
+    ]
+    if not mints:
+        return
     prices = get_token_prices_usd(mints)
 
     for mint in mints:
@@ -1074,6 +1214,91 @@ def check_open_positions(state: LedgerState):
                 close_paper_position(state, mint, current_price, reason=reason)
 
 
+def check_sniper_positions(state: LedgerState):
+    """
+    Cupsey-style exit for Sniper Mode positions — a staged take-profit
+    ladder (sell half at 2x, another chunk at 4x, let a small trimmed
+    remainder ride under the main patient trailing-stop logic), a wide
+    stop-loss (-35%, matching the realistic range rather than an
+    overly tight guess), a dev-sell trigger (exit immediately if the
+    creator wallet appears to be dumping), and a 10-minute backstop so
+    nothing lingers forever even if none of the above ever fires.
+    """
+    sniper_mints = [
+        m for m, pos in state.open_positions.items()
+        if "Sniper" in pos.get("risk_level", "")
+    ]
+    if not sniper_mints:
+        return
+
+    prices = get_token_prices_usd(sniper_mints)
+    now = datetime.now(timezone.utc)
+    EPSILON = 1e-9
+
+    for mint in sniper_mints:
+        pos = state.open_positions.get(mint)
+        if not pos:
+            continue
+
+        opened_at = datetime.fromisoformat(pos["opened_at"])
+        held_seconds = (now - opened_at).total_seconds()
+        current_price = prices.get(mint)
+
+        # Dev-sell check — a real red flag, checked regardless of price data
+        if pos.get("entry_dev_holding_pct"):
+            current_dev_pct = get_dev_holding_pct(mint, pos.get("opened_by", ""))
+            if current_dev_pct is not None:
+                if current_dev_pct <= pos["entry_dev_holding_pct"] * CUPSEY_DEV_SELL_EXIT_THRESHOLD_PCT:
+                    if current_price is not None:
+                        close_paper_position(state, mint, current_price, reason="🚨 Dev Sell Detected — Exiting")
+                    continue
+
+        if held_seconds >= CUPSEY_MAX_HOLD_SECONDS:
+            if current_price is not None:
+                close_paper_position(state, mint, current_price, reason="⏱️ Sniper Time Exit")
+            continue
+
+        if current_price is None:
+            continue  # no price yet this cycle — check again next cycle
+
+        change_pct = (current_price - pos["entry_price"]) / pos["entry_price"]
+
+        if change_pct <= CUPSEY_STOP_LOSS_PCT + EPSILON:
+            close_paper_position(state, mint, current_price, reason="🎯 Sniper Stop Loss")
+            continue
+
+        current_multiple = 1 + change_pct
+
+        if not pos["tp1_hit"] and current_multiple >= CUPSEY_TP1_MULTIPLE - EPSILON:
+            partial_close_paper_position(state, mint, current_price, CUPSEY_TP1_FRACTION, reason="🎯 Sniper TP1 (2x)")
+            if mint in state.open_positions:
+                state.open_positions[mint]["tp1_hit"] = True
+                state.save()
+            continue
+
+        if pos["tp1_hit"] and not pos["tp2_hit"] and current_multiple >= CUPSEY_TP2_MULTIPLE - EPSILON:
+            # TP2 sizes off the ORIGINAL position, not what's left after TP1
+            original_size = pos.get("original_size_sol") or pos["size_sol"]
+            fraction_of_remaining = min(1.0, (CUPSEY_TP2_FRACTION * original_size) / pos["size_sol"])
+            partial_close_paper_position(state, mint, current_price, fraction_of_remaining, reason="🎯 Sniper TP2 (4x)")
+            if mint in state.open_positions:
+                state.open_positions[mint]["tp2_hit"] = True
+                # Both rungs fired — hand the trimmed remainder off to the
+                # main patient trailing-stop logic instead of Cupsey's fast
+                # exit, matching "let a runner ride only if distribution
+                # improves" from the notes you shared. Deliberately does
+                # NOT contain "Sniper" in the tag — that substring is what
+                # both check_sniper_positions and check_open_positions use
+                # to decide which function handles a given position, so
+                # this is what actually moves it from one system to the
+                # other, not just cosmetic labeling.
+                state.open_positions[mint]["risk_level"] = "🏃 Trimmed Runner (trailing stop)"
+                state.open_positions[mint]["initial_recovered"] = True
+                state.open_positions[mint]["peak_price"] = current_price
+                state.save()
+            continue
+
+
 # ── Real execution (disabled — future step, not wired up yet) ───────
 
 REAL_TRADING_ENABLED = False  # flip only after paper track record + your own review
@@ -1094,6 +1319,13 @@ def execute_real_trade(*args, **kwargs):
 # ── Performance analysis — "learning from losses" ────────────────────
 
 MONTHLY_PROFIT_GOAL_USD = 500  # paper-trading target — see note in recap message
+
+# Degen-mode framing: small starting bankroll, aggressive daily target,
+# auto-reset when it's wiped out. This is intentionally a much shorter,
+# higher-variance goal than the monthly USD target above — the two
+# coexist; this one is about the SOL balance itself, checked every cycle.
+DAILY_TARGET_SOL = 10.0    # 10x the 1 SOL starting balance in a day
+BLOWUP_DUST_THRESHOLD_SOL = 0.01  # below this (and no open positions), treat the bankroll as wiped out
 PERFORMANCE_RECAP_EVERY_N_CYCLES = 720  # ~once/day at 120s/cycle
 
 
@@ -1118,13 +1350,19 @@ def compute_performance_stats(state: LedgerState) -> dict:
         return wins / len(entries) * 100
 
     whale_exits = [t for t in exits if "Lower Risk" in t.get("risk_level", "")]
-    scout_exits = [t for t in exits if "Lower Risk" not in t.get("risk_level", "")]
+    sniper_exits = [t for t in exits if "Sniper" in t.get("risk_level", "")]
+    scout_exits = [
+        t for t in exits
+        if "Lower Risk" not in t.get("risk_level", "") and "Sniper" not in t.get("risk_level", "")
+    ]
 
     return {
         "total_exits": len(exits),
         "win_rate_pct": win_rate(exits),
         "whale_win_rate_pct": win_rate(whale_exits),
         "whale_exit_count": len(whale_exits),
+        "sniper_win_rate_pct": win_rate(sniper_exits),
+        "sniper_exit_count": len(sniper_exits),
         "scout_win_rate_pct": win_rate(scout_exits),
         "scout_exit_count": len(scout_exits),
         "total_pnl_sol": sum(t["pnl_sol"] for t in exits),
@@ -1152,6 +1390,54 @@ def compute_monthly_pnl_usd(state: LedgerState, sol_price_usd: float) -> float:
     return monthly_pnl_sol * sol_price_usd
 
 
+def check_for_blowup_reset(state: LedgerState):
+    """
+    Degen-mode safety valve: if the bankroll is effectively wiped out
+    (dust-level balance, nothing tied up in open positions either),
+    reset back to the starting 1 SOL and keep going — "if he loses it
+    all, restart" was the explicit instruction. Tracks how many times
+    this has happened, so the recap can show whether the approach is
+    actually working over many attempts or just repeatedly blowing up.
+    """
+    if state.open_positions:
+        return  # capital is tied up, not gone — don't reset mid-position
+    if state.balance_sol > BLOWUP_DUST_THRESHOLD_SOL:
+        return
+
+    state.total_resets += 1
+    state.balance_sol = STARTING_PAPER_BALANCE_SOL
+    state.daily_target_hit_this_run = False
+    speak(
+        title="💀 Bankroll Wiped — Restarting",
+        description=(
+            f"Balance hit dust ({BLOWUP_DUST_THRESHOLD_SOL} SOL floor). "
+            f"Resetting to {STARTING_PAPER_BALANCE_SOL} SOL and starting the next run.\n\n"
+            f"**Total resets so far:** {state.total_resets}"
+        ),
+        color=COLOR_LOSS,
+    )
+    state.save()
+
+
+def check_for_daily_target_hit(state: LedgerState):
+    """Announces once per run (i.e. once per reset cycle) when the balance reaches the 10 SOL target."""
+    if state.daily_target_hit_this_run:
+        return
+    if state.balance_sol < DAILY_TARGET_SOL:
+        return
+
+    state.daily_target_hit_this_run = True
+    speak(
+        title="🏆 Daily Target Hit",
+        description=(
+            f"Balance reached {state.balance_sol:.4f} SOL — past the {DAILY_TARGET_SOL} SOL target. "
+            f"Still running, not resetting on a win — only a wipeout triggers a restart."
+        ),
+        color=COLOR_PROFIT,
+    )
+    state.save()
+
+
 def post_performance_recap(state: LedgerState):
     """
     Posts a periodic honest report card to Discord: win rate overall
@@ -1176,7 +1462,10 @@ def post_performance_recap(state: LedgerState):
         lines.append(f"**Whale-backed win rate:** {stats['whale_win_rate_pct']:.0f}% ({stats['whale_exit_count']} exits)")
     if stats["scout_win_rate_pct"] is not None:
         lines.append(f"**Scout win rate:** {stats['scout_win_rate_pct']:.0f}% ({stats['scout_exit_count']} exits)")
+    if stats["sniper_win_rate_pct"] is not None:
+        lines.append(f"**Sniper win rate:** {stats['sniper_win_rate_pct']:.0f}% ({stats['sniper_exit_count']} exits)")
     lines.append(f"**Total realized PnL:** {stats['total_pnl_sol']:+.4f} SOL")
+    lines.append(f"**Current balance:** {state.balance_sol:.4f} SOL  •  **Bankroll resets so far:** {state.total_resets}")
 
     if monthly_pnl_usd is not None:
         progress_pct = max(0, monthly_pnl_usd) / MONTHLY_PROFIT_GOAL_USD * 100
@@ -1192,11 +1481,323 @@ def post_performance_recap(state: LedgerState):
     )
 
 
+# ── Sniper Mode: launch listener + evaluation ─────────────────────────
+
+SNIPER_LAUNCH_QUEUE = queue.Queue()
+
+
+def _sniper_listener_thread():
+    """
+    Runs in a background thread so the WebSocket connection doesn't
+    block the main polling loop. Connects to the free Pump.fun launch
+    feed and pushes every new-token event into a thread-safe queue for
+    the main loop to evaluate. Reconnects automatically on drops.
+    """
+    import websockets
+
+    async def listen():
+        while True:
+            try:
+                async with websockets.connect(SNIPER_WS_URL) as ws:
+                    await ws.send(json.dumps({"method": "subscribeNewToken"}))
+                    print("[SNIPER] Connected to launch feed.")
+                    async for raw_msg in ws:
+                        try:
+                            event = json.loads(raw_msg)
+                            SNIPER_LAUNCH_QUEUE.put(event)
+                        except json.JSONDecodeError:
+                            continue
+            except Exception as e:
+                print(f"[SNIPER] Listener connection error, retrying in 10s: {e}")
+                time.sleep(10)
+
+    asyncio.run(listen())
+
+
+def start_sniper_listener():
+    thread = threading.Thread(target=_sniper_listener_thread, daemon=True)
+    thread.start()
+    print("[SNIPER] Listener thread started.")
+
+
+def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
+    """
+    Runs a launch through the preset's feasible filters once it has
+    aged into the preset's [age_min, age_max] window — this matters:
+    the "Hyper-Early Scalp" preset targets tokens 2-45 minutes old,
+    not the literal instant of launch, since bonding curve progress
+    and holder count need a little time to form. See SNIPER_PRESETS
+    for exactly which fields are enforced and which aren't (several
+    of the originally described fields — snipers %, insiders %,
+    bundle %, pro traders %, audit score, Dex Paid — have no free
+    data source and are honestly skipped, not faked).
+    """
+    preset = SNIPER_PRESETS[SNIPER_ACTIVE_PRESET]
+    mint = candidate["mint"]
+    symbol = candidate.get("symbol", "?")
+    name = candidate.get("name", "")
+
+    if candidate.get("initial_buy_sol", 0) < SNIPER_MIN_DEV_BUY_SOL:
+        print(f"[SNIPE SKIP] {symbol}: dev buy too low ({candidate.get('initial_buy_sol', 0)} SOL)")
+        return
+
+    # Narrative-Filter Hunt: keyword gate, checked against name+symbol
+    if "keywords_include" in preset:
+        text = f"{name} {symbol}".lower()
+        if not any(kw in text for kw in preset["keywords_include"]):
+            print(f"[SNIPE SKIP] {symbol}: no matching narrative keyword")
+            return
+        if any(kw in text for kw in preset.get("keywords_exclude", [])):
+            print(f"[SNIPE SKIP] {symbol}: matched an excluded (scam-pattern) keyword")
+            return
+
+    if preset.get("require_ca_ends_pump") and not mint.endswith("pump"):
+        print(f"[SNIPE SKIP] {symbol}: CA doesn't end in 'pump'")
+        return
+
+    top10_pct = get_top10_holder_pct(mint)
+    if top10_pct is not None and top10_pct > preset["top10_holders_max_pct"]:
+        print(f"[SNIPE SKIP] {symbol}: top 10 holders too concentrated ({top10_pct:.1f}%)")
+        return
+
+    dev_pct = get_dev_holding_pct(mint, candidate.get("creator", ""))
+    if dev_pct is not None and dev_pct > preset["dev_holding_max_pct"]:
+        print(f"[SNIPE SKIP] {symbol}: dev holding too high ({dev_pct:.1f}%)")
+        return
+
+    if preset.get("min_holders"):
+        holder_count = get_approx_holder_count(mint)
+        if holder_count is not None and holder_count < preset["min_holders"]:
+            print(f"[SNIPE SKIP] {symbol}: too few holders ({holder_count} < {preset['min_holders']})")
+            return
+
+    if preset.get("require_socials"):
+        has_socials = bool(candidate.get("twitter") or candidate.get("telegram") or candidate.get("website"))
+        if not has_socials:
+            print(f"[SNIPE SKIP] {symbol}: no social links present")
+            return
+
+    liquidity_usd, market_cap_usd = get_liquidity_and_market_cap(mint)
+    if liquidity_usd is not None and liquidity_usd < SNIPER_MIN_LIQUIDITY_USD:
+        print(f"[SNIPE SKIP] {symbol}: liquidity too thin (${liquidity_usd:,.0f})")
+        return
+    if market_cap_usd is not None and market_cap_usd > SNIPER_MAX_ENTRY_MARKET_CAP_USD:
+        print(f"[SNIPE SKIP] {symbol}: market cap too high for an early entry (${market_cap_usd:,.0f})")
+        return
+
+    if random.random() > SNIPER_SELECTION_RATE:
+        print(f"[SNIPE SKIP] {symbol}: passed filters, not selected this round")
+        return
+
+    prices = get_token_prices_usd([mint])
+    entry_price = prices.get(mint)
+    if entry_price is None:
+        print(f"[SNIPE SKIP] {symbol}: no price data yet")
+        return
+
+    # Size as a % of CURRENT bankroll, not a fixed SOL amount — this
+    # scales automatically as the balance grows toward the 10 SOL
+    # target or resets to 1 SOL after a wipeout.
+    size_sol = max(SNIPER_MIN_POSITION_SOL, state.balance_sol * SNIPER_POSITION_SIZE_PCT)
+
+    ok, block_reason = can_open_position(state, size_sol)
+    if not ok:
+        print(f"[SNIPE BLOCKED] {symbol}: {block_reason}")
+        return
+
+    balance_after = state.balance_sol - size_sol
+    notes_lines = [f"• **Preset:** {SNIPER_ACTIVE_PRESET.replace('_', ' ').title()}"]
+    if top10_pct is not None:
+        notes_lines.append(f"• **Top 10 Holders:** {top10_pct:.1f}%")
+    if dev_pct is not None:
+        notes_lines.append(f"• **Dev Holding:** {dev_pct:.1f}%")
+    if liquidity_usd is not None:
+        notes_lines.append(f"• **Liquidity:** {liquidity_usd:,.0f} USD")
+    notes_lines.append(f"• **Amount Bought:** {size_sol:.4f} SOL")
+    notes_lines.append(f"• **Current Balance:** {balance_after:.4f} SOL")
+
+    speak(
+        title=f"🎯 {symbol}",
+        description="",
+        color=COLOR_BUY,
+        fields=[
+            {"name": "CA:", "value": mint, "inline": False},
+            {"name": "🧠 Thesis", "value": f"Sniped per {SNIPER_ACTIVE_PRESET} filters ({name}).", "inline": False},
+            {"name": "ℹ️ Additional Notes", "value": "\n".join(notes_lines), "inline": False},
+        ],
+    )
+
+    # opened_by stores the actual creator address (not a placeholder
+    # string) — check_sniper_positions needs this to re-check the dev's
+    # holding later and detect a sell-off.
+    creator_address = candidate.get("creator", "")
+    open_paper_position(state, mint, entry_price, size_sol, opened_by=creator_address, strength="weak")
+    if mint in state.open_positions:
+        state.open_positions[mint]["risk_level"] = "🎯 Sniper Play"
+        state.open_positions[mint]["original_size_sol"] = size_sol
+        state.open_positions[mint]["entry_dev_holding_pct"] = dev_pct
+        state.save()
+
+
+def get_liquidity_and_market_cap(mint: str):
+    """
+    Fetches current liquidity and market cap for a token via
+    DexScreener's free public API (no key needed) — used for the
+    "min liquidity" and "max entry market cap" filters. Returns
+    (liquidity_usd, market_cap_usd), either of which may be None if
+    unavailable (e.g. too new to be indexed yet).
+    """
+    try:
+        resp = requests.get(
+            "https://api.dexscreener.com/latest/dex/tokens/" + mint, timeout=15
+        )
+        resp.raise_for_status()
+        pairs = resp.json().get("pairs") or []
+        solana_pairs = [p for p in pairs if p.get("chainId") == "solana"]
+        if not solana_pairs:
+            return None, None
+        pair = max(solana_pairs, key=lambda p: (p.get("liquidity") or {}).get("usd", 0) or 0)
+        liquidity_usd = (pair.get("liquidity") or {}).get("usd")
+        market_cap_usd = pair.get("fdv") or pair.get("marketCap")
+        return liquidity_usd, market_cap_usd
+    except Exception as e:
+        print(f"[WARN] liquidity/mcap lookup failed for {mint}: {e}")
+        return None, None
+
+
+def get_dev_holding_pct(mint: str, creator: str) -> float:
+    """
+    % of total supply still held by the token's own creator wallet —
+    free via the same Solana RPC methods as get_top10_holder_pct.
+    Returns None if the creator address is unknown or the check fails.
+    """
+    if not creator or not HELIUS_API_KEY:
+        return None
+    try:
+        payload = {
+            "jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner",
+            "params": [creator, {"mint": mint}, {"encoding": "jsonParsed"}],
+        }
+        resp = request_with_backoff("POST", HELIUS_RPC_URL, json=payload, timeout=15)
+        data = resp.json()
+        accounts = data.get("result", {}).get("value", [])
+        dev_amount = sum(
+            float(a["account"]["data"]["parsed"]["info"]["tokenAmount"]["uiAmount"] or 0)
+            for a in accounts
+        )
+
+        supply_payload = {"jsonrpc": "2.0", "id": 1, "method": "getTokenSupply", "params": [mint]}
+        supply_resp = request_with_backoff("POST", HELIUS_RPC_URL, json=supply_payload, timeout=15)
+        total_supply = float(supply_resp.json().get("result", {}).get("value", {}).get("uiAmount") or 0)
+        if total_supply <= 0:
+            return None
+
+        return (dev_amount / total_supply) * 100
+    except Exception as e:
+        print(f"[WARN] dev holding check failed for {mint}: {e}")
+        return None
+
+
+def get_approx_holder_count(mint: str) -> int:
+    """
+    Best-effort holder count via the top-20-accounts RPC call — this
+    genuinely only sees the top 20, so it under-counts real holder
+    totals for popular tokens. Treat this as a rough floor, not an
+    exact count — a full accurate count needs a paid indexing service.
+    Returns None on failure.
+    """
+    if not HELIUS_API_KEY:
+        return None
+    try:
+        payload = {"jsonrpc": "2.0", "id": 1, "method": "getTokenLargestAccounts", "params": [mint]}
+        resp = request_with_backoff("POST", HELIUS_RPC_URL, json=payload, timeout=15)
+        accounts = resp.json().get("result", {}).get("value", [])
+        return len([a for a in accounts if float(a.get("uiAmount") or 0) > 0])
+    except Exception as e:
+        print(f"[WARN] holder count check failed for {mint}: {e}")
+        return None
+
+
+SNIPER_PENDING = {}  # mint -> candidate dict with launch metadata, held until it ages into the preset's window
+
+
+def drain_sniper_queue(state: "LedgerState"):
+    """
+    Moves fresh launches from the raw WS queue into the pending list
+    (does NOT evaluate them yet — they need to age into the preset's
+    window first). Processes up to SNIPER_MAX_QUEUE_DRAIN_PER_CYCLE
+    per call so a burst of launches can't stall the main loop.
+    """
+    processed = 0
+    while processed < SNIPER_MAX_QUEUE_DRAIN_PER_CYCLE:
+        try:
+            event = SNIPER_LAUNCH_QUEUE.get_nowait()
+        except queue.Empty:
+            break
+        mint = event.get("mint")
+        if mint and mint not in SNIPER_PENDING:
+            SNIPER_PENDING[mint] = {
+                "mint": mint,
+                "symbol": event.get("symbol", "?"),
+                "name": event.get("name", ""),
+                "creator": event.get("creator", ""),
+                "initial_buy_sol": event.get("initialBuySol", 0) or 0,
+                "twitter": event.get("twitter"),
+                "telegram": event.get("telegram"),
+                "website": event.get("website"),
+                "first_seen": time.time(),
+            }
+        processed += 1
+
+
+def scan_sniper_pending(state: "LedgerState"):
+    """
+    Checks every pending candidate's age each cycle: evaluates it
+    once it's within the active preset's [age_min, age_max] window,
+    and drops it (gives up) if it ages past the max without ever
+    being evaluated. This is what lets "Hyper-Early Scalp" mean
+    2-45 minutes old, not literally the instant of launch.
+    """
+    preset = SNIPER_PRESETS[SNIPER_ACTIVE_PRESET]
+    now = time.time()
+    processed = 0
+
+    for mint in list(SNIPER_PENDING.keys()):
+        if processed >= SNIPER_MAX_PENDING_EVAL_PER_CYCLE:
+            break
+        candidate = SNIPER_PENDING[mint]
+        age_minutes = (now - candidate["first_seen"]) / 60
+
+        if age_minutes < preset["age_min_minutes"]:
+            continue  # still too young for this preset — check again next cycle
+
+        if age_minutes > preset["age_max_minutes"]:
+            print(f"[SNIPE EXPIRED] {candidate['symbol']}: aged past the {SNIPER_ACTIVE_PRESET} window, giving up")
+            del SNIPER_PENDING[mint]
+            continue
+
+        # Within the window — evaluate now, one shot, then remove either way
+        try:
+            evaluate_snipe_candidate(candidate, state)
+        except Exception as e:
+            print(f"[ERROR] sniper evaluation failed for {candidate['symbol']}: {e}")
+        del SNIPER_PENDING[mint]
+        processed += 1
+
+
 # ── Main loop ─────────────────────────────────────────────────────────
 
 def main():
     state = LedgerState.load()
     print(f"Ledger booting up. Paper balance: {state.balance_sol} SOL")
+
+    if SNIPER_MODE_ENABLED:
+        start_sniper_listener()
+        preset = SNIPER_PRESETS[SNIPER_ACTIVE_PRESET]
+        print(f"[SNIPER] Mode ENABLED — preset '{SNIPER_ACTIVE_PRESET}', "
+              f"selection rate {SNIPER_SELECTION_RATE:.0%}, "
+              f"age window {preset['age_min_minutes']}-{preset['age_max_minutes']} min, "
+              f"max top10 {preset['top10_holders_max_pct']}%")
 
     whale_wallets = set()
     cycle_count = 0
@@ -1204,9 +1805,13 @@ def main():
     while True:
         cycle_count += 1
 
+        if SNIPER_MODE_ENABLED:
+            drain_sniper_queue(state)
+            scan_sniper_pending(state)
+
         # Reload every cycle — edit wallets.json anytime, no restart needed
         watched_wallets, wallet_handles, priority_wallets = load_wallets()
-        globals()["WALLET_HANDLES"] = wallet_handles  # generate_thesis() reads this
+        globals()["WALLET_HANDLES"] = wallet_handles  # analyze_conviction() reads this via WALLET_HANDLES.get()
 
         if not watched_wallets:
             print(f"No wallets in {WALLETS_CONFIG_FILE} — add some and it'll pick them up next cycle.")
@@ -1318,8 +1923,30 @@ def main():
             time.sleep(0.3)  # spread requests out across the cycle
 
         check_open_positions(state)
+        if SNIPER_MODE_ENABLED:
+            check_sniper_positions(state)
+        check_for_daily_target_hit(state)
+        check_for_blowup_reset(state)
         state.save()
-        time.sleep(POLL_SECONDS)
+
+        if SNIPER_MODE_ENABLED:
+            # Sniper positions need much faster monitoring than the main
+            # 2-minute cycle — Cupsey's average hold is ~40 seconds, so a
+            # single check per full cycle would miss most of that window.
+            # Break the wait into smaller chunks and re-check sniper
+            # positions (and drain/scan new launches) on each one.
+            elapsed = 0
+            while elapsed < POLL_SECONDS:
+                time.sleep(min(SNIPER_CHECK_INTERVAL_SECONDS, POLL_SECONDS - elapsed))
+                elapsed += SNIPER_CHECK_INTERVAL_SECONDS
+                drain_sniper_queue(state)
+                scan_sniper_pending(state)
+                check_sniper_positions(state)
+                check_for_daily_target_hit(state)
+                check_for_blowup_reset(state)
+                state.save()
+        else:
+            time.sleep(POLL_SECONDS)
 
 
 if __name__ == "__main__":
