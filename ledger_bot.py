@@ -54,7 +54,7 @@ import queue
 import asyncio
 import requests
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 # ── Config ────────────────────────────────────────────────────────────
@@ -209,7 +209,7 @@ POLL_SECONDS = 120
 MAX_POSITION_SOL = 0.5        # max size of any single paper position
 MAX_DAILY_LOSS_SOL = 2.0      # bot stops opening new positions past this
 MAX_TRADES_PER_HOUR = 10      # circuit breaker against runaway logic
-STARTING_PAPER_BALANCE_SOL = 1.0  # start small, degen-mode: aim to grow this fast, reset if wiped out
+STARTING_PAPER_BALANCE_SOL = 10.0  # degen-mode: aim to compound this fast toward the 100 SOL goal, reset if wiped out
 
 # Position size scales continuously with conviction (the risk_score
 # from analyze_conviction), between these two bounds — a risk_score
@@ -230,7 +230,7 @@ SNIPER_ACTIVE_PRESET = os.environ.get("SNIPER_PRESET", "hyper_early_scalp")
 
 SNIPER_SELECTION_RATE = 0.5       # of launches that pass the safety filters, snipe ~50% (a coin flip)
 SNIPER_MIN_DEV_BUY_SOL = 0.5      # below this, strongly correlates with instant rugs
-SNIPER_POSITION_SIZE_PCT = 0.015  # 1.5% of current bankroll per trade (1-2% range) — scales
+SNIPER_POSITION_SIZE_PCT = 0.08   # 8% of current bankroll per trade — scales
                                    # automatically as the bankroll grows toward 10 SOL or resets to 1
 SNIPER_MIN_POSITION_SOL = 0.005   # floor, so sizing doesn't round down to something meaningless
 SNIPER_MIN_LIQUIDITY_USD = 1_000     # below this, a launch is too thin to trade safely
@@ -238,6 +238,29 @@ SNIPER_MAX_ENTRY_MARKET_CAP_USD = 250_000  # above this, it's no longer an "earl
 SNIPER_MAX_QUEUE_DRAIN_PER_CYCLE = 20   # cap how many freshly-launched tokens enter the pending list per cycle
 SNIPER_MAX_PENDING_EVAL_PER_CYCLE = 20  # cap how many pending (aging-in) candidates get evaluated per cycle
 SNIPER_CHECK_INTERVAL_SECONDS = 20      # sniper positions get checked this often, not the full 2-min main cycle
+MAX_CONCURRENT_SNIPER_POSITIONS = 8    # hard cap on simultaneous sniper/priority-copy positions
+
+# Daily loss pause — a percentage-based circuit breaker separate from
+# the fixed MAX_DAILY_LOSS_SOL below: if the balance drawdown from the
+# start of the current run exceeds this, pause ALL new buys for 12
+# hours rather than continuing to trade through a bad stretch.
+DAILY_LOSS_PAUSE_PCT = -0.12       # -12% from the run's starting balance
+DAILY_LOSS_PAUSE_HOURS = 4
+
+# Total exposure and reserve rules — new position-level checks, on top
+# of the per-trade sizing above.
+MAX_TOTAL_EXPOSURE_PCT = 0.25      # never have more than 25% of total equity tied up in open positions at once
+MIN_RESERVE_PCT = 0.15             # always keep at least 15% of equity as liquid SOL, not committed to trades
+
+# Peak-drawdown circuit breaker — separate from the run-start-based
+# daily loss pause above. Tracks the highest balance ever seen this
+# run; if the balance falls 25% below that peak, switch to "ultra
+# conservative mode" (halved position sizing) until it recovers.
+PEAK_DRAWDOWN_ULTRA_CONSERVATIVE_PCT = -0.25
+ULTRA_CONSERVATIVE_SIZE_MULTIPLIER = 0.5
+
+# 3-day goal tracking — a hard deadline, not just an aspirational target.
+GOAL_DEADLINE_HOURS = 72
 
 # Filter presets, using the exact thresholds shared — only the fields
 # marked below are actually enforced. Several fields from the original
@@ -292,7 +315,7 @@ CUPSEY_TP1_FRACTION = 0.50
 CUPSEY_TP2_MULTIPLE = 4.0          # sell CUPSEY_TP2_FRACTION (of the ORIGINAL size) at 4x (middle of 3-5x)
 CUPSEY_TP2_FRACTION = 0.30
 CUPSEY_STOP_LOSS_PCT = -0.35       # middle of the realistic -30% to -40% range
-CUPSEY_MAX_HOLD_SECONDS = 600      # backstop only — 10 min, well past the 2x/4x targets' realistic window
+CUPSEY_MAX_HOLD_SECONDS = 60       # hard cap at 1 minute — positions were lingering far too long
 CUPSEY_DEV_SELL_EXIT_THRESHOLD_PCT = 0.5  # if the dev's holding drops to ≤50% of what it was at entry, exit — a real sell-off signal
 
 # ── State ────────────────────────────────────────────────────────────
@@ -323,6 +346,9 @@ class PaperPosition:
     tp1_hit: bool = False  # has the 2x staged take-profit already fired?
     tp2_hit: bool = False  # has the 4x staged take-profit already fired?
     entry_dev_holding_pct: float = None  # dev's % holding at entry — used to detect a dev sell-off
+    thesis: str = ""  # original reasoning at entry — gives later commentary/decisions real context
+    commented_at_checkpoint: bool = False  # has the mid-hold live commentary already been posted?
+    dip_buys: int = 0  # how many times this position has been averaged into on a drawdown
 
 
 @dataclass
@@ -334,6 +360,12 @@ class LedgerState:
     trades_this_hour: list = field(default_factory=list)  # timestamps
     seen_signatures: list = field(default_factory=list)   # avoid re-processing the same tx
     total_resets: int = 0             # how many times the bankroll has been wiped out and restarted
+    run_start_balance: float = STARTING_PAPER_BALANCE_SOL  # baseline for the daily loss pause, reset each run
+    run_start_time: str = None         # ISO timestamp — baseline for the 72h goal deadline, reset each run
+    peak_balance: float = STARTING_PAPER_BALANCE_SOL  # highest balance ever seen this run — powers the -25% ultra-conservative trigger
+    ultra_conservative_mode: bool = False  # halves position sizing while active
+    goal_deadline_announced: bool = False  # so the 72h pass/fail announcement only fires once per run
+    trading_paused_until: str = None  # ISO timestamp — no new buys accepted while set and in the future
     daily_target_hit_this_run: bool = False  # so the 10-SOL milestone only announces once per run
 
     def save(self):
@@ -345,8 +377,12 @@ class LedgerState:
     def load(cls):
         if STATE_FILE.exists():
             data = json.loads(STATE_FILE.read_text())
-            return cls(**data)
-        return cls()
+            state = cls(**data)
+        else:
+            state = cls()
+        if not state.run_start_time:
+            state.run_start_time = datetime.now(timezone.utc).isoformat()
+        return state
 
 
 def get_top10_holder_pct(mint: str) -> float:
@@ -691,7 +727,32 @@ def extract_new_buys(transactions: list, wallet_address: str) -> list:
         if tx.get("type") != "SWAP":
             continue
 
-        for transfer in tx.get("tokenTransfers", []):
+        transfers = tx.get("tokenTransfers", [])
+
+        # A genuine buy means the wallet BOTH pays something out (native
+        # SOL, or a stablecoin/wrapped-SOL token) AND receives the new
+        # token, in the SAME transaction. Checking only the inflow isn't
+        # enough — a token sent directly to the wallet by someone else,
+        # or the wallet showing up as an incidental hop in someone
+        # else's swap, would otherwise look identical to a real
+        # purchase. Requiring a matching outflow confirms the wallet is
+        # the one actually executing and paying for the trade. Checks
+        # BOTH tokenTransfers (wrapped SOL/USDC/USDT) and nativeTransfers
+        # (plain SOL) — Pump.fun buys typically pay in native SOL, which
+        # Helius records separately from SPL token transfers.
+        wallet_paid_out = any(
+            transfer.get("fromUserAccount") == wallet_address
+            and transfer.get("mint") in STABLE_OR_SOL_MINTS
+            for transfer in transfers
+        ) or any(
+            native.get("fromUserAccount") == wallet_address
+            and (native.get("amount") or 0) > 0
+            for native in tx.get("nativeTransfers", [])
+        )
+        if not wallet_paid_out:
+            continue
+
+        for transfer in transfers:
             if (
                 transfer.get("toUserAccount") == wallet_address
                 and transfer.get("mint") not in STABLE_OR_SOL_MINTS
@@ -858,6 +919,10 @@ def copy_priority_wallet_entry(
     """
     display_symbol = metadata.get("symbol") or token[:6] + "..."
 
+    if token in state.open_positions:
+        print(f"  [SKIP] {display_symbol}: already holding a position, not copying this buy.")
+        return
+
     prices = get_token_prices_usd([token])
     entry_price = prices.get(token)
     if entry_price is None:
@@ -867,7 +932,8 @@ def copy_priority_wallet_entry(
     # Priority copies get double the normal sniper allocation — the
     # extra weight IS the "priority" treatment, on top of always
     # copying regardless of independent judgment.
-    size_sol = max(SNIPER_MIN_POSITION_SOL, state.balance_sol * SNIPER_POSITION_SIZE_PCT * 2)
+    size_multiplier = ULTRA_CONSERVATIVE_SIZE_MULTIPLIER if state.ultra_conservative_mode else 1.0
+    size_sol = max(SNIPER_MIN_POSITION_SOL, state.balance_sol * SNIPER_POSITION_SIZE_PCT * 2 * size_multiplier)
     size_sol = min(size_sol, MAX_POSITION_SOL)
 
     ok, block_reason = can_open_position(state, size_sol)
@@ -899,7 +965,10 @@ def copy_priority_wallet_entry(
         ],
     )
 
-    open_paper_position(state, token, entry_price, size_sol, opened_by=wallet, strength="strong")
+    open_paper_position(
+        state, token, entry_price, size_sol, opened_by=wallet, strength="strong",
+        thesis=f"{trader_name} entered — mirroring directly on priority trust.",
+    )
     if token in state.open_positions:
         # Tagged to contain "Sniper" so it correctly routes through
         # check_sniper_positions (the Cupsey ladder), not the main
@@ -1039,6 +1108,12 @@ Respond with ONLY valid JSON, no other text, no markdown code fences:
 
 # ── Paper trading engine ─────────────────────────────────────────────
 
+def compute_total_equity(state: LedgerState) -> float:
+    """Liquid balance + capital currently committed to open positions (approximate, ignores unrealized P&L)."""
+    committed = sum(pos.get("size_sol", 0) for pos in state.open_positions.values())
+    return state.balance_sol + committed
+
+
 def can_open_position(state: LedgerState, size_sol: float) -> tuple[bool, str]:
     if size_sol > MAX_POSITION_SOL:
         return False, f"size {size_sol} exceeds MAX_POSITION_SOL ({MAX_POSITION_SOL})"
@@ -1046,6 +1121,21 @@ def can_open_position(state: LedgerState, size_sol: float) -> tuple[bool, str]:
         return False, "daily loss limit hit, no new positions"
     if size_sol > state.balance_sol:
         return False, "insufficient paper balance"
+    if len(state.open_positions) >= MAX_CONCURRENT_SNIPER_POSITIONS:
+        return False, f"max concurrent positions ({MAX_CONCURRENT_SNIPER_POSITIONS}) reached"
+    if is_trading_paused(state):
+        return False, f"trading paused until {state.trading_paused_until} (daily loss circuit breaker)"
+
+    total_equity = compute_total_equity(state)
+    if total_equity > 0:
+        committed = sum(pos.get("size_sol", 0) for pos in state.open_positions.values())
+        exposure_after = (committed + size_sol) / total_equity
+        if exposure_after > MAX_TOTAL_EXPOSURE_PCT:
+            return False, f"total exposure would exceed {MAX_TOTAL_EXPOSURE_PCT:.0%} of equity"
+
+        balance_after = state.balance_sol - size_sol
+        if balance_after < total_equity * MIN_RESERVE_PCT:
+            return False, f"would drop reserve below {MIN_RESERVE_PCT:.0%} of equity"
 
     now = time.time()
     state.trades_this_hour = [t for t in state.trades_this_hour if now - t < 3600]
@@ -1055,7 +1145,129 @@ def can_open_position(state: LedgerState, size_sol: float) -> tuple[bool, str]:
     return True, "ok"
 
 
-def open_paper_position(state: LedgerState, token: str, price: float, size_sol: float, opened_by: str = "", strength: str = "weak"):
+def is_trading_paused(state: LedgerState) -> bool:
+    if not state.trading_paused_until:
+        return False
+    return datetime.now(timezone.utc) < datetime.fromisoformat(state.trading_paused_until)
+
+
+def check_daily_loss_pause(state: LedgerState):
+    """
+    A percentage-based circuit breaker, separate from the fixed
+    MAX_DAILY_LOSS_SOL limit: if the balance drops 12% below where
+    this run started, pause ALL new buys for 4 hours instead of
+    continuing to trade through a bad stretch. Clears itself once the
+    pause window elapses, starting a fresh baseline for the next
+    stretch.
+    """
+    if is_trading_paused(state):
+        return  # still within an active pause — nothing to do yet
+
+    if state.trading_paused_until:
+        # Pause window has elapsed — clear it and start a fresh baseline
+        state.trading_paused_until = None
+        state.run_start_balance = state.balance_sol
+        state.save()
+        return
+
+    if state.run_start_balance <= 0:
+        return
+    drawdown_pct = (state.balance_sol - state.run_start_balance) / state.run_start_balance
+    if drawdown_pct <= DAILY_LOSS_PAUSE_PCT:
+        pause_until = datetime.now(timezone.utc) + timedelta(hours=DAILY_LOSS_PAUSE_HOURS)
+        state.trading_paused_until = pause_until.isoformat()
+        speak(
+            title="⏸️ Trading Paused — Daily Loss Limit",
+            description=(
+                f"Balance down {drawdown_pct:.1%} from the run's start ({state.run_start_balance:.4f} SOL). "
+                f"Pausing all new buys for {DAILY_LOSS_PAUSE_HOURS}h — back at {pause_until.strftime('%H:%M UTC')}."
+            ),
+            color=COLOR_LOSS,
+        )
+        state.save()
+
+
+def check_ultra_conservative_mode(state: LedgerState):
+    """
+    Tracks the highest balance ever seen this run (the "peak"). If the
+    current balance falls 25% below that peak, switches on ultra-
+    conservative mode (halved position sizing everywhere) until the
+    balance recovers back above the trigger line. This is a DIFFERENT
+    signal from the daily-loss pause above — that one resets its
+    baseline each stretch, this one always measures from the best the
+    run has ever done.
+    """
+    if state.balance_sol > state.peak_balance:
+        state.peak_balance = state.balance_sol
+
+    if state.peak_balance <= 0:
+        return
+
+    drawdown_from_peak = (state.balance_sol - state.peak_balance) / state.peak_balance
+
+    if not state.ultra_conservative_mode and drawdown_from_peak <= PEAK_DRAWDOWN_ULTRA_CONSERVATIVE_PCT:
+        state.ultra_conservative_mode = True
+        speak(
+            title="🛡️ Ultra-Conservative Mode ON",
+            description=(
+                f"Balance down {drawdown_from_peak:.1%} from this run's peak ({state.peak_balance:.4f} SOL). "
+                f"Halving position sizing until it recovers."
+            ),
+            color=COLOR_LOSS,
+        )
+        state.save()
+    elif state.ultra_conservative_mode and drawdown_from_peak > PEAK_DRAWDOWN_ULTRA_CONSERVATIVE_PCT:
+        state.ultra_conservative_mode = False
+        speak(
+            title="🛡️ Ultra-Conservative Mode OFF",
+            description="Balance has recovered — back to normal position sizing.",
+            color=COLOR_PROFIT,
+        )
+        state.save()
+    else:
+        state.save()
+
+
+def check_goal_deadline(state: LedgerState):
+    """
+    The 100 SOL / 72h goal is a hard deadline, not just an aspiration —
+    announces pass or fail once the window elapses (doesn't force a
+    reset on failure; check_for_blowup_reset already handles the case
+    where the bankroll is actually gone).
+    """
+    if state.goal_deadline_announced or not state.run_start_time:
+        return
+
+    started = datetime.fromisoformat(state.run_start_time)
+    hours_elapsed = (datetime.now(timezone.utc) - started).total_seconds() / 3600
+    if hours_elapsed < GOAL_DEADLINE_HOURS:
+        return
+
+    state.goal_deadline_announced = True
+    hit_goal = state.balance_sol >= DAILY_TARGET_SOL
+    speak(
+        title="⏰ 72-Hour Goal Deadline Reached",
+        description=(
+            f"{'🏆 Goal hit' if hit_goal else '📉 Goal not reached'} — "
+            f"balance is {state.balance_sol:.4f} SOL vs the {DAILY_TARGET_SOL} SOL target "
+            f"({(state.balance_sol / DAILY_TARGET_SOL * 100):.0f}% of the way there)."
+        ),
+        color=COLOR_PROFIT if hit_goal else COLOR_NEUTRAL,
+    )
+    state.save()
+
+
+def open_paper_position(state: LedgerState, token: str, price: float, size_sol: float, opened_by: str = "", strength: str = "weak", thesis: str = ""):
+    if token in state.open_positions:
+        # Never silently overwrite an existing position — that would
+        # deduct capital again while losing track of the first entry's
+        # price, TP-ladder progress, and cost basis, corrupting the
+        # paper trading numbers. Two different wallets buying the same
+        # token is a real, useful signal, but it doesn't mean "buy
+        # twice" — the existing position already has us in.
+        print(f"[SKIP] {token}: already holding a position in this token, not opening a second one.")
+        return
+
     ok, reason = can_open_position(state, size_sol)
     if not ok:
         print(f"[BLOCKED] {token}: {reason}")
@@ -1076,6 +1288,7 @@ def open_paper_position(state: LedgerState, token: str, price: float, size_sol: 
         symbol=symbol,
         risk_level=risk_level,
         is_narrative=is_narrative,
+        thesis=thesis,
     ).__dict__
     state.trades_this_hour.append(time.time())
     state.trade_log.append({
@@ -1122,14 +1335,17 @@ def partial_close_paper_position(state: LedgerState, token: str, exit_price: flo
         "at": datetime.now(timezone.utc).isoformat(),
     })
     display_name = pos.get("symbol") or token
+    is_win = pnl >= 0
+    result_emoji = "✅" if is_win else "❌"
+    pnl_line = f"🟢 **PnL: +{pnl:.4f} SOL**" if is_win else f"🔴 **PnL: {pnl:.4f} SOL**"
     notes = (
         f"• **Sold:** {fraction:.0%} of position at {exit_price:.6g} USD\n"
-        f"• **PnL:** {pnl:+.4f} SOL\n"
+        f"• {pnl_line}\n"
         f"• **Amount Sold:** {sell_size:.4f} SOL  •  **Remaining Position:** {pos['size_sol']:.4f} SOL\n"
         f"• **Current Balance:** {state.balance_sol:.4f} SOL"
     )
     speak(
-        title=f"📊 {display_name} — {reason}",
+        title=f"📊 {display_name} — {result_emoji} {reason}",
         description="",
         color=COLOR_PROFIT if pnl >= 0 else COLOR_LOSS,
         fields=[
@@ -1161,10 +1377,13 @@ def close_paper_position(state: LedgerState, token: str, exit_price: float, reas
         "at": datetime.now(timezone.utc).isoformat(),
     })
     display_name = pos.get("symbol") or token
-    status = reason or ("✅ Position Closed" if pnl >= 0 else "❌ Position Closed")
+    is_win = pnl >= 0
+    result_emoji = "✅" if is_win else "❌"
+    status = f"{result_emoji} {reason}" if reason else f"{result_emoji} Position Closed"
+    pnl_line = f"🟢 **PnL: +{pnl:.4f} SOL**" if is_win else f"🔴 **PnL: {pnl:.4f} SOL**"
     notes = (
         f"• **Exit:** {exit_price:.6g} USD\n"
-        f"• **PnL:** {pnl:+.4f} SOL\n"
+        f"• {pnl_line}\n"
         f"• **Amount Sold:** {pos['size_sol']:.4f} SOL (full position)\n"
         f"• **Current Balance:** {state.balance_sol:.4f} SOL"
     )
@@ -1270,15 +1489,114 @@ def check_open_positions(state: LedgerState):
                 close_paper_position(state, mint, current_price, reason=reason)
 
 
+DIP_BUY_ADD_FRACTION = 0.5  # adds 50% of the original position size when buying a dip
+
+
+def get_live_trade_judgment(pos: dict, current_price: float, change_pct: float, held_seconds: float, situation: str) -> dict:
+    """
+    Asks Claude to treat THIS specific trade individually — a short,
+    trader-voice live comment plus (only in a drawdown situation) a
+    real decision between averaging into the dip or cutting losses,
+    instead of a single fixed mechanical rule applied identically to
+    every position. Falls back to a plain hold with no comment if
+    ANTHROPIC_API_KEY isn't configured, or if anything about the call
+    fails — never let commentary generation risk the actual position
+    management.
+    """
+    if not ANTHROPIC_API_KEY:
+        return {"action": "hold", "comment": ""}
+
+    symbol = pos.get("symbol") or pos.get("token", "")[:6]
+    thesis = pos.get("thesis") or "No stored thesis for this entry."
+
+    prompt = f"""You are Ledger, checking in on a live sniper position — treat this trade on its own terms, not as a generic rule application.
+
+Token: {symbol}
+Original thesis at entry: {thesis}
+Entry price: {pos['entry_price']:.10g}
+Current price: {current_price:.10g} ({change_pct:+.1%})
+Time held: {held_seconds:.0f}s (hard cap: {CUPSEY_MAX_HOLD_SECONDS}s)
+
+Situation: {situation}
+
+Respond with ONLY valid JSON, no other text: {{"action": "hold" or "buy_dip" or "stop_loss" or "take_profit", "comment": "<one short sentence, trader voice, no dollar signs, no slang>"}}
+
+"buy_dip" only makes sense if the situation is a drawdown and you'd genuinely add to a position you still believe in. "stop_loss" means cut it now. "hold" means no action, just watching. "take_profit" only if the situation explicitly offers that choice."""
+
+    headers = {
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
+    payload = {
+        "model": ANTHROPIC_MODEL,
+        "max_tokens": 200,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    try:
+        resp = requests.post(ANTHROPIC_API_URL, headers=headers, json=payload, timeout=20)
+        resp.raise_for_status()
+        data = resp.json()
+        text = "".join(b["text"] for b in data.get("content", []) if b.get("type") == "text").strip()
+        if text.startswith("```"):
+            text = text.strip("`").lstrip("json").strip()
+        json_match = re.search(r"\{.*\}", text, re.DOTALL)
+        if json_match:
+            text = json_match.group(0)
+        result = json.loads(text)
+        result["comment"] = (result.get("comment") or "").replace("$", "")
+        result["action"] = result.get("action", "hold")
+        return result
+    except Exception as e:
+        print(f"[WARN] live trade judgment failed: {e} — defaulting to hold, no comment")
+        return {"action": "hold", "comment": ""}
+
+
+def buy_the_dip(state: LedgerState, token: str, current_price: float):
+    """
+    Averages more capital into an existing position at a lower price,
+    instead of cutting it — used when get_live_trade_judgment decides
+    a drawdown is worth adding to rather than stopping out of. Adds
+    DIP_BUY_ADD_FRACTION of the position's ORIGINAL size, capped by
+    the normal risk limits like any other buy.
+    """
+    pos = state.open_positions.get(token)
+    if not pos:
+        return
+
+    original_size = pos.get("original_size_sol") or pos["size_sol"]
+    add_size = original_size * DIP_BUY_ADD_FRACTION
+
+    ok, reason = can_open_position(state, add_size)
+    if not ok:
+        print(f"[DIP BUY BLOCKED] {token}: {reason}")
+        return
+
+    old_size = pos["size_sol"]
+    old_entry = pos["entry_price"]
+    new_size = old_size + add_size
+    new_entry = (old_entry * old_size + current_price * add_size) / new_size
+
+    state.balance_sol -= add_size
+    pos["entry_price"] = new_entry
+    pos["size_sol"] = new_size
+    pos["dip_buys"] = pos.get("dip_buys", 0) + 1
+    state.save()
+    print(f"[DIP BUY] {token}: added {add_size:.4f} SOL at {current_price:.10g}, new avg entry {new_entry:.10g}")
+
+
 def check_sniper_positions(state: LedgerState):
     """
-    Cupsey-style exit for Sniper Mode positions — a staged take-profit
-    ladder (sell half at 2x, another chunk at 4x, let a small trimmed
-    remainder ride under the main patient logic), a wide stop-loss
-    (-35%, matching the realistic range rather than an overly tight
-    guess), a dev-sell trigger (exit immediately if the creator wallet
-    appears to be dumping), and a 10-minute backstop so nothing lingers
-    forever even if none of the above ever fires.
+    Cupsey-style exit for Sniper Mode positions — capped at a hard
+    1-minute hold (positions were lingering far too long before), a
+    staged take-profit ladder (sell half at 2x, another chunk at 4x),
+    a dev-sell trigger (exit immediately if the creator wallet appears
+    to be dumping), and — instead of a single fixed stop-loss rule
+    applied identically to every trade — a live, per-trade judgment
+    call: on a real drawdown, Ledger decides whether to average into
+    the dip or cut losses, and posts a short comment either way. Also
+    posts one brief live comment mid-hold on positions that haven't
+    hit any trigger yet, so it's not silent between open and close.
     """
     sniper_mints = [
         m for m, pos in state.open_positions.items()
@@ -1320,7 +1638,18 @@ def check_sniper_positions(state: LedgerState):
         change_pct = (current_price - pos["entry_price"]) / pos["entry_price"]
 
         if change_pct <= CUPSEY_STOP_LOSS_PCT + EPSILON:
-            close_paper_position(state, mint, current_price, reason="🎯 Sniper Stop Loss")
+            # Drawdown territory — instead of always closing, ask for a
+            # real per-trade judgment: buy the dip, or cut it here.
+            judgment = get_live_trade_judgment(
+                pos, current_price, change_pct, held_seconds,
+                situation=f"Down {change_pct:.1%} from entry — decide whether this specific setup is worth averaging into, or whether to cut it now.",
+            )
+            if judgment["comment"]:
+                speak(title=f"💬 {pos.get('symbol') or mint[:6]}", description=judgment["comment"], color=COLOR_NEUTRAL)
+            if judgment["action"] == "buy_dip":
+                buy_the_dip(state, mint, current_price)
+            else:
+                close_paper_position(state, mint, current_price, reason="🎯 Sniper Stop Loss")
             continue
 
         current_multiple = 1 + change_pct
@@ -1354,6 +1683,22 @@ def check_sniper_positions(state: LedgerState):
                 state.save()
             continue
 
+        # No trigger fired — still holding. Post one brief live comment
+        # partway through the hold (around the halfway mark) instead of
+        # staying silent from open to close. Only ever fires once per
+        # position, so it doesn't spam every ~20s check.
+        halfway_point = CUPSEY_MAX_HOLD_SECONDS / 2
+        if not pos.get("commented_at_checkpoint") and held_seconds >= halfway_point:
+            judgment = get_live_trade_judgment(
+                pos, current_price, change_pct, held_seconds,
+                situation="Routine mid-hold check-in — no target or stop has been hit yet, just give a brief live read on how it's going.",
+            )
+            if judgment["comment"]:
+                speak(title=f"💬 {pos.get('symbol') or mint[:6]}", description=judgment["comment"], color=COLOR_NEUTRAL)
+            if mint in state.open_positions:
+                state.open_positions[mint]["commented_at_checkpoint"] = True
+                state.save()
+
 
 # ── Real execution (disabled — future step, not wired up yet) ───────
 
@@ -1380,7 +1725,7 @@ MONTHLY_PROFIT_GOAL_USD = 500  # paper-trading target — see note in recap mess
 # auto-reset when it's wiped out. This is intentionally a much shorter,
 # higher-variance goal than the monthly USD target above — the two
 # coexist; this one is about the SOL balance itself, checked every cycle.
-DAILY_TARGET_SOL = 10.0    # 10x the 1 SOL starting balance in a day
+DAILY_TARGET_SOL = 100.0    # the 3-day (72h) goal from the 10 SOL start
 BLOWUP_DUST_THRESHOLD_SOL = 0.01  # below this (and no open positions), treat the bankroll as wiped out
 PERFORMANCE_RECAP_EVERY_N_CYCLES = 720  # ~once/day at 120s/cycle
 
@@ -1463,6 +1808,12 @@ def check_for_blowup_reset(state: LedgerState):
     state.total_resets += 1
     state.balance_sol = STARTING_PAPER_BALANCE_SOL
     state.daily_target_hit_this_run = False
+    state.run_start_balance = STARTING_PAPER_BALANCE_SOL
+    state.run_start_time = datetime.now(timezone.utc).isoformat()
+    state.peak_balance = STARTING_PAPER_BALANCE_SOL
+    state.ultra_conservative_mode = False
+    state.goal_deadline_announced = False
+    state.trading_paused_until = None
     speak(
         title="💀 Bankroll Wiped — Restarting",
         description=(
@@ -1593,6 +1944,10 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
     symbol = candidate.get("symbol", "?")
     name = candidate.get("name", "")
 
+    if mint in state.open_positions:
+        print(f"[SNIPE SKIP] {symbol}: already holding a position in this token.")
+        return
+
     if candidate.get("initial_buy_sol", 0) < SNIPER_MIN_DEV_BUY_SOL:
         print(f"[SNIPE SKIP] {symbol}: dev buy too low ({candidate.get('initial_buy_sol', 0)} SOL)")
         return
@@ -1654,7 +2009,8 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
     # Size as a % of CURRENT bankroll, not a fixed SOL amount — this
     # scales automatically as the balance grows toward the 10 SOL
     # target or resets to 1 SOL after a wipeout.
-    size_sol = max(SNIPER_MIN_POSITION_SOL, state.balance_sol * SNIPER_POSITION_SIZE_PCT)
+    size_multiplier = ULTRA_CONSERVATIVE_SIZE_MULTIPLIER if state.ultra_conservative_mode else 1.0
+    size_sol = max(SNIPER_MIN_POSITION_SOL, state.balance_sol * SNIPER_POSITION_SIZE_PCT * size_multiplier)
 
     ok, block_reason = can_open_position(state, size_sol)
     if not ok:
@@ -1687,7 +2043,10 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
     # string) — check_sniper_positions needs this to re-check the dev's
     # holding later and detect a sell-off.
     creator_address = candidate.get("creator", "")
-    open_paper_position(state, mint, entry_price, size_sol, opened_by=creator_address, strength="weak")
+    open_paper_position(
+        state, mint, entry_price, size_sol, opened_by=creator_address, strength="weak",
+        thesis=f"Sniped per {SNIPER_ACTIVE_PRESET} filters ({name}).",
+    )
     if mint in state.open_positions:
         state.open_positions[mint]["risk_level"] = "🎯 Sniper Play"
         state.open_positions[mint]["original_size_sol"] = size_sol
@@ -1918,6 +2277,10 @@ def main():
                         copy_priority_wallet_entry(token, wallet, trader_name, platform_name, metadata, state)
                         continue
 
+                    if token in state.open_positions:
+                        print(f"  [SKIP] {display_symbol}: already holding a position, skipping analysis.")
+                        continue
+
                     analysis = analyze_conviction(token, metadata, trader_name, platform_name)
 
                     if analysis["conviction"] != "buy":
@@ -1974,7 +2337,10 @@ def main():
                         ],
                     )
 
-                    open_paper_position(state, token, entry_price, size_sol, opened_by=wallet, strength=strength)
+                    open_paper_position(
+                        state, token, entry_price, size_sol, opened_by=wallet, strength=strength,
+                        thesis=analysis["thesis"],
+                    )
             except Exception as e:
                 print(f"[ERROR] wallet {wallet}: {e}")
             time.sleep(0.3)  # spread requests out across the cycle
@@ -1984,6 +2350,9 @@ def main():
             check_sniper_positions(state)
         check_for_daily_target_hit(state)
         check_for_blowup_reset(state)
+        check_daily_loss_pause(state)
+        check_ultra_conservative_mode(state)
+        check_goal_deadline(state)
         state.save()
 
         if SNIPER_MODE_ENABLED:
@@ -2001,6 +2370,9 @@ def main():
                 check_sniper_positions(state)
                 check_for_daily_target_hit(state)
                 check_for_blowup_reset(state)
+                check_daily_loss_pause(state)
+                check_ultra_conservative_mode(state)
+                check_goal_deadline(state)
                 state.save()
         else:
             time.sleep(POLL_SECONDS)
