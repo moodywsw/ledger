@@ -330,7 +330,8 @@ CUPSEY_TP1_FRACTION = 0.50
 CUPSEY_TP2_MULTIPLE = 4.0          # sell CUPSEY_TP2_FRACTION (of the ORIGINAL size) at 4x (middle of 3-5x)
 CUPSEY_TP2_FRACTION = 0.30
 CUPSEY_STOP_LOSS_PCT = -0.35       # middle of the realistic -30% to -40% range
-CUPSEY_MAX_HOLD_SECONDS = 60       # hard cap at 1 minute — positions were lingering far too long
+CUPSEY_MAX_HOLD_SECONDS = 60       # hard cap at 1 minute for pure Sniper Mode plays
+PRIORITY_COPY_MAX_HOLD_SECONDS = 300  # priority-wallet copies get more room — 5 minutes, not 1
 CUPSEY_DEV_SELL_EXIT_THRESHOLD_PCT = 0.5  # if the dev's holding drops to ≤50% of what it was at entry, exit — a real sell-off signal
 
 # ── State ────────────────────────────────────────────────────────────
@@ -1744,6 +1745,13 @@ def check_sniper_positions(state: LedgerState):
         held_seconds = (now - opened_at).total_seconds()
         current_price = prices.get(mint)
 
+        # Priority-wallet copies get more room to breathe than pure
+        # Sniper Mode plays — the fast 1-minute cap is right for
+        # blind speed-sniping fresh launches, but too tight for a
+        # trade that's mirroring a trusted trader's actual conviction.
+        is_priority_copy = "Priority Copy" in pos.get("risk_level", "")
+        applicable_max_hold = PRIORITY_COPY_MAX_HOLD_SECONDS if is_priority_copy else CUPSEY_MAX_HOLD_SECONDS
+
         # Dev-sell check — a real red flag, checked regardless of price data
         if pos.get("entry_dev_holding_pct"):
             current_dev_pct = get_dev_holding_pct(mint, pos.get("opened_by", ""))
@@ -1753,7 +1761,7 @@ def check_sniper_positions(state: LedgerState):
                         close_paper_position(state, mint, current_price, reason="🚨 Dev Sell Detected — Exiting")
                     continue
 
-        if held_seconds >= CUPSEY_MAX_HOLD_SECONDS:
+        if held_seconds >= applicable_max_hold:
             if current_price is not None:
                 close_paper_position(state, mint, current_price, reason="⏱️ Sniper Time Exit")
             continue
@@ -1813,7 +1821,7 @@ def check_sniper_positions(state: LedgerState):
         # partway through the hold (around the halfway mark) instead of
         # staying silent from open to close. Only ever fires once per
         # position, so it doesn't spam every ~20s check.
-        halfway_point = CUPSEY_MAX_HOLD_SECONDS / 2
+        halfway_point = applicable_max_hold / 2
         if not pos.get("commented_at_checkpoint") and held_seconds >= halfway_point:
             judgment = get_live_trade_judgment(
                 pos, current_price, change_pct, held_seconds,
