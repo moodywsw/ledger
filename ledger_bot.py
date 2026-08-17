@@ -125,10 +125,6 @@ COLOR_LOSS = 0xef4444      # red — stop-loss / losing close
 COLOR_NEUTRAL = 0x64748b   # slate — informational
 COLOR_STRONG_SIGNAL = 0xf59e0b  # amber — whale-backed thesis
 
-# Discord plain messages can't render colored text — this is the
-# closest visual equivalent to a "dark blue divider" between posts,
-# using blue-square emoji as a horizontal rule.
-BLUE_DIVIDER = "🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦"
 
 
 def speak(title: str, description: str, color: int = COLOR_NEUTRAL, fields: list = None):
@@ -344,8 +340,7 @@ CUPSEY_TP1_FRACTION = 0.50
 CUPSEY_TP2_MULTIPLE = 4.0          # sell CUPSEY_TP2_FRACTION (of the ORIGINAL size) at 4x (middle of 3-5x)
 CUPSEY_TP2_FRACTION = 0.30
 CUPSEY_STOP_LOSS_PCT = -0.35       # middle of the realistic -30% to -40% range
-CUPSEY_MAX_HOLD_SECONDS = 60       # hard cap at 1 minute for pure Sniper Mode plays
-PRIORITY_COPY_MAX_HOLD_SECONDS = 300  # priority-wallet copies get more room — 5 minutes, not 1
+CUPSEY_MAX_HOLD_SECONDS = 60       # hard cap at 1 minute for ALL sniper-style plays, including priority copies
 CUPSEY_DEV_SELL_EXIT_THRESHOLD_PCT = 0.5  # if the dev's holding drops to ≤50% of what it was at entry, exit — a real sell-off signal
 
 # ── State ────────────────────────────────────────────────────────────
@@ -946,10 +941,10 @@ def copy_priority_wallet_entry(
     Directly mirrors a trusted wallet's buy — no independent-conviction
     gate, no "pass" possible, since it's trusted enough to copy
     outright. Uses the SAME sniper-style execution as Sniper Mode
-    (Cupsey exit ladder via check_sniper_positions), but with a longer
-    hold window (see PRIORITY_COPY_MAX_HOLD_SECONDS) and confidence-
-    based sizing up to PRIORITY_MAX_SIZE_MULTIPLIER, instead of a
-    fixed multiplier applied identically to every copy.
+    (Cupsey exit ladder via check_sniper_positions, same fast 1-minute
+    hold cap), with confidence-based sizing up to
+    PRIORITY_MAX_SIZE_MULTIPLIER instead of a fixed multiplier applied
+    identically to every copy.
     """
     display_symbol = metadata.get("symbol") or token[:6] + "..."
 
@@ -990,7 +985,6 @@ def copy_priority_wallet_entry(
     speak(
         title=f"⭐ TRADE OPENED — {display_symbol}",
         description=(
-            f"{BLUE_DIVIDER}\n"
             f"Entry: `{mc_display}` · Size: `{size_sol:.4f} SOL` (confidence {confidence_multiplier:.1f}x)\n"
             f"Copying **{trader_name}** on {platform_name}\n"
             f"**{entry_opinion}**"
@@ -1392,7 +1386,6 @@ def partial_close_paper_position(state: LedgerState, token: str, exit_price: flo
     pnl_usd_bold = f" · **{'+${:,.0f}'.format(pnl_usd) if is_win else '-${:,.0f}'.format(abs(pnl_usd))} USDC**" if pnl_usd is not None else ""
 
     lines = [
-        BLUE_DIVIDER,
         f"**Entry:** `{format_market_cap(entry_mc)}` → **Exit:** `{format_market_cap(exit_mc)}`",
         f"{result_emoji} **{change_pct:+.2%}**{pnl_usd_bold}  ({fraction:.0%} of position)",
         "",
@@ -1449,7 +1442,6 @@ def close_paper_position(state: LedgerState, token: str, exit_price: float, reas
     balance_str = f"`${balance_usd:,.0f} USDC`" if balance_usd is not None else f"`{state.balance_sol:.4f} SOL`"
 
     lines = [
-        BLUE_DIVIDER,
         f"**Entry:** `{format_market_cap(entry_mc)}` → **Exit:** `{format_market_cap(exit_mc)}`",
         f"{result_emoji} **{change_pct:+.2%}**{pnl_usd_bold}",
         "",
@@ -1825,13 +1817,6 @@ def check_sniper_positions(state: LedgerState):
         held_seconds = (now - opened_at).total_seconds()
         current_price = prices.get(mint)
 
-        # Priority-wallet copies get more room to breathe than pure
-        # Sniper Mode plays — the fast 1-minute cap is right for
-        # blind speed-sniping fresh launches, but too tight for a
-        # trade that's mirroring a trusted trader's actual conviction.
-        is_priority_copy = "Priority Copy" in pos.get("risk_level", "")
-        applicable_max_hold = PRIORITY_COPY_MAX_HOLD_SECONDS if is_priority_copy else CUPSEY_MAX_HOLD_SECONDS
-
         # Dev-sell check — a real red flag, checked regardless of price data
         if pos.get("entry_dev_holding_pct"):
             current_dev_pct = get_dev_holding_pct(mint, pos.get("opened_by", ""))
@@ -1841,7 +1826,7 @@ def check_sniper_positions(state: LedgerState):
                         close_paper_position(state, mint, current_price, reason="🚨 Dev Sell Detected — Exiting")
                     continue
 
-        if held_seconds >= applicable_max_hold:
+        if held_seconds >= CUPSEY_MAX_HOLD_SECONDS:
             if current_price is not None:
                 close_paper_position(state, mint, current_price, reason="⏱️ Sniper Time Exit")
             continue
@@ -1901,7 +1886,7 @@ def check_sniper_positions(state: LedgerState):
         # partway through the hold (around the halfway mark) instead of
         # staying silent from open to close. Only ever fires once per
         # position, so it doesn't spam every ~20s check.
-        halfway_point = applicable_max_hold / 2
+        halfway_point = CUPSEY_MAX_HOLD_SECONDS / 2
         if not pos.get("commented_at_checkpoint") and held_seconds >= halfway_point:
             judgment = get_live_trade_judgment(
                 pos, current_price, change_pct, held_seconds,
@@ -2242,7 +2227,6 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
     speak(
         title=f"🎯 TRADE OPENED — {symbol}",
         description=(
-            f"{BLUE_DIVIDER}\n"
             f"Entry: `{mc_display}` · Size: `{size_sol:.4f} SOL` (confidence {confidence_multiplier:.1f}x)\n"
             f"**{snipe_opinion}**"
         ),
