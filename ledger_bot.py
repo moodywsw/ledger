@@ -138,7 +138,15 @@ def speak(title: str, description: str, color: int = COLOR_NEUTRAL, fields: list
     """
     print(f"{title} — {description}")
 
-    lines = [f"**{title}**"]
+    # Keep a leading emoji outside the bold wrap (matches "💰 **TRADE
+    # CLOSED — X**" style) instead of bolding the emoji along with the
+    # text — split off the first "word" only if it looks like an emoji
+    # (non-ASCII), leave plain-text titles untouched.
+    title_parts = title.split(" ", 1)
+    if len(title_parts) == 2 and not title_parts[0].isascii():
+        lines = [f"{title_parts[0]} **{title_parts[1]}**"]
+    else:
+        lines = [f"**{title}**"]
     if description:
         lines.append(description)
     if fields:
@@ -356,6 +364,7 @@ class PaperPosition:
     thesis: str = ""  # original reasoning at entry — gives later commentary/decisions real context
     commented_at_checkpoint: bool = False  # has the mid-hold live commentary already been posted?
     dip_buys: int = 0  # how many times this position has been averaged into on a drawdown
+    entry_market_cap_usd: float = None  # market cap at entry — powers the clean "Entry MC -> Exit MC" close format
 
 
 @dataclass
@@ -610,7 +619,7 @@ def run_market_research() -> str:
     }
     payload = {
         "model": ANTHROPIC_MODEL,
-        "max_tokens": 600,
+        "max_tokens": 1500,  # Sonnet 5 reserves budget for adaptive thinking by default — low values can 400
         "messages": [{"role": "user", "content": MARKET_RESEARCH_PROMPT}],
         "tools": [{"type": "web_search_20250305", "name": "web_search"}],
     }
@@ -645,6 +654,9 @@ def do_market_research_pass():
         summary = run_market_research()
         print(f"\n{summary}\n")
         save_market_intel(summary)
+    except requests.exceptions.HTTPError as e:
+        body = e.response.text[:500] if e.response is not None else "no response body"
+        print(f"[ERROR] market research pass HTTP error: {e} — body: {body}")
     except Exception as e:
         print(f"[ERROR] market research pass failed: {e}")
 
@@ -950,31 +962,25 @@ def copy_priority_wallet_entry(
 
     dev_pct = get_dev_holding_pct(token, wallet)
     top10_pct = get_top10_holder_pct(token)
+    _, entry_mc = get_liquidity_and_market_cap(token)
 
-    balance_after = state.balance_sol - size_sol
-    notes_lines = [
-        f"• **Strategy:** Priority Copy (Sniper Exit)",
-        f"• **Trader:** {trader_name}  •  **Platform:** {platform_name}",
-    ]
-    if top10_pct is not None:
-        notes_lines.append(f"• **Top 10 Holders:** {top10_pct:.1f}%")
-    notes_lines.append(f"• **Amount Bought:** {size_sol:.4f} SOL")
-    notes_lines.append(f"• **Current Balance:** {balance_after:.4f} SOL")
+    entry_opinion = get_entry_opinion(display_symbol, metadata.get("name", ""), trader_name, platform_name, top10_pct, dev_pct)
 
+    mc_display = format_market_cap(entry_mc)
     speak(
-        title=f"⭐ {display_symbol}",
-        description="",
+        title=f"⭐ TRADE OPENED — {display_symbol}",
+        description=(
+            f"Entry: `{mc_display}` · Size: `{size_sol:.4f} SOL`\n"
+            f"Copying **{trader_name}** on {platform_name}\n"
+            f"**{entry_opinion}**"
+        ),
         color=COLOR_STRONG_SIGNAL,
-        fields=[
-            {"name": "CA:", "value": token, "inline": False},
-            {"name": "🧠 Thesis", "value": f"{trader_name} entered — mirroring directly on priority trust.", "inline": False},
-            {"name": "ℹ️ Additional Notes", "value": "\n".join(notes_lines), "inline": False},
-        ],
+        fields=[{"name": "CA:", "value": token, "inline": False}],
     )
 
     open_paper_position(
         state, token, entry_price, size_sol, opened_by=wallet, strength="strong",
-        thesis=f"{trader_name} entered — mirroring directly on priority trust.",
+        thesis=entry_opinion, entry_market_cap_usd=entry_mc,
     )
     if token in state.open_positions:
         # Tagged to contain "Sniper" so it correctly routes through
@@ -1081,7 +1087,7 @@ Respond with ONLY valid JSON, no other text, no markdown code fences:
     }
     payload = {
         "model": ANTHROPIC_MODEL,
-        "max_tokens": 400,
+        "max_tokens": 1000,  # Sonnet 5 reserves budget for adaptive thinking by default — low values can 400
         "messages": [{"role": "user", "content": prompt}],
     }
 
@@ -1107,6 +1113,13 @@ Respond with ONLY valid JSON, no other text, no markdown code fences:
         result["thesis"] = result.get("thesis", "").replace("$", "")  # extra safety net
         result["independent"] = bool(result.get("independent", False))
         return result
+    except requests.exceptions.HTTPError as e:
+        # Log the actual response body — the exception message alone
+        # (e.g. "400 Client Error") doesn't say WHY, and Anthropic's
+        # error body usually does (e.g. a specific invalid_request_error).
+        body = e.response.text[:500] if e.response is not None else "no response body"
+        print(f"[WARN] conviction analysis HTTP error for {token}: {e} — body: {body}")
+        return {"conviction": "pass", "risk_score": 10, "thesis": "", "independent": False}
     except Exception as e:
         print(f"[WARN] conviction analysis failed for {token}: {e} — defaulting to pass (skip, don't guess)")
         return {"conviction": "pass", "risk_score": 10, "thesis": "", "independent": False}
@@ -1264,7 +1277,7 @@ def check_goal_deadline(state: LedgerState):
     state.save()
 
 
-def open_paper_position(state: LedgerState, token: str, price: float, size_sol: float, opened_by: str = "", strength: str = "weak", thesis: str = ""):
+def open_paper_position(state: LedgerState, token: str, price: float, size_sol: float, opened_by: str = "", strength: str = "weak", thesis: str = "", entry_market_cap_usd: float = None):
     if token in state.open_positions:
         # Never silently overwrite an existing position — that would
         # deduct capital again while losing track of the first entry's
@@ -1296,6 +1309,7 @@ def open_paper_position(state: LedgerState, token: str, price: float, size_sol: 
         risk_level=risk_level,
         is_narrative=is_narrative,
         thesis=thesis,
+        entry_market_cap_usd=entry_market_cap_usd,
     ).__dict__
     state.trades_this_hour.append(time.time())
     state.trade_log.append({
@@ -1343,22 +1357,35 @@ def partial_close_paper_position(state: LedgerState, token: str, exit_price: flo
     })
     display_name = pos.get("symbol") or token
     is_win = pnl >= 0
-    result_emoji = "✅" if is_win else "❌"
-    pnl_line = f"🟢 **PnL: +{pnl:.4f} SOL**" if is_win else f"🔴 **PnL: {pnl:.4f} SOL**"
-    notes = (
-        f"• **Sold:** {fraction:.0%} of position at {exit_price:.6g} USD\n"
-        f"• {pnl_line}\n"
-        f"• **Amount Sold:** {sell_size:.4f} SOL  •  **Remaining Position:** {pos['size_sol']:.4f} SOL\n"
-        f"• **Current Balance:** {state.balance_sol:.4f} SOL"
-    )
+    change_pct = (exit_price - pos["entry_price"]) / pos["entry_price"]
+
+    sol_price = get_sol_price_usd()
+    pnl_usd = pnl * sol_price if sol_price else None
+    balance_usd = state.balance_sol * sol_price if sol_price else None
+
+    entry_mc = pos.get("entry_market_cap_usd")
+    _, exit_mc = get_liquidity_and_market_cap(token)
+
+    result_emoji = "🟢" if is_win else "❌"
+    balance_str = f"`${balance_usd:,.0f} USDC`" if balance_usd is not None else f"`{state.balance_sol:.4f} SOL`"
+    pnl_usd_bold = f" · **{'+${:,.0f}'.format(pnl_usd) if is_win else '-${:,.0f}'.format(abs(pnl_usd))} USDC**" if pnl_usd is not None else ""
+
+    lines = [
+        f"**Entry:** `{format_market_cap(entry_mc)}` → **Exit:** `{format_market_cap(exit_mc)}`",
+        f"{result_emoji} **{change_pct:+.2%}**{pnl_usd_bold}  ({fraction:.0%} of position)",
+        "",
+        f"💵 **Balance:** {balance_str}",
+    ]
+    exit_opinion = get_exit_opinion(display_name, reason, pnl, change_pct)
+    if exit_opinion:
+        lines.append("")
+        lines.append(f"**{exit_opinion}**")
+
     speak(
-        title=f"📊 {display_name} — {result_emoji} {reason}",
-        description="",
-        color=COLOR_PROFIT if pnl >= 0 else COLOR_LOSS,
-        fields=[
-            {"name": "CA:", "value": token, "inline": False},
-            {"name": "ℹ️ Additional Notes", "value": notes, "inline": False},
-        ],
+        title=f"💰 TRADE CLOSED — {display_name} ({reason})",
+        description="\n".join(lines),
+        color=COLOR_PROFIT if is_win else COLOR_LOSS,
+        fields=[{"name": "CA:", "value": token, "inline": False}],
     )
 
     if pos["size_sol"] < 0.001:  # fully drained — close it out entirely
@@ -1383,25 +1410,38 @@ def close_paper_position(state: LedgerState, token: str, exit_price: float, reas
         "risk_level": pos.get("risk_level", ""),
         "at": datetime.now(timezone.utc).isoformat(),
     })
+
     display_name = pos.get("symbol") or token
     is_win = pnl >= 0
-    result_emoji = "✅" if is_win else "❌"
-    status = f"{result_emoji} {reason}" if reason else f"{result_emoji} Position Closed"
-    pnl_line = f"🟢 **PnL: +{pnl:.4f} SOL**" if is_win else f"🔴 **PnL: {pnl:.4f} SOL**"
-    notes = (
-        f"• **Exit:** {exit_price:.6g} USD\n"
-        f"• {pnl_line}\n"
-        f"• **Amount Sold:** {pos['size_sol']:.4f} SOL (full position)\n"
-        f"• **Current Balance:** {state.balance_sol:.4f} SOL"
-    )
+    change_pct = (exit_price - pos["entry_price"]) / pos["entry_price"]
+
+    sol_price = get_sol_price_usd()
+    pnl_usd = pnl * sol_price if sol_price else None
+    balance_usd = state.balance_sol * sol_price if sol_price else None
+
+    entry_mc = pos.get("entry_market_cap_usd")
+    _, exit_mc = get_liquidity_and_market_cap(token)
+
+    result_emoji = "🟢" if is_win else "❌"
+    pnl_usd_bold = f" · **{'+${:,.0f}'.format(pnl_usd) if is_win else '-${:,.0f}'.format(abs(pnl_usd))} USDC**" if pnl_usd is not None else ""
+    balance_str = f"`${balance_usd:,.0f} USDC`" if balance_usd is not None else f"`{state.balance_sol:.4f} SOL`"
+
+    lines = [
+        f"**Entry:** `{format_market_cap(entry_mc)}` → **Exit:** `{format_market_cap(exit_mc)}`",
+        f"{result_emoji} **{change_pct:+.2%}**{pnl_usd_bold}",
+        "",
+        f"💵 **Balance:** {balance_str}",
+    ]
+    exit_opinion = get_exit_opinion(display_name, reason or "Position Closed", pnl, change_pct)
+    if exit_opinion:
+        lines.append("")
+        lines.append(f"**{exit_opinion}**")
+
     speak(
-        title=f"📊 {display_name} — {status}",
-        description="",
-        color=COLOR_PROFIT if pnl >= 0 else COLOR_LOSS,
-        fields=[
-            {"name": "CA:", "value": token, "inline": False},
-            {"name": "ℹ️ Additional Notes", "value": notes, "inline": False},
-        ],
+        title=f"💰 TRADE CLOSED — {display_name}",
+        description="\n".join(lines),
+        color=COLOR_PROFIT if is_win else COLOR_LOSS,
+        fields=[{"name": "CA:", "value": token, "inline": False}],
     )
     state.save()
 
@@ -1499,6 +1539,81 @@ def check_open_positions(state: LedgerState):
 DIP_BUY_ADD_FRACTION = 0.5  # adds 50% of the original position size when buying a dip
 
 
+def get_entry_opinion(symbol: str, name: str, trader_name: str, platform_name: str, top10_pct: float, dev_pct: float) -> str:
+    """
+    Ledger's actual take on a token being copied from a priority
+    trader — replaces the old fixed boilerplate line ("X entered —
+    mirroring directly on priority trust") with a real, specific
+    one-liner referencing the token and what's known about it, so
+    every entry reads like an opinion instead of a template.
+    """
+    if not ANTHROPIC_API_KEY:
+        return f"{trader_name} entered — mirroring on priority trust, no independent analysis available."
+
+    context_bits = [f"Trader: {trader_name} (priority, being copied directly)", f"Platform: {platform_name}"]
+    if top10_pct is not None:
+        context_bits.append(f"Top 10 holders: {top10_pct:.1f}%")
+    if dev_pct is not None:
+        context_bits.append(f"Dev holding: {dev_pct:.1f}%")
+
+    prompt = f"""You are Ledger. A priority trader you copy just bought a token, and you're mirroring the entry. Give your own brief, genuine take on THIS specific token — not a generic template line.
+
+Token: {symbol} ({name})
+{chr(10).join(context_bits)}
+
+Write ONE short sentence, professional trader voice, correct grammar, no slang, no dollar signs. Reference something specific about this token or the situation — not just "mirroring on trust." Respond with ONLY the sentence, no quotes, no JSON."""
+
+    headers = {"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"}
+    payload = {"model": ANTHROPIC_MODEL, "max_tokens": 300, "messages": [{"role": "user", "content": prompt}]}
+    try:
+        resp = requests.post(ANTHROPIC_API_URL, headers=headers, json=payload, timeout=20)
+        resp.raise_for_status()
+        data = resp.json()
+        text = "".join(b["text"] for b in data.get("content", []) if b.get("type") == "text").strip()
+        return text.replace("$", "") or f"{trader_name} entered — mirroring on priority trust."
+    except requests.exceptions.HTTPError as e:
+        body = e.response.text[:500] if e.response is not None else "no response body"
+        print(f"[WARN] entry opinion HTTP error: {e} — body: {body}")
+        return f"{trader_name} entered — mirroring on priority trust."
+    except Exception as e:
+        print(f"[WARN] entry opinion failed: {e}")
+        return f"{trader_name} entered — mirroring on priority trust."
+
+
+def get_exit_opinion(symbol: str, reason: str, pnl: float, change_pct: float) -> str:
+    """
+    A short reflective comment on how a trade actually went, attached
+    to every exit — win or loss — instead of leaving the numbers to
+    speak for themselves with no read on it.
+    """
+    if not ANTHROPIC_API_KEY:
+        return ""
+
+    prompt = f"""You are Ledger, reflecting briefly on a trade that just closed.
+
+Token: {symbol}
+Exit reason: {reason}
+Result: {change_pct:+.1%} ({pnl:+.4f} SOL)
+
+Write ONE short sentence, professional trader voice, correct grammar, no slang, no dollar signs — a genuine read on how this one played out. Respond with ONLY the sentence, no quotes, no JSON."""
+
+    headers = {"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"}
+    payload = {"model": ANTHROPIC_MODEL, "max_tokens": 300, "messages": [{"role": "user", "content": prompt}]}
+    try:
+        resp = requests.post(ANTHROPIC_API_URL, headers=headers, json=payload, timeout=20)
+        resp.raise_for_status()
+        data = resp.json()
+        text = "".join(b["text"] for b in data.get("content", []) if b.get("type") == "text").strip()
+        return text.replace("$", "")
+    except requests.exceptions.HTTPError as e:
+        body = e.response.text[:500] if e.response is not None else "no response body"
+        print(f"[WARN] exit opinion HTTP error: {e} — body: {body}")
+        return ""
+    except Exception as e:
+        print(f"[WARN] exit opinion failed: {e}")
+        return ""
+
+
 def get_live_trade_judgment(pos: dict, current_price: float, change_pct: float, held_seconds: float, situation: str) -> dict:
     """
     Asks Claude to treat THIS specific trade individually — a short,
@@ -1537,7 +1652,7 @@ Respond with ONLY valid JSON, no other text: {{"action": "hold" or "buy_dip" or 
     }
     payload = {
         "model": ANTHROPIC_MODEL,
-        "max_tokens": 200,
+        "max_tokens": 600,  # Sonnet 5 reserves budget for adaptive thinking by default — low values can 400
         "messages": [{"role": "user", "content": prompt}],
     }
     try:
@@ -1554,6 +1669,10 @@ Respond with ONLY valid JSON, no other text: {{"action": "hold" or "buy_dip" or 
         result["comment"] = (result.get("comment") or "").replace("$", "")
         result["action"] = result.get("action", "hold")
         return result
+    except requests.exceptions.HTTPError as e:
+        body = e.response.text[:500] if e.response is not None else "no response body"
+        print(f"[WARN] live trade judgment HTTP error: {e} — body: {body}")
+        return {"action": "hold", "comment": ""}
     except Exception as e:
         print(f"[WARN] live trade judgment failed: {e} — defaulting to hold, no comment")
         return {"action": "hold", "comment": ""}
@@ -2024,7 +2143,6 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
         print(f"[SNIPE BLOCKED] {symbol}: {block_reason}")
         return
 
-    balance_after = state.balance_sol - size_sol
     notes_lines = [f"• **Preset:** {SNIPER_ACTIVE_PRESET.replace('_', ' ').title()}"]
     if top10_pct is not None:
         notes_lines.append(f"• **Top 10 Holders:** {top10_pct:.1f}%")
@@ -2033,7 +2151,6 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
     if liquidity_usd is not None:
         notes_lines.append(f"• **Liquidity:** {liquidity_usd:,.0f} USD")
     notes_lines.append(f"• **Amount Bought:** {size_sol:.4f} SOL")
-    notes_lines.append(f"• **Current Balance:** {balance_after:.4f} SOL")
 
     speak(
         title=f"🎯 {symbol}",
@@ -2059,6 +2176,23 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
         state.open_positions[mint]["original_size_sol"] = size_sol
         state.open_positions[mint]["entry_dev_holding_pct"] = dev_pct
         state.save()
+
+
+def format_market_cap(usd_value: float) -> str:
+    """Formats a market cap for display: $1.84M, $234K, $890 — no decimals below $1K."""
+    if usd_value is None:
+        return "unknown MC"
+    if usd_value >= 1_000_000:
+        return f"${usd_value / 1_000_000:.2f}M MC"
+    if usd_value >= 1_000:
+        return f"${usd_value / 1_000:.0f}K MC"
+    return f"${usd_value:.0f} MC"
+
+
+def get_sol_price_usd() -> float:
+    """Current SOL/USD price — used to convert SOL-denominated PnL and balance into USDC-style dollar figures."""
+    prices = get_token_prices_usd([SOL_MINT])
+    return prices.get(SOL_MINT, 0)
 
 
 def get_liquidity_and_market_cap(mint: str):
@@ -2156,20 +2290,30 @@ def drain_sniper_queue(state: "LedgerState"):
             event = SNIPER_LAUNCH_QUEUE.get_nowait()
         except queue.Empty:
             break
+        processed += 1
+
+        # Only real "new token" events — defensive, in case the feed
+        # ever sends other event types over the same subscription.
+        if event.get("txType") and event.get("txType") != "create":
+            continue
+
         mint = event.get("mint")
         if mint and mint not in SNIPER_PENDING:
             SNIPER_PENDING[mint] = {
                 "mint": mint,
                 "symbol": event.get("symbol", "?"),
                 "name": event.get("name", ""),
-                "creator": event.get("creator", ""),
-                "initial_buy_sol": event.get("initialBuySol", 0) or 0,
+                # pumpdev.io's actual field names — "creator" and
+                # "initialBuySol" (the earlier guesses) don't exist in
+                # their real event schema, which is why every dev-buy
+                # check was silently reading 0 until this fix.
+                "creator": event.get("traderPublicKey", ""),
+                "initial_buy_sol": event.get("solAmount", 0) or 0,
                 "twitter": event.get("twitter"),
                 "telegram": event.get("telegram"),
                 "website": event.get("website"),
                 "first_seen": time.time(),
             }
-        processed += 1
 
 
 def scan_sniper_pending(state: "LedgerState"):
@@ -2320,11 +2464,9 @@ def main():
                         print(f"  [BLOCKED] {display_symbol}: {block_reason}")
                         continue
 
-                    balance_after = state.balance_sol - size_sol
                     notes_lines = [
                         f"• **Risk Assessment:** {risk_bucket} {risk_score}/10",
                         f"• **Amount Bought:** {size_sol:.4f} SOL",
-                        f"• **Current Balance:** {balance_after:.4f} SOL",
                     ]
                     if not analysis["independent"]:
                         # Only credit/mention the wallet when the call actually
