@@ -38,6 +38,7 @@ MODEL = "claude-sonnet-5"
 
 LEDGER_STATE_FILE = Path("ledger_state.json")
 MARKET_INTEL_FILE = Path("market_intel.json")
+TRADING_PLAYBOOK_FILE = Path("trading_playbook.md")
 
 LEDGER_SYSTEM_PROMPT = """You are Ledger, a self-made Solana memecoin \
 trader turned businessman. You cut your teeth in the trenches — \
@@ -115,7 +116,19 @@ def ask_claude(user_message: str) -> str:
         return "(Ledger's brain isn't wired up — ANTHROPIC_API_KEY isn't set.)"
 
     context = load_context()
-    full_system_prompt = f"{LEDGER_SYSTEM_PROMPT}\n\n--- Current context ---\n{context}"
+    playbook = ""
+    if TRADING_PLAYBOOK_FILE.exists():
+        try:
+            playbook = TRADING_PLAYBOOK_FILE.read_text()
+        except OSError as e:
+            print(f"[WARN] couldn't load trading playbook: {e}")
+
+    full_system_prompt = (
+        f"{LEDGER_SYSTEM_PROMPT}\n\n"
+        f"--- Your trading playbook (draw on this for strategy/psychology questions, don't recite verbatim) ---\n"
+        f"{playbook or 'No playbook loaded yet.'}\n\n"
+        f"--- Current context ---\n{context}"
+    )
 
     headers = {
         "x-api-key": ANTHROPIC_API_KEY,
@@ -124,7 +137,7 @@ def ask_claude(user_message: str) -> str:
     }
     payload = {
         "model": MODEL,
-        "max_tokens": 400,
+        "max_tokens": 1500,  # Sonnet 5 reserves budget for adaptive thinking by default — low values can 400
         "system": full_system_prompt,
         "messages": [{"role": "user", "content": user_message}],
     }
@@ -135,6 +148,10 @@ def ask_claude(user_message: str) -> str:
         data = resp.json()
         text_parts = [b["text"] for b in data.get("content", []) if b.get("type") == "text"]
         return "\n".join(text_parts).strip() or "(no response generated)"
+    except requests.exceptions.HTTPError as e:
+        body = e.response.text[:500] if e.response is not None else "no response body"
+        print(f"[ERROR] Claude API HTTP error: {e} — body: {body}")
+        return "Having trouble thinking straight right now — try again in a bit."
     except Exception as e:
         # Broad on purpose — this feeds directly into a Discord reply,
         # so ANY failure here (network, malformed response, whatever)
