@@ -125,6 +125,11 @@ COLOR_LOSS = 0xef4444      # red — stop-loss / losing close
 COLOR_NEUTRAL = 0x64748b   # slate — informational
 COLOR_STRONG_SIGNAL = 0xf59e0b  # amber — whale-backed thesis
 
+# Discord plain messages can't render colored text — this is the
+# closest visual equivalent to a "dark blue divider" between posts,
+# using blue-square emoji as a horizontal rule.
+BLUE_DIVIDER = "🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦"
+
 
 def speak(title: str, description: str, color: int = COLOR_NEUTRAL, fields: list = None):
     """
@@ -245,9 +250,18 @@ SNIPER_ACTIVE_PRESET = os.environ.get("SNIPER_PRESET", "hyper_early_scalp")
 
 SNIPER_SELECTION_RATE = 0.5       # of launches that pass the safety filters, snipe ~50% (a coin flip)
 SNIPER_MIN_DEV_BUY_SOL = 0.5      # below this, strongly correlates with instant rugs
-SNIPER_POSITION_SIZE_PCT = 0.08   # 8% of current bankroll per trade — scales
+SNIPER_POSITION_SIZE_PCT = 0.08   # 8% of current bankroll per trade at 1.0x confidence — scales
                                    # automatically as the bankroll grows toward 10 SOL or resets to 1
 SNIPER_MIN_POSITION_SOL = 0.005   # floor, so sizing doesn't round down to something meaningless
+
+# Position size scales with per-trade confidence instead of a single
+# fixed multiplier — 1.0x is baseline, up to these ceilings for the
+# most convicted setups. Trusted-wallet copies get a higher ceiling
+# than blind Sniper Mode launches, matching how much independent
+# judgment actually goes into each.
+PRIORITY_MAX_SIZE_MULTIPLIER = 5.0
+SNIPER_MAX_SIZE_MULTIPLIER = 4.0
+
 SNIPER_MIN_LIQUIDITY_USD = 1_000     # below this, a launch is too thin to trade safely
 SNIPER_MAX_ENTRY_MARKET_CAP_USD = 250_000  # above this, it's no longer an "early" entry
 SNIPER_MAX_QUEUE_DRAIN_PER_CYCLE = 20   # cap how many freshly-launched tokens enter the pending list per cycle
@@ -929,13 +943,13 @@ def copy_priority_wallet_entry(
     token: str, wallet: str, trader_name: str, platform_name: str, metadata: dict, state: "LedgerState"
 ):
     """
-    Directly mirrors a priority wallet's buy — no independent-conviction
-    gate, no "pass" possible, since a priority wallet is trusted enough
-    to copy outright. Uses the SAME sniper-style execution as Sniper
-    Mode (Cupsey exit ladder via check_sniper_positions, percentage-of-
-    bankroll sizing) rather than the main patient trailing-stop
-    strategy — this is deliberate, per instruction to keep the sniper
-    strategy for these copies specifically.
+    Directly mirrors a trusted wallet's buy — no independent-conviction
+    gate, no "pass" possible, since it's trusted enough to copy
+    outright. Uses the SAME sniper-style execution as Sniper Mode
+    (Cupsey exit ladder via check_sniper_positions), but with a longer
+    hold window (see PRIORITY_COPY_MAX_HOLD_SECONDS) and confidence-
+    based sizing up to PRIORITY_MAX_SIZE_MULTIPLIER, instead of a
+    fixed multiplier applied identically to every copy.
     """
     display_symbol = metadata.get("symbol") or token[:6] + "..."
 
@@ -946,14 +960,25 @@ def copy_priority_wallet_entry(
     prices = get_token_prices_usd([token])
     entry_price = prices.get(token)
     if entry_price is None:
-        print(f"  [SKIP] {display_symbol}: no price data yet for priority copy.")
+        print(f"  [SKIP] {display_symbol}: no price data yet for this copy.")
         return
 
-    # Priority copies get double the normal sniper allocation — the
-    # extra weight IS the "priority" treatment, on top of always
-    # copying regardless of independent judgment.
-    size_multiplier = ULTRA_CONSERVATIVE_SIZE_MULTIPLIER if state.ultra_conservative_mode else 1.0
-    size_sol = max(SNIPER_MIN_POSITION_SOL, state.balance_sol * SNIPER_POSITION_SIZE_PCT * 2 * size_multiplier)
+    dev_pct = get_dev_holding_pct(token, wallet)
+    top10_pct = get_top10_holder_pct(token)
+    _, entry_mc = get_liquidity_and_market_cap(token)
+
+    judgment = get_entry_opinion(
+        display_symbol, metadata.get("name", ""), trader_name, platform_name,
+        top10_pct, dev_pct, max_multiplier=PRIORITY_MAX_SIZE_MULTIPLIER,
+    )
+    entry_opinion = judgment["opinion"]
+    confidence_multiplier = judgment["confidence_multiplier"]
+
+    ultra_conservative_multiplier = ULTRA_CONSERVATIVE_SIZE_MULTIPLIER if state.ultra_conservative_mode else 1.0
+    size_sol = max(
+        SNIPER_MIN_POSITION_SOL,
+        state.balance_sol * SNIPER_POSITION_SIZE_PCT * confidence_multiplier * ultra_conservative_multiplier,
+    )
     size_sol = min(size_sol, MAX_POSITION_SOL)
 
     ok, block_reason = can_open_position(state, size_sol)
@@ -961,17 +986,12 @@ def copy_priority_wallet_entry(
         print(f"  [BLOCKED] {display_symbol}: {block_reason}")
         return
 
-    dev_pct = get_dev_holding_pct(token, wallet)
-    top10_pct = get_top10_holder_pct(token)
-    _, entry_mc = get_liquidity_and_market_cap(token)
-
-    entry_opinion = get_entry_opinion(display_symbol, metadata.get("name", ""), trader_name, platform_name, top10_pct, dev_pct)
-
     mc_display = format_market_cap(entry_mc)
     speak(
         title=f"⭐ TRADE OPENED — {display_symbol}",
         description=(
-            f"Entry: `{mc_display}` · Size: `{size_sol:.4f} SOL`\n"
+            f"{BLUE_DIVIDER}\n"
+            f"Entry: `{mc_display}` · Size: `{size_sol:.4f} SOL` (confidence {confidence_multiplier:.1f}x)\n"
             f"Copying **{trader_name}** on {platform_name}\n"
             f"**{entry_opinion}**"
         ),
@@ -1372,6 +1392,7 @@ def partial_close_paper_position(state: LedgerState, token: str, exit_price: flo
     pnl_usd_bold = f" · **{'+${:,.0f}'.format(pnl_usd) if is_win else '-${:,.0f}'.format(abs(pnl_usd))} USDC**" if pnl_usd is not None else ""
 
     lines = [
+        BLUE_DIVIDER,
         f"**Entry:** `{format_market_cap(entry_mc)}` → **Exit:** `{format_market_cap(exit_mc)}`",
         f"{result_emoji} **{change_pct:+.2%}**{pnl_usd_bold}  ({fraction:.0%} of position)",
         "",
@@ -1428,6 +1449,7 @@ def close_paper_position(state: LedgerState, token: str, exit_price: float, reas
     balance_str = f"`${balance_usd:,.0f} USDC`" if balance_usd is not None else f"`{state.balance_sol:.4f} SOL`"
 
     lines = [
+        BLUE_DIVIDER,
         f"**Entry:** `{format_market_cap(entry_mc)}` → **Exit:** `{format_market_cap(exit_mc)}`",
         f"{result_emoji} **{change_pct:+.2%}**{pnl_usd_bold}",
         "",
@@ -1540,45 +1562,103 @@ def check_open_positions(state: LedgerState):
 DIP_BUY_ADD_FRACTION = 0.5  # adds 50% of the original position size when buying a dip
 
 
-def get_entry_opinion(symbol: str, name: str, trader_name: str, platform_name: str, top10_pct: float, dev_pct: float) -> str:
+def get_entry_opinion(symbol: str, name: str, trader_name: str, platform_name: str, top10_pct: float, dev_pct: float, max_multiplier: float) -> dict:
     """
-    Ledger's actual take on a token being copied from a priority
-    trader — replaces the old fixed boilerplate line ("X entered —
-    mirroring directly on priority trust") with a real, specific
-    one-liner referencing the token and what's known about it, so
-    every entry reads like an opinion instead of a template.
+    Ledger's actual take on a token being copied from a trusted
+    trader, plus a genuine confidence-based sizing decision — not a
+    fixed multiplier applied identically every time. Returns
+    {"opinion": str, "confidence_multiplier": float}, where the
+    multiplier ranges from 1.0 (baseline size) up to max_multiplier
+    (maximum conviction). No mention of "priority" in the wording —
+    the trader is simply someone Ledger is copying, full stop.
     """
     if not ANTHROPIC_API_KEY:
-        return f"{trader_name} entered — mirroring on priority trust, no independent analysis available."
+        return {"opinion": f"{trader_name} entered.", "confidence_multiplier": 1.0}
 
-    context_bits = [f"Trader: {trader_name} (priority, being copied directly)", f"Platform: {platform_name}"]
+    context_bits = [f"Trader: {trader_name} (a trusted trader you copy)", f"Platform: {platform_name}"]
     if top10_pct is not None:
         context_bits.append(f"Top 10 holders: {top10_pct:.1f}%")
     if dev_pct is not None:
         context_bits.append(f"Dev holding: {dev_pct:.1f}%")
 
-    prompt = f"""You are Ledger. A priority trader you copy just bought a token, and you're mirroring the entry. Give your own brief, genuine take on THIS specific token — not a generic template line.
+    prompt = f"""You are Ledger. A trader you copy just bought a token, and you're mirroring the entry. Give your own brief, genuine take on THIS specific token — not a generic template line — and decide how much conviction this specific setup deserves.
 
 Token: {symbol} ({name})
 {chr(10).join(context_bits)}
 
-Write ONE short sentence, professional trader voice, correct grammar, no slang, no dollar signs. Reference something specific about this token or the situation — not just "mirroring on trust." Respond with ONLY the sentence, no quotes, no JSON."""
+Respond with ONLY valid JSON, no other text: {{"opinion": "<one short sentence, professional trader voice, correct grammar, no slang, no dollar signs — reference something specific about this token or situation, never mention 'priority' or 'trust' as the reason>", "confidence_multiplier": <number from 1.0 to {max_multiplier}, where 1.0 is baseline size and {max_multiplier} is maximum conviction — base this on how clean the holder distribution looks and how strong the setup is, not just on who the trader is>}}"""
 
     headers = {"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"}
-    payload = {"model": ANTHROPIC_MODEL, "max_tokens": 300, "messages": [{"role": "user", "content": prompt}]}
+    payload = {"model": ANTHROPIC_MODEL, "max_tokens": 400, "messages": [{"role": "user", "content": prompt}]}
     try:
         resp = requests.post(ANTHROPIC_API_URL, headers=headers, json=payload, timeout=20)
         resp.raise_for_status()
         data = resp.json()
         text = "".join(b["text"] for b in data.get("content", []) if b.get("type") == "text").strip()
-        return text.replace("$", "") or f"{trader_name} entered — mirroring on priority trust."
+        if text.startswith("```"):
+            text = text.strip("`").lstrip("json").strip()
+        json_match = re.search(r"\{.*\}", text, re.DOTALL)
+        if json_match:
+            text = json_match.group(0)
+        result = json.loads(text)
+        opinion = (result.get("opinion") or f"{trader_name} entered.").replace("$", "")
+        multiplier = max(1.0, min(max_multiplier, float(result.get("confidence_multiplier", 1.0))))
+        return {"opinion": opinion, "confidence_multiplier": multiplier}
     except requests.exceptions.HTTPError as e:
         body = e.response.text[:500] if e.response is not None else "no response body"
         print(f"[WARN] entry opinion HTTP error: {e} — body: {body}")
-        return f"{trader_name} entered — mirroring on priority trust."
+        return {"opinion": f"{trader_name} entered.", "confidence_multiplier": 1.0}
     except Exception as e:
         print(f"[WARN] entry opinion failed: {e}")
-        return f"{trader_name} entered — mirroring on priority trust."
+        return {"opinion": f"{trader_name} entered.", "confidence_multiplier": 1.0}
+
+
+def get_snipe_confidence(symbol: str, name: str, top10_pct: float, dev_pct: float, max_multiplier: float) -> dict:
+    """
+    Same idea as get_entry_opinion, but for a Sniper Mode launch —
+    no trader being copied, just Ledger's own read on the fresh
+    launch itself, plus a confidence multiplier (1.0-max_multiplier)
+    for sizing.
+    """
+    if not ANTHROPIC_API_KEY:
+        return {"opinion": f"Sniped {symbol}.", "confidence_multiplier": 1.0}
+
+    context_bits = []
+    if top10_pct is not None:
+        context_bits.append(f"Top 10 holders: {top10_pct:.1f}%")
+    if dev_pct is not None:
+        context_bits.append(f"Dev holding: {dev_pct:.1f}%")
+
+    prompt = f"""You are Ledger, sniping a fresh Pump.fun launch that already passed your safety filters. Give a brief, genuine take on THIS specific token, and decide how much conviction it deserves.
+
+Token: {symbol} ({name})
+{chr(10).join(context_bits) if context_bits else "No holder data available yet."}
+
+Respond with ONLY valid JSON, no other text: {{"opinion": "<one short sentence, professional trader voice, correct grammar, no slang, no dollar signs>", "confidence_multiplier": <number from 1.0 to {max_multiplier}, where 1.0 is baseline size and {max_multiplier} is maximum conviction — base this on the theme/name and how clean the holder distribution looks>}}"""
+
+    headers = {"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"}
+    payload = {"model": ANTHROPIC_MODEL, "max_tokens": 400, "messages": [{"role": "user", "content": prompt}]}
+    try:
+        resp = requests.post(ANTHROPIC_API_URL, headers=headers, json=payload, timeout=20)
+        resp.raise_for_status()
+        data = resp.json()
+        text = "".join(b["text"] for b in data.get("content", []) if b.get("type") == "text").strip()
+        if text.startswith("```"):
+            text = text.strip("`").lstrip("json").strip()
+        json_match = re.search(r"\{.*\}", text, re.DOTALL)
+        if json_match:
+            text = json_match.group(0)
+        result = json.loads(text)
+        opinion = (result.get("opinion") or f"Sniped {symbol}.").replace("$", "")
+        multiplier = max(1.0, min(max_multiplier, float(result.get("confidence_multiplier", 1.0))))
+        return {"opinion": opinion, "confidence_multiplier": multiplier}
+    except requests.exceptions.HTTPError as e:
+        body = e.response.text[:500] if e.response is not None else "no response body"
+        print(f"[WARN] snipe confidence HTTP error: {e} — body: {body}")
+        return {"opinion": f"Sniped {symbol}.", "confidence_multiplier": 1.0}
+    except Exception as e:
+        print(f"[WARN] snipe confidence failed: {e}")
+        return {"opinion": f"Sniped {symbol}.", "confidence_multiplier": 1.0}
 
 
 def get_exit_opinion(symbol: str, reason: str, pnl: float, change_pct: float) -> str:
@@ -2140,35 +2220,34 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
         print(f"[SNIPE SKIP] {symbol}: no price data yet")
         return
 
-    # Size as a % of CURRENT bankroll, not a fixed SOL amount — this
+    judgment = get_snipe_confidence(symbol, name, top10_pct, dev_pct, max_multiplier=SNIPER_MAX_SIZE_MULTIPLIER)
+    snipe_opinion = judgment["opinion"]
+    confidence_multiplier = judgment["confidence_multiplier"]
+
+    # Size as a % of CURRENT bankroll, scaled by confidence — this
     # scales automatically as the balance grows toward the 10 SOL
     # target or resets to 1 SOL after a wipeout.
-    size_multiplier = ULTRA_CONSERVATIVE_SIZE_MULTIPLIER if state.ultra_conservative_mode else 1.0
-    size_sol = max(SNIPER_MIN_POSITION_SOL, state.balance_sol * SNIPER_POSITION_SIZE_PCT * size_multiplier)
+    ultra_conservative_multiplier = ULTRA_CONSERVATIVE_SIZE_MULTIPLIER if state.ultra_conservative_mode else 1.0
+    size_sol = max(
+        SNIPER_MIN_POSITION_SOL,
+        state.balance_sol * SNIPER_POSITION_SIZE_PCT * confidence_multiplier * ultra_conservative_multiplier,
+    )
 
     ok, block_reason = can_open_position(state, size_sol)
     if not ok:
         print(f"[SNIPE BLOCKED] {symbol}: {block_reason}")
         return
 
-    notes_lines = [f"• **Preset:** {SNIPER_ACTIVE_PRESET.replace('_', ' ').title()}"]
-    if top10_pct is not None:
-        notes_lines.append(f"• **Top 10 Holders:** {top10_pct:.1f}%")
-    if dev_pct is not None:
-        notes_lines.append(f"• **Dev Holding:** {dev_pct:.1f}%")
-    if liquidity_usd is not None:
-        notes_lines.append(f"• **Liquidity:** {liquidity_usd:,.0f} USD")
-    notes_lines.append(f"• **Amount Bought:** {size_sol:.4f} SOL")
-
+    mc_display = format_market_cap(market_cap_usd)
     speak(
-        title=f"🎯 {symbol}",
-        description="",
+        title=f"🎯 TRADE OPENED — {symbol}",
+        description=(
+            f"{BLUE_DIVIDER}\n"
+            f"Entry: `{mc_display}` · Size: `{size_sol:.4f} SOL` (confidence {confidence_multiplier:.1f}x)\n"
+            f"**{snipe_opinion}**"
+        ),
         color=COLOR_BUY,
-        fields=[
-            {"name": "CA:", "value": mint, "inline": False},
-            {"name": "🧠 Thesis", "value": f"Sniped per {SNIPER_ACTIVE_PRESET} filters ({name}).", "inline": False},
-            {"name": "ℹ️ Additional Notes", "value": "\n".join(notes_lines), "inline": False},
-        ],
+        fields=[{"name": "CA:", "value": mint, "inline": False}],
     )
 
     # opened_by stores the actual creator address (not a placeholder
@@ -2177,7 +2256,7 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
     creator_address = candidate.get("creator", "")
     open_paper_position(
         state, mint, entry_price, size_sol, opened_by=creator_address, strength="weak",
-        thesis=f"Sniped per {SNIPER_ACTIVE_PRESET} filters ({name}).",
+        thesis=snipe_opinion, entry_market_cap_usd=market_cap_usd,
     )
     if mint in state.open_positions:
         state.open_positions[mint]["risk_level"] = "🎯 Sniper Play"
