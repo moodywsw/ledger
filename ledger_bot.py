@@ -244,7 +244,8 @@ SNIPER_MODE_ENABLED = os.environ.get("SNIPER_MODE_ENABLED", "true").lower() == "
 SNIPER_WS_URL = "wss://pumpdev.io/ws"  # same free, unofficial feed as pumpfun_listener.py
 SNIPER_ACTIVE_PRESET = os.environ.get("SNIPER_PRESET", "hyper_early_scalp")
 
-SNIPER_SELECTION_RATE = 0.5       # of launches that pass the safety filters, snipe ~50% (a coin flip)
+SNIPER_MIN_CONFIDENCE_TO_ENTER = 2.0  # minimum confidence multiplier required to actually buy —
+                                       # replaces the old 50% coin-flip with a real conviction bar
 SNIPER_MIN_DEV_BUY_SOL = 0.5      # below this, strongly correlates with instant rugs
 SNIPER_POSITION_SIZE_PCT = 0.08   # 8% of current bankroll per trade at 1.0x confidence — scales
                                    # automatically as the bankroll grows toward 10 SOL or resets to 1
@@ -335,7 +336,9 @@ SNIPER_PRESETS = {
 # match the realistic -30% to -40% range instead of the earlier -10%
 # guess. Max hold is now a backstop safety net, not the primary exit —
 # the TP ladder and SL do most of the work.
-CUPSEY_TP1_MULTIPLE = 2.0          # sell CUPSEY_TP1_FRACTION of the position at 2x entry price
+CUPSEY_TP1_MULTIPLE = 1.20         # sell CUPSEY_TP1_FRACTION of the position at +20% — a target
+                                    # actually reachable within the 1-minute hold cap, unlike the
+                                    # old 2x (+100%) which most trades never got to in time
 CUPSEY_TP1_FRACTION = 0.50
 CUPSEY_TP2_MULTIPLE = 4.0          # sell CUPSEY_TP2_FRACTION (of the ORIGINAL size) at 4x (middle of 3-5x)
 CUPSEY_TP2_FRACTION = 0.30
@@ -1854,7 +1857,7 @@ def check_sniper_positions(state: LedgerState):
         current_multiple = 1 + change_pct
 
         if not pos["tp1_hit"] and current_multiple >= CUPSEY_TP1_MULTIPLE - EPSILON:
-            partial_close_paper_position(state, mint, current_price, CUPSEY_TP1_FRACTION, reason="🎯 Sniper TP1 (2x)")
+            partial_close_paper_position(state, mint, current_price, CUPSEY_TP1_FRACTION, reason=f"🎯 Sniper TP1 (+{(CUPSEY_TP1_MULTIPLE-1)*100:.0f}%)")
             if mint in state.open_positions:
                 state.open_positions[mint]["tp1_hit"] = True
                 state.save()
@@ -2195,19 +2198,23 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
         print(f"[SNIPE SKIP] {symbol}: market cap too high for an early entry (${market_cap_usd:,.0f})")
         return
 
-    if random.random() > SNIPER_SELECTION_RATE:
-        print(f"[SNIPE SKIP] {symbol}: passed filters, not selected this round")
-        return
-
     prices = get_token_prices_usd([mint])
     entry_price = prices.get(mint)
     if entry_price is None:
         print(f"[SNIPE SKIP] {symbol}: no price data yet")
         return
 
+    # Selection is now based on genuine confidence instead of a coin
+    # flip — a token that passed every mechanical filter still only
+    # gets bought if Ledger's own read on it clears a real conviction
+    # bar, not at random.
     judgment = get_snipe_confidence(symbol, name, top10_pct, dev_pct, max_multiplier=SNIPER_MAX_SIZE_MULTIPLIER)
     snipe_opinion = judgment["opinion"]
     confidence_multiplier = judgment["confidence_multiplier"]
+
+    if confidence_multiplier < SNIPER_MIN_CONFIDENCE_TO_ENTER:
+        print(f"[SNIPE SKIP] {symbol}: passed filters but confidence too low ({confidence_multiplier:.1f}x < {SNIPER_MIN_CONFIDENCE_TO_ENTER}x)")
+        return
 
     # Size as a % of CURRENT bankroll, scaled by confidence — this
     # scales automatically as the balance grows toward the 10 SOL
@@ -2436,7 +2443,7 @@ def main():
         start_sniper_listener()
         preset = SNIPER_PRESETS[SNIPER_ACTIVE_PRESET]
         print(f"[SNIPER] Mode ENABLED — preset '{SNIPER_ACTIVE_PRESET}', "
-              f"selection rate {SNIPER_SELECTION_RATE:.0%}, "
+              f"min confidence to enter {SNIPER_MIN_CONFIDENCE_TO_ENTER}x, "
               f"age window {preset['age_min_minutes']}-{preset['age_max_minutes']} min, "
               f"max top10 {preset['top10_holders_max_pct']}%")
 
