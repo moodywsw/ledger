@@ -1965,6 +1965,61 @@ def buy_the_dip(state: LedgerState, token: str, current_price: float):
     print(f"[DIP BUY] {token}: added {add_size:.4f} SOL at {current_price:.10g}, new avg entry {new_entry:.10g}")
 
 
+def get_sniper_exit_price(mint: str) -> float:
+    """
+    Live exit price for Sniper Mode / priority-copy positions via
+    DexScreener's priceUsd — used ONLY inside check_sniper_positions(),
+    instead of the Jupiter Price API V3 (get_token_prices_usd) used
+    everywhere else in this file.
+
+    Why: live-tested on 2026-08-18. The Jupiter V3 price for BONK (one
+    of the most liquid memecoins on Solana) returned the IDENTICAL
+    blockId and usdPrice across a 25-second gap between two separate
+    HTTP requests — its price snapshot simply hadn't refreshed, and
+    the returned blockId was already ~56 Solana slots (~22s) behind
+    the live chain tip. That's a snapshot, not a live quote, and it's
+    too stale for a strategy with a 60-second hold. The same test
+    against DexScreener — BONK plus two freshly-launched Pump.fun
+    mints, three polls ~22s apart — showed BONK equally frozen (likely
+    just no real trades on that pool right then), but BOTH Pump.fun
+    mints showed real, moving priceUsd between polls. DexScreener is
+    demonstrably fresher for the low-liquidity, minutes-old tokens
+    Sniper Mode actually trades.
+
+    Scout/conviction positions are held far longer than a minute, so
+    they don't have the same urgency and keep using
+    get_token_prices_usd() (Jupiter) unchanged.
+
+    Note: entry prices for these same positions are still captured via
+    Jupiter (evaluate_snipe_candidate / copy_priority_wallet_entry) —
+    this function only changes the EXIT side, per the specific ask.
+    That means change_pct is now computed from two different price
+    sources (Jupiter entry vs DexScreener exit), which could itself
+    introduce a small systematic offset if the two providers quote
+    slightly different effective prices for the same pool — worth
+    watching, not something this change addresses.
+
+    Returns None if the mint has no Solana pair on DexScreener yet, or
+    the request fails — same "missing data is never a green light"
+    convention as every other price/market-data helper in this file.
+    """
+    try:
+        resp = requests.get(
+            "https://api.dexscreener.com/latest/dex/tokens/" + mint, timeout=15
+        )
+        resp.raise_for_status()
+        pairs = resp.json().get("pairs") or []
+        solana_pairs = [p for p in pairs if p.get("chainId") == "solana"]
+        if not solana_pairs:
+            return None
+        pair = max(solana_pairs, key=lambda p: (p.get("liquidity") or {}).get("usd", 0) or 0)
+        price_str = pair.get("priceUsd")
+        return float(price_str) if price_str is not None else None
+    except Exception as e:
+        print(f"[WARN] sniper exit price fetch failed for {mint}: {e}")
+        return None
+
+
 def check_sniper_positions(state: LedgerState):
     """
     Cupsey-style exit for Sniper Mode positions — capped at a hard
@@ -1985,7 +2040,6 @@ def check_sniper_positions(state: LedgerState):
     if not sniper_mints:
         return
 
-    prices = get_token_prices_usd(sniper_mints)
     now = datetime.now(timezone.utc)
     EPSILON = 1e-9
 
@@ -1996,7 +2050,11 @@ def check_sniper_positions(state: LedgerState):
 
         opened_at = datetime.fromisoformat(pos["opened_at"])
         held_seconds = (now - opened_at).total_seconds()
-        current_price = prices.get(mint)
+        # DexScreener, not Jupiter — see get_sniper_exit_price()'s
+        # docstring for why. Fetched per-mint (no batch endpoint on
+        # DexScreener), same pattern get_liquidity_and_market_cap()
+        # already uses elsewhere in this file.
+        current_price = get_sniper_exit_price(mint)
 
         # Dev-sell check — a real red flag, checked regardless of price data
         if pos.get("entry_dev_holding_pct"):
