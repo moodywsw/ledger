@@ -252,6 +252,19 @@ STARTING_PAPER_BALANCE_SOL = 10.0  # degen-mode: aim to compound this fast towar
 MIN_SCOUT_SIZE_SOL = 0.02
 MAX_CONVICTION_SIZE_SOL = 0.25
 
+# Conviction-mode pacing: the value computed from MIN_SCOUT_SIZE_SOL/
+# MAX_CONVICTION_SIZE_SOL above is the TARGET size, not what actually
+# gets bought on day one. Only CONVICTION_INITIAL_ENTRY_FRACTION of it
+# goes in on the initial entry; the rest scales in later (via
+# top_up_conviction_position, called from check_open_positions) only
+# once the position shows sustained price growth — never full size on
+# the first buy.
+CONVICTION_INITIAL_ENTRY_FRACTION = 0.40
+CONVICTION_TOPUP_STAGE1_GROWTH_PCT = 0.15   # +15% from entry -> top up to CONVICTION_TOPUP_STAGE1_TARGET_FRACTION of target
+CONVICTION_TOPUP_STAGE1_TARGET_FRACTION = 0.70
+CONVICTION_TOPUP_STAGE2_GROWTH_PCT = 0.30   # +30% from entry -> top up to the full target
+CONVICTION_TOPUP_STAGE2_TARGET_FRACTION = 1.00
+
 # ── Sniper Mode ──────────────────────────────────────────────────────
 #
 # A separate, faster, more mechanical strategy from the main wallet-
@@ -396,6 +409,8 @@ class PaperPosition:
     commented_at_checkpoint: bool = False  # has the mid-hold live commentary already been posted?
     dip_buys: int = 0  # how many times this position has been averaged into on a drawdown
     entry_market_cap_usd: float = None  # market cap at entry — powers the clean "Entry MC -> Exit MC" close format
+    target_size_sol: float = 0.0  # conviction-mode only: the FULL size calculated from risk_score — 0 for non-conviction positions (priority-copy, sniper), which never scale in
+    topup_stage: int = 0  # conviction-mode pacing: 0 = only the initial fractional entry, 1 = first top-up done, 2 = fully topped up to target_size_sol
 
 
 @dataclass
@@ -972,6 +987,12 @@ def copy_priority_wallet_entry(
     hold cap), with confidence-based sizing up to
     PRIORITY_MAX_SIZE_MULTIPLIER instead of a fixed multiplier applied
     identically to every copy.
+
+    ONE exception to "no pass possible": the wash-trading flag
+    (get_wash_trading_flag) still skips the copy. That's a data-quality
+    safety check, not a conviction judgment — even a fully trusted
+    wallet's buy isn't worth mirroring into a pool where the last
+    hour's activity doesn't look like real trading.
     """
     display_symbol = metadata.get("symbol") or token[:6] + "..."
 
@@ -983,6 +1004,17 @@ def copy_priority_wallet_entry(
     entry_price = prices.get(token)
     if entry_price is None:
         print(f"  [SKIP] {display_symbol}: no price data yet for this copy.")
+        return
+
+    wash_flag = get_wash_trading_flag(token)
+    if wash_flag["suspicious"]:
+        print(f"  [SKIP] {display_symbol}: wash-trading flag — {wash_flag['reason']}")
+        log_journal(
+            kind="refused",
+            text=f"Skipped copying {trader_name}'s buy of {display_symbol} — {wash_flag['reason']}",
+            token_ticker=display_symbol,
+            meta={"wallet": trader_name, "h1_buys": wash_flag["h1_buys"], "h1_sells": wash_flag["h1_sells"]},
+        )
         return
 
     dev_pct = get_dev_holding_pct(token, wallet)
@@ -1078,6 +1110,9 @@ def analyze_conviction(
             "risk_score": 7,
             "thesis": f"{trigger_wallet_handle} has taken a position here. No independent analysis available (ANTHROPIC_API_KEY not set) — sizing based on wallet trust alone.",
             "independent": False,
+            "entry_condition": None,
+            "invalidation": None,
+            "criteria": {},
         }
 
     wallet_trust = "a standard tracked wallet, no special trust level"  # priority wallets never reach this function — see copy_priority_wallet_entry
@@ -1103,6 +1138,8 @@ Core principles you trade by:
 - Watch for "vamping" — when a narrative or trend goes viral, multiple competing tokens often launch around the same theme, and the crowd frequently buys the wrong (non-canonical) one before the real one is confirmed. If this token's appeal rests on a trend/narrative match, weigh how likely it is to be the token the community actually rallies around, versus a copycat that gets abandoned once the "real" one is identified. Treat unclear canonical status as a reason to raise the risk score, not to pass outright — being early on the right one is valuable, but so is being honest about the uncertainty.
 - Read the market regime from your own recent research before sizing conviction — the same setup deserves more caution in quiet/risk-off conditions than in active/risk-on ones, but "quiet market" alone is not a reason to sit out entirely.
 - A thesis should be something you could defend in two sentences. If you can't articulate a concrete reason beyond "the wallet bought it," that's a signal to pass or mark the risk high.
+- Liquidity or volume alone is never a sufficient reason to enter — there must be a real reason behind the numbers, not just activity for its own sake.
+- Loyalty to a dying position is a slow way to lose money — cut it once the thesis has broken, don't stay in just because you're already in.
 
 Token name: {name}
 Ticker: {symbol}
@@ -1119,10 +1156,21 @@ Chart / market structure for this specific token ({structure['trend']}):
 {structure['note']}
 Treat "insufficient_data" as neutral — don't penalize a token just for being too new to have chart history yet. A downtrend or bearish break of structure is a real reason for extra caution (higher risk_score, smaller size), but only a confirmed downtrend with no offsetting narrative strength should push you all the way to "pass." The chart confirms or challenges a thesis, it never replaces one.
 
-Decide independently: does this token's own merit (its theme, timing, narrative fit, canonical-vs-copycat likelihood, and current chart structure) plus the wallet signal add up to at least a small speculative position — or are there genuine red flags that make this not worth even a scout-sized bet? Remember: uncertainty alone calls for a smaller size and a higher risk_score, not a pass. You should expect to say "buy" noticeably more often than "pass" for setups that have a coherent theme and no real red flags.
+Before writing your thesis, work through these six checks explicitly — a "holds" or "fails" verdict plus a one-sentence note for each. You have web search available: use it for check 3 specifically, to look up this token's actual recent trading activity instead of guessing.
+
+1. recent_buy_sell_pressure — buyers vs sellers in the last hour: does real demand currently outweigh supply, or is it the other way around?
+2. age_and_socials — is this project old enough / does it have a visible social presence and a site, or is it a blind, brand-new, anonymous launch?
+3. volume_6h_substance — use web search to check this specific token's real 6-hour trading volume and activity level. Is it genuine, sustained volume, or is it thin, unverifiable, or inconsistent with the hype?
+4. narrative_real_vs_fomo — is the narrative this token is riding grounded in something real (an actual event, product, launch, or trend), or is it just hype with nothing substantive behind it?
+5. late_buyers_trapped — is there a large cohort of recent buyers sitting deep underwater who are likely to dump into any strength? "holds" = no meaningful trapped-buyer overhang; "fails" = yes, there's a real overhang.
+6. counter_case — write the single strongest argument AGAINST entering this position. Then judge it honestly: does that counter-case actually hold up as a real reason to stay out ("holds" — it's a real problem), or is it weak and doesn't change your read ("fails" — the setup still stands)?
+
+Decide independently, using the six checks above alongside the token's own merit (theme, timing, narrative fit, canonical-vs-copycat likelihood, chart structure) and the wallet signal: does this add up to at least a small speculative position, or are there genuine red flags that make this not worth even a scout-sized bet? Remember: uncertainty alone calls for a smaller size and a higher risk_score, not a pass. You should expect to say "buy" noticeably more often than "pass" for setups that have a coherent theme and no real red flags.
+
+Only after working through all six checks do you write thesis_text, entry_condition (what you're watching for that would justify adding more size later), and invalidation (what would prove this thesis wrong and mean it's time to exit — tie this back to the "cut a dying position" principle above).
 
 Respond with ONLY valid JSON, no other text, no markdown code fences:
-{{"conviction": "buy" or "pass", "risk_score": <integer 0-10, 0=safest 10=most reckless>, "thesis": "<2-3 sentences, professional trader voice, correct grammar, reference the coin's lore/theme if known, no slang, never use a dollar sign character>", "independent": <true if your reasoning stands on the coin's own merit beyond just following the wallet, false if you are primarily following the wallet's lead>}}"""
+{{"criteria": {{"recent_buy_sell_pressure": {{"verdict": "holds" or "fails", "note": "<one sentence>"}}, "age_and_socials": {{"verdict": "holds" or "fails", "note": "<one sentence>"}}, "volume_6h_substance": {{"verdict": "holds" or "fails", "note": "<one sentence>"}}, "narrative_real_vs_fomo": {{"verdict": "holds" or "fails", "note": "<one sentence>"}}, "late_buyers_trapped": {{"verdict": "holds" or "fails", "note": "<one sentence>"}}, "counter_case": {{"verdict": "holds" or "fails", "note": "<the strongest argument against entering, one sentence>"}}}}, "conviction": "buy" or "pass", "risk_score": <integer 0-10, 0=safest 10=most reckless>, "thesis": "<2-3 sentences, professional trader voice, correct grammar, reference the coin's lore/theme if known, no slang, never use a dollar sign character>", "entry_condition": "<one sentence: what you're watching for that would justify adding more size later>", "invalidation": "<one sentence: what would prove this thesis wrong and mean it's time to exit>", "independent": <true if your reasoning stands on the coin's own merit beyond just following the wallet, false if you are primarily following the wallet's lead>}}"""
 
     headers = {
         "x-api-key": ANTHROPIC_API_KEY,
@@ -1131,8 +1179,11 @@ Respond with ONLY valid JSON, no other text, no markdown code fences:
     }
     payload = {
         "model": ANTHROPIC_MODEL,
-        "max_tokens": 1000,  # Sonnet 5 reserves budget for adaptive thinking by default — low values can 400
+        "max_tokens": 2500,  # Sonnet 5 reserves budget for adaptive thinking by default — low values can 400;
+                              # bumped further here since the six-point checklist plus web search results
+                              # plus the final thesis/entry_condition/invalidation is a lot more output than before
         "messages": [{"role": "user", "content": prompt}],
+        "tools": [{"type": "web_search_20250305", "name": "web_search"}],  # needed for check 3 (real 6h volume/activity)
     }
 
     try:
@@ -1156,6 +1207,9 @@ Respond with ONLY valid JSON, no other text, no markdown code fences:
         result["risk_score"] = max(0, min(10, int(result.get("risk_score", 10))))
         result["thesis"] = result.get("thesis", "").replace("$", "")  # extra safety net
         result["independent"] = bool(result.get("independent", False))
+        result["entry_condition"] = (result.get("entry_condition") or "").replace("$", "") or None
+        result["invalidation"] = (result.get("invalidation") or "").replace("$", "") or None
+        result["criteria"] = result.get("criteria", {})
         return result
     except requests.exceptions.HTTPError as e:
         # Log the actual response body — the exception message alone
@@ -1163,10 +1217,10 @@ Respond with ONLY valid JSON, no other text, no markdown code fences:
         # error body usually does (e.g. a specific invalid_request_error).
         body = e.response.text[:500] if e.response is not None else "no response body"
         print(f"[WARN] conviction analysis HTTP error for {token}: {e} — body: {body}")
-        return {"conviction": "pass", "risk_score": 10, "thesis": "", "independent": False}
+        return {"conviction": "pass", "risk_score": 10, "thesis": "", "independent": False, "entry_condition": None, "invalidation": None, "criteria": {}}
     except Exception as e:
         print(f"[WARN] conviction analysis failed for {token}: {e} — defaulting to pass (skip, don't guess)")
-        return {"conviction": "pass", "risk_score": 10, "thesis": "", "independent": False}
+        return {"conviction": "pass", "risk_score": 10, "thesis": "", "independent": False, "entry_condition": None, "invalidation": None, "criteria": {}}
 
 
 
@@ -1325,7 +1379,11 @@ def check_goal_deadline(state: LedgerState):
     state.save()
 
 
-def open_paper_position(state: LedgerState, token: str, price: float, size_sol: float, opened_by: str = "", strength: str = "weak", thesis: str = "", entry_market_cap_usd: float = None, risk_score: int = None):
+def open_paper_position(
+    state: LedgerState, token: str, price: float, size_sol: float, opened_by: str = "", strength: str = "weak",
+    thesis: str = "", entry_market_cap_usd: float = None, risk_score: int = None, target_size_sol: float = 0.0,
+    entry_condition: str = None, invalidation: str = None,
+):
     if token in state.open_positions:
         # Never silently overwrite an existing position — that would
         # deduct capital again while losing track of the first entry's
@@ -1358,6 +1416,7 @@ def open_paper_position(state: LedgerState, token: str, price: float, size_sol: 
         is_narrative=is_narrative,
         thesis=thesis,
         entry_market_cap_usd=entry_market_cap_usd,
+        target_size_sol=target_size_sol,
     ).__dict__
     state.trades_this_hour.append(time.time())
     state.trade_log.append({
@@ -1378,6 +1437,7 @@ def open_paper_position(state: LedgerState, token: str, price: float, size_sol: 
     upsert_thesis(
         ticker=display_name, token_mint=token, status="holding",
         thesis_text=thesis, risk_score=risk_score,
+        entry_condition=entry_condition, invalidation=invalidation,
     )
     state.save()
 
@@ -1563,6 +1623,18 @@ def check_open_positions(state: LedgerState):
         change_pct = (current_price - pos["entry_price"]) / pos["entry_price"]
         EPSILON = 1e-9  # avoids floating-point precision misses at exact thresholds
 
+        # Conviction-mode pacing: top up toward target_size_sol on
+        # confirmed growth, before any of the stop-loss/recovery/
+        # trailing-stop logic below runs. Only ever ADDS capital to a
+        # healthy position below its target — never touches the exit
+        # paths, and non-conviction positions (target_size_sol == 0)
+        # never enter this branch at all.
+        if pos.get("target_size_sol", 0) > pos["size_sol"] + EPSILON:
+            top_up_conviction_position(state, mint, current_price, change_pct)
+            pos = state.open_positions.get(mint)
+            if not pos:
+                continue  # shouldn't happen from a top-up, but stay defensive
+
         if change_pct <= STOP_LOSS_PCT + EPSILON:
             close_paper_position(state, mint, current_price, reason="🛑 Stop Loss")
             continue
@@ -1595,6 +1667,69 @@ def check_open_positions(state: LedgerState):
                 if pos.get("is_narrative"):
                     reason = "📉 Narrative Trailing Stop — Profit Locked"
                 close_paper_position(state, mint, current_price, reason=reason)
+
+
+def top_up_conviction_position(state: LedgerState, token: str, current_price: float, change_pct: float):
+    """
+    Scales a conviction-mode position toward its target_size_sol in
+    two fixed stages, gated on real price growth since entry — this is
+    the "rest of the sizing" that CONVICTION_INITIAL_ENTRY_FRACTION
+    deliberately left out of the initial buy. Uses price growth as the
+    "sustained growth" signal rather than volume/holder-count deltas:
+    those aren't tracked over time anywhere in this codebase today
+    (get_approx_holder_count only ever sees a single snapshot, and
+    per-token volume history isn't stored), while price is already
+    fetched every cycle for every open position, so it's the one
+    growth signal actually available without adding new state or
+    extra API calls just for this.
+    """
+    pos = state.open_positions.get(token)
+    if not pos:
+        return
+
+    target = pos.get("target_size_sol", 0)
+    stage = pos.get("topup_stage", 0)
+
+    if stage < 1 and change_pct >= CONVICTION_TOPUP_STAGE1_GROWTH_PCT:
+        new_stage, target_fraction = 1, CONVICTION_TOPUP_STAGE1_TARGET_FRACTION
+    elif stage < 2 and change_pct >= CONVICTION_TOPUP_STAGE2_GROWTH_PCT:
+        new_stage, target_fraction = 2, CONVICTION_TOPUP_STAGE2_TARGET_FRACTION
+    else:
+        return  # no growth milestone crossed yet — nothing to do this cycle
+
+    desired_size = target * target_fraction
+    add_size = desired_size - pos["size_sol"]
+    if add_size <= 0:
+        return
+
+    ok, reason = can_open_position(state, add_size)
+    if not ok:
+        print(f"[TOPUP BLOCKED] {token}: {reason}")
+        return
+
+    old_size, old_entry = pos["size_sol"], pos["entry_price"]
+    new_size = old_size + add_size
+    new_entry = (old_entry * old_size + current_price * add_size) / new_size
+
+    state.balance_sol -= add_size
+    pos["entry_price"] = new_entry
+    pos["size_sol"] = new_size
+    pos["topup_stage"] = new_stage
+    state.open_positions[token] = pos
+    state.save()
+
+    display_name = pos.get("symbol") or token
+    speak(
+        title=f"➕ TOPPED UP — {display_name}",
+        description=(
+            f"Growth confirmed (+{change_pct:.1%} from entry) — added {add_size:.4f} SOL, "
+            f"now {new_size:.4f} of {target:.4f} SOL target."
+        ),
+        color=COLOR_BUY,
+        fields=[{"name": "CA:", "value": token, "inline": False}],
+        journal_kind="did", token_ticker=display_name,
+        journal_meta={"add_size_sol": add_size, "new_size_sol": new_size, "target_size_sol": target, "stage": new_stage},
+    )
 
 
 DIP_BUY_ADD_FRACTION = 0.5  # adds 50% of the original position size when buying a dip
@@ -2250,6 +2385,11 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
         print(f"[SNIPE SKIP] {symbol}: market cap too high for an early entry (${market_cap_usd:,.0f})")
         return
 
+    wash_flag = get_wash_trading_flag(mint)
+    if wash_flag["suspicious"]:
+        print(f"[SNIPE SKIP] {symbol}: wash-trading flag — {wash_flag['reason']}")
+        return
+
     prices = get_token_prices_usd([mint])
     entry_price = prices.get(mint)
     if entry_price is None:
@@ -2351,6 +2491,83 @@ def get_liquidity_and_market_cap(mint: str):
     except Exception as e:
         print(f"[WARN] liquidity/mcap lookup failed for {mint}: {e}")
         return None, None
+
+
+# Wash-trading / one-sided-volume filter — applied at every entry
+# decision point (sniper, scout/conviction, priority-copy). DexScreener's
+# pair object exposes txn COUNTS split by buy/sell per timeframe
+# (txns.h1.buys / txns.h1.sells) — it does NOT expose per-trade dollar
+# size or a $ volume split by side, only a single total $ volume per
+# timeframe. That means this can only approximate "few large one-sided
+# trades" using transaction-count concentration and count-based
+# one-sidedness, not actual dollar-volume concentration — see the
+# get_wash_trading_flag() docstring for what this can and can't detect
+# given that limitation.
+WASH_TRADING_MIN_TXNS_H1 = 15       # fewer than this many buys+sells in the last hour — too thin a sample to trust
+WASH_TRADING_MAX_ONE_SIDED_PCT = 0.80  # >80% of last-hour txns on one side (mostly buys or mostly sells) — not organic two-sided trading
+
+
+def get_wash_trading_flag(mint: str) -> dict:
+    """
+    Best-effort wash-trading / thin-volume flag using DexScreener's
+    txns.h1 buy/sell COUNTS (not dollar volume — DexScreener doesn't
+    split $ volume by side, so a true "few giant trades dominating
+    dollar volume" check isn't possible with this data source; this
+    approximates it via transaction-count concentration instead).
+
+    Flags suspicious if EITHER:
+      - fewer than WASH_TRADING_MIN_TXNS_H1 total txns in the last
+        hour (too few trades to treat the hour's activity as a real
+        signal), OR
+      - more than WASH_TRADING_MAX_ONE_SIDED_PCT of last-hour txns
+        are on one side (overwhelmingly buys or overwhelmingly sells
+        — real two-sided trading doesn't look like this).
+
+    Returns {"suspicious": bool, "h1_buys": int or None,
+    "h1_sells": int or None, "h1_total_txns": int or None,
+    "reason": str or None}. Fails open (suspicious=False) on any
+    missing data or request error — absence of a signal is never
+    treated as a red flag, consistent with every other data-quality
+    gap elsewhere in this file.
+    """
+    try:
+        resp = requests.get(
+            "https://api.dexscreener.com/latest/dex/tokens/" + mint, timeout=15
+        )
+        resp.raise_for_status()
+        pairs = resp.json().get("pairs") or []
+        solana_pairs = [p for p in pairs if p.get("chainId") == "solana"]
+        if not solana_pairs:
+            return {"suspicious": False, "h1_buys": None, "h1_sells": None, "h1_total_txns": None, "reason": None}
+
+        pair = max(solana_pairs, key=lambda p: (p.get("liquidity") or {}).get("usd", 0) or 0)
+        txns_h1 = (pair.get("txns") or {}).get("h1") or {}
+        buys, sells = txns_h1.get("buys"), txns_h1.get("sells")
+        if buys is None or sells is None:
+            return {"suspicious": False, "h1_buys": None, "h1_sells": None, "h1_total_txns": None, "reason": None}
+
+        total = buys + sells
+        if total == 0:
+            return {"suspicious": False, "h1_buys": buys, "h1_sells": sells, "h1_total_txns": 0, "reason": None}
+
+        if total < WASH_TRADING_MIN_TXNS_H1:
+            return {
+                "suspicious": True, "h1_buys": buys, "h1_sells": sells, "h1_total_txns": total,
+                "reason": f"only {total} txns in the last hour — too thin to trust as a volume signal",
+            }
+
+        one_sided_pct = max(buys, sells) / total
+        if one_sided_pct > WASH_TRADING_MAX_ONE_SIDED_PCT:
+            side = "buys" if buys > sells else "sells"
+            return {
+                "suspicious": True, "h1_buys": buys, "h1_sells": sells, "h1_total_txns": total,
+                "reason": f"{one_sided_pct:.0%} of last hour's txns are {side} ({buys} buys / {sells} sells) — one-sided, doesn't look organic",
+            }
+
+        return {"suspicious": False, "h1_buys": buys, "h1_sells": sells, "h1_total_txns": total, "reason": None}
+    except Exception as e:
+        print(f"[WARN] wash-trading check failed for {mint}: {e}")
+        return {"suspicious": False, "h1_buys": None, "h1_sells": None, "h1_total_txns": None, "reason": None}
 
 
 def get_dev_holding_pct(mint: str, creator: str) -> float:
@@ -2584,6 +2801,17 @@ def main():
                         )
                         continue
 
+                    wash_flag = get_wash_trading_flag(token)
+                    if wash_flag["suspicious"]:
+                        print(f"  [PASS] {display_symbol} — wash-trading flag: {wash_flag['reason']}")
+                        log_journal(
+                            kind="refused",
+                            text=f"Passed on {display_symbol} — {wash_flag['reason']}",
+                            token_ticker=display_symbol,
+                            meta={"h1_buys": wash_flag["h1_buys"], "h1_sells": wash_flag["h1_sells"]},
+                        )
+                        continue
+
                     # Fetch price BEFORE posting, so the single message can
                     # include the actual size bought and resulting balance
                     # — no second "position opened" message needed.
@@ -2596,13 +2824,17 @@ def main():
                     risk_score = analysis["risk_score"]
                     risk_bucket = "🟢" if risk_score <= 3 else "🟡" if risk_score <= 6 else "🔴"
 
-                    # Size scales continuously with conviction (risk_score),
-                    # not just two fixed tiers — concentrated conviction on
-                    # your best-scoring ideas beats spreading evenly thin.
-                    # risk_score 0 (safest) -> MAX_CONVICTION_SIZE_SOL;
-                    # risk_score 10 (riskiest) -> MIN_SCOUT_SIZE_SOL.
-                    size_sol = MIN_SCOUT_SIZE_SOL + (MAX_CONVICTION_SIZE_SOL - MIN_SCOUT_SIZE_SOL) * (1 - risk_score / 10)
-                    size_sol = min(size_sol, MAX_POSITION_SOL)
+                    # target_size_sol scales continuously with conviction
+                    # (risk_score), not just two fixed tiers — concentrated
+                    # conviction on your best-scoring ideas beats spreading
+                    # evenly thin. risk_score 0 (safest) -> MAX_CONVICTION_SIZE_SOL;
+                    # risk_score 10 (riskiest) -> MIN_SCOUT_SIZE_SOL. This is
+                    # the TARGET, not the initial buy — see
+                    # CONVICTION_INITIAL_ENTRY_FRACTION and
+                    # top_up_conviction_position for the rest of the pacing.
+                    target_size_sol = MIN_SCOUT_SIZE_SOL + (MAX_CONVICTION_SIZE_SOL - MIN_SCOUT_SIZE_SOL) * (1 - risk_score / 10)
+                    target_size_sol = min(target_size_sol, MAX_POSITION_SOL)
+                    size_sol = target_size_sol * CONVICTION_INITIAL_ENTRY_FRACTION
                     strength = "weak"  # priority wallets never reach here — they branch off above into copy_priority_wallet_entry
 
                     ok, block_reason = can_open_position(state, size_sol)
@@ -2612,7 +2844,7 @@ def main():
 
                     notes_lines = [
                         f"• **Risk Assessment:** {risk_bucket} {risk_score}/10",
-                        f"• **Amount Bought:** {size_sol:.4f} SOL",
+                        f"• **Amount Bought:** {size_sol:.4f} SOL (of {target_size_sol:.4f} SOL target — scaling in on confirmed growth)",
                     ]
                     if not analysis["independent"]:
                         # Only credit/mention the wallet when the call actually
@@ -2636,7 +2868,8 @@ def main():
 
                     open_paper_position(
                         state, token, entry_price, size_sol, opened_by=wallet, strength=strength,
-                        thesis=analysis["thesis"], risk_score=risk_score,
+                        thesis=analysis["thesis"], risk_score=risk_score, target_size_sol=target_size_sol,
+                        entry_condition=analysis.get("entry_condition"), invalidation=analysis.get("invalidation"),
                     )
             except Exception as e:
                 print(f"[ERROR] wallet {wallet}: {e}")
