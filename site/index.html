@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ledger — Live Dashboard</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">LEDGER<span class="brand-sub">// paper trading, live</span></div>
+  <div class="stats">
+    <div class="stat">
+      <span class="stat-label">Balance</span>
+      <span class="stat-value" id="stat-balance">—</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Realized PnL</span>
+      <span class="stat-value" id="stat-pnl">—</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Open Positions</span>
+      <span class="stat-value" id="stat-open-count">—</span>
+    </div>
+    <div class="stat conn">
+      <span class="stat-label">Status</span>
+      <span class="stat-value" id="conn-status">connecting…</span>
+    </div>
+  </div>
+</header>
+
+<main class="columns">
+  <section class="panel" id="panel-positions">
+    <h2>Open Positions</h2>
+    <div class="panel-body" id="positions-body">
+      <div class="empty">No open positions.</div>
+    </div>
+  </section>
+
+  <section class="panel" id="panel-theses">
+    <h2>Active Theses</h2>
+    <div class="panel-body" id="theses-body">
+      <div class="empty">No active theses.</div>
+    </div>
+  </section>
+</main>
+
+<section class="panel panel-journal">
+  <h2>Journal</h2>
+  <div class="panel-body" id="journal-body">
+    <div class="empty">No journal entries yet.</div>
+  </div>
+</section>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -57,6 +57,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+from journal_store import log_journal
+from theses_store import upsert_thesis
+from api_server import start_api_server
+
 # ── Config ────────────────────────────────────────────────────────────
 
 HELIUS_API_KEY = os.environ.get("HELIUS_API_KEY", "")
@@ -127,7 +131,10 @@ COLOR_STRONG_SIGNAL = 0xf59e0b  # amber — whale-backed thesis
 
 
 
-def speak(title: str, description: str, color: int = COLOR_NEUTRAL, fields: list = None):
+def speak(
+    title: str, description: str, color: int = COLOR_NEUTRAL, fields: list = None,
+    journal_kind: str = None, token_ticker: str = None, journal_meta: dict = None,
+):
     """
     Ledger's public voice. Always prints a plain-text line to the
     console (for logs), and — if DISCORD_WEBHOOK_URL is configured —
@@ -136,8 +143,19 @@ def speak(title: str, description: str, color: int = COLOR_NEUTRAL, fields: list
     as its own bold-labeled section. `color` is accepted but unused
     for Discord now (plain messages have no color) — kept so callers
     don't need changes.
+
+    If `journal_kind` is passed, the exact same "{title} — {description}"
+    text already being printed/posted also gets appended to the
+    persistent journal (journal_store.log_journal) — this is the one
+    choke point where everything Ledger already says out loud becomes
+    durable, without generating any new text or duplicating the
+    decision logic that produced title/description in the first place.
     """
-    print(f"{title} — {description}")
+    console_line = f"{title} — {description}"
+    print(console_line)
+
+    if journal_kind:
+        log_journal(kind=journal_kind, text=console_line, token_ticker=token_ticker, meta=journal_meta)
 
     # Keep a leading emoji outside the bold wrap (matches "💰 **TRADE
     # CLOSED — X**" style) instead of bolding the emoji along with the
@@ -667,6 +685,12 @@ def do_market_research_pass():
         summary = run_market_research()
         print(f"\n{summary}\n")
         save_market_intel(summary)
+        # Only journal entry point not wrapped in speak() — market
+        # research never posts to Discord, but "read" is explicitly one
+        # of the four journal kinds, and this is the only place in the
+        # codebase where Ledger actually "reads" something (vs. acting
+        # or commenting), so it gets logged directly here.
+        log_journal(kind="read", text=summary)
     except requests.exceptions.HTTPError as e:
         body = e.response.text[:500] if e.response is not None else "no response body"
         print(f"[ERROR] market research pass HTTP error: {e} — body: {body}")
@@ -994,6 +1018,8 @@ def copy_priority_wallet_entry(
         ),
         color=COLOR_STRONG_SIGNAL,
         fields=[{"name": "CA:", "value": token, "inline": False}],
+        journal_kind="did", token_ticker=display_symbol,
+        journal_meta={"wallet": trader_name, "platform": platform_name, "size_sol": size_sol, "confidence_multiplier": confidence_multiplier},
     )
 
     open_paper_position(
@@ -1221,6 +1247,7 @@ def check_daily_loss_pause(state: LedgerState):
                 f"Pausing all new buys for {DAILY_LOSS_PAUSE_HOURS}h — back at {pause_until.strftime('%H:%M UTC')}."
             ),
             color=COLOR_LOSS,
+            journal_kind="commentary", journal_meta={"drawdown_pct": drawdown_pct},
         )
         state.save()
 
@@ -1252,6 +1279,7 @@ def check_ultra_conservative_mode(state: LedgerState):
                 f"Halving position sizing until it recovers."
             ),
             color=COLOR_LOSS,
+            journal_kind="commentary", journal_meta={"drawdown_from_peak": drawdown_from_peak},
         )
         state.save()
     elif state.ultra_conservative_mode and drawdown_from_peak > PEAK_DRAWDOWN_ULTRA_CONSERVATIVE_PCT:
@@ -1260,6 +1288,7 @@ def check_ultra_conservative_mode(state: LedgerState):
             title="🛡️ Ultra-Conservative Mode OFF",
             description="Balance has recovered — back to normal position sizing.",
             color=COLOR_PROFIT,
+            journal_kind="commentary",
         )
         state.save()
     else:
@@ -1291,11 +1320,12 @@ def check_goal_deadline(state: LedgerState):
             f"({(state.balance_sol / DAILY_TARGET_SOL * 100):.0f}% of the way there)."
         ),
         color=COLOR_PROFIT if hit_goal else COLOR_NEUTRAL,
+        journal_kind="commentary", journal_meta={"hit_goal": hit_goal, "balance_sol": state.balance_sol},
     )
     state.save()
 
 
-def open_paper_position(state: LedgerState, token: str, price: float, size_sol: float, opened_by: str = "", strength: str = "weak", thesis: str = "", entry_market_cap_usd: float = None):
+def open_paper_position(state: LedgerState, token: str, price: float, size_sol: float, opened_by: str = "", strength: str = "weak", thesis: str = "", entry_market_cap_usd: float = None, risk_score: int = None):
     if token in state.open_positions:
         # Never silently overwrite an existing position — that would
         # deduct capital again while losing track of the first entry's
@@ -1345,6 +1375,10 @@ def open_paper_position(state: LedgerState, token: str, price: float, size_sol: 
     # single combined message per buy, including this position's size
     # and the resulting balance, instead of a second message.
     print(f"{display_name} — Position Opened — Entry: {price:.6g} USD  •  Size: {size_sol} SOL{narrative_tag}")
+    upsert_thesis(
+        ticker=display_name, token_mint=token, status="holding",
+        thesis_text=thesis, risk_score=risk_score,
+    )
     state.save()
 
 
@@ -1404,10 +1438,16 @@ def partial_close_paper_position(state: LedgerState, token: str, exit_price: flo
         description="\n".join(lines),
         color=COLOR_PROFIT if is_win else COLOR_LOSS,
         fields=[{"name": "CA:", "value": token, "inline": False}],
+        journal_kind="did", token_ticker=display_name,
+        journal_meta={"reason": reason, "pnl_sol": pnl, "fraction_sold": fraction, "change_pct": change_pct},
     )
 
     if pos["size_sol"] < 0.001:  # fully drained — close it out entirely
         del state.open_positions[token]
+        # Position is genuinely gone now (not just trimmed) — this is
+        # the point where the thesis should flip to "closed" too,
+        # same as a full close_paper_position() would.
+        upsert_thesis(ticker=display_name, status="closed")
     else:
         state.open_positions[token] = pos
     state.save()
@@ -1460,7 +1500,10 @@ def close_paper_position(state: LedgerState, token: str, exit_price: float, reas
         description="\n".join(lines),
         color=COLOR_PROFIT if is_win else COLOR_LOSS,
         fields=[{"name": "CA:", "value": token, "inline": False}],
+        journal_kind="did", token_ticker=display_name,
+        journal_meta={"reason": reason, "pnl_sol": pnl, "change_pct": change_pct},
     )
+    upsert_thesis(ticker=display_name, status="closed")
     state.save()
 
 
@@ -1847,7 +1890,10 @@ def check_sniper_positions(state: LedgerState):
                 situation=f"Down {change_pct:.1%} from entry — decide whether this specific setup is worth averaging into, or whether to cut it now.",
             )
             if judgment["comment"]:
-                speak(title=f"💬 {pos.get('symbol') or mint[:6]}", description=judgment["comment"], color=COLOR_NEUTRAL)
+                speak(
+                    title=f"💬 {pos.get('symbol') or mint[:6]}", description=judgment["comment"], color=COLOR_NEUTRAL,
+                    journal_kind="commentary", token_ticker=pos.get("symbol") or mint[:6],
+                )
             if judgment["action"] == "buy_dip":
                 buy_the_dip(state, mint, current_price)
             else:
@@ -1896,7 +1942,10 @@ def check_sniper_positions(state: LedgerState):
                 situation="Routine mid-hold check-in — no target or stop has been hit yet, just give a brief live read on how it's going.",
             )
             if judgment["comment"]:
-                speak(title=f"💬 {pos.get('symbol') or mint[:6]}", description=judgment["comment"], color=COLOR_NEUTRAL)
+                speak(
+                    title=f"💬 {pos.get('symbol') or mint[:6]}", description=judgment["comment"], color=COLOR_NEUTRAL,
+                    journal_kind="commentary", token_ticker=pos.get("symbol") or mint[:6],
+                )
             if mint in state.open_positions:
                 state.open_positions[mint]["commented_at_checkpoint"] = True
                 state.save()
@@ -2024,6 +2073,7 @@ def check_for_blowup_reset(state: LedgerState):
             f"**Total resets so far:** {state.total_resets}"
         ),
         color=COLOR_LOSS,
+        journal_kind="commentary", journal_meta={"total_resets": state.total_resets},
     )
     state.save()
 
@@ -2043,6 +2093,7 @@ def check_for_daily_target_hit(state: LedgerState):
             f"Still running, not resetting on a win — only a wipeout triggers a restart."
         ),
         color=COLOR_PROFIT,
+        journal_kind="commentary",
     )
     state.save()
 
@@ -2087,6 +2138,7 @@ def post_performance_recap(state: LedgerState):
         title="📊 Performance Recap",
         description="\n".join(lines),
         color=COLOR_PROFIT if stats["total_pnl_sol"] >= 0 else COLOR_LOSS,
+        journal_kind="commentary", journal_meta={"total_pnl_sol": stats["total_pnl_sol"], "total_exits": stats["total_exits"]},
     )
 
 
@@ -2239,6 +2291,8 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
         ),
         color=COLOR_BUY,
         fields=[{"name": "CA:", "value": mint, "inline": False}],
+        journal_kind="did", token_ticker=symbol,
+        journal_meta={"preset": SNIPER_ACTIVE_PRESET, "size_sol": size_sol, "confidence_multiplier": confidence_multiplier},
     )
 
     # opened_by stores the actual creator address (not a placeholder
@@ -2439,6 +2493,8 @@ def main():
     state = LedgerState.load()
     print(f"Ledger booting up. Paper balance: {state.balance_sol} SOL")
 
+    start_api_server()
+
     if SNIPER_MODE_ENABLED:
         start_sniper_listener()
         preset = SNIPER_PRESETS[SNIPER_ACTIVE_PRESET]
@@ -2514,6 +2570,18 @@ def main():
 
                     if analysis["conviction"] != "buy":
                         print(f"  [PASS] {display_symbol} — no independent conviction, skipping (not posted).")
+                        # Not spoken to Discord (deliberately — see the
+                        # print above), but still worth a journal entry:
+                        # this is the "refused" kind, and analyze_conviction
+                        # already generates a thesis/reasoning even on a
+                        # pass, so there's real text to capture here, not
+                        # just a bare log line.
+                        log_journal(
+                            kind="refused",
+                            text=analysis["thesis"] or f"Passed on {display_symbol} — no independent conviction.",
+                            token_ticker=display_symbol,
+                            meta={"risk_score": analysis["risk_score"], "wallet": trader_name, "platform": platform_name},
+                        )
                         continue
 
                     # Fetch price BEFORE posting, so the single message can
@@ -2562,11 +2630,13 @@ def main():
                             {"name": "🧠 Thesis", "value": analysis["thesis"], "inline": False},
                             {"name": "ℹ️ Additional Notes", "value": additional_message, "inline": False},
                         ],
+                        journal_kind="did", token_ticker=display_symbol,
+                        journal_meta={"risk_score": risk_score, "size_sol": size_sol, "wallet": trader_name, "platform": platform_name, "independent": analysis["independent"]},
                     )
 
                     open_paper_position(
                         state, token, entry_price, size_sol, opened_by=wallet, strength=strength,
-                        thesis=analysis["thesis"],
+                        thesis=analysis["thesis"], risk_score=risk_score,
                     )
             except Exception as e:
                 print(f"[ERROR] wallet {wallet}: {e}")
