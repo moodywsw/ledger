@@ -57,7 +57,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from journal_store import log_journal
+from journal_store import log_journal, get_token_history
 from theses_store import upsert_thesis
 from api_server import start_api_server
 
@@ -1077,9 +1077,11 @@ def copy_priority_wallet_entry(
     top10_pct = get_top10_holder_pct(token)
     # entry_mc already fetched above for the market-cap ceiling check — reused here, not re-fetched
 
+    prior_entries = get_token_history(display_symbol, limit=5)
     judgment = get_entry_opinion(
         display_symbol, metadata.get("name", ""), trader_name, platform_name,
         top10_pct, dev_pct, max_multiplier=PRIORITY_MAX_SIZE_MULTIPLIER,
+        history_context=summarize_token_history(prior_entries),
     )
     entry_opinion = judgment["opinion"]
     confidence_multiplier = judgment["confidence_multiplier"]
@@ -1107,7 +1109,7 @@ def copy_priority_wallet_entry(
         color=COLOR_STRONG_SIGNAL,
         fields=[{"name": "CA:", "value": token, "inline": False}],
         journal_kind="did", token_ticker=display_symbol,
-        journal_meta={"wallet": trader_name, "platform": platform_name, "size_sol": size_sol, "confidence_multiplier": confidence_multiplier},
+        journal_meta={"wallet": trader_name, "platform": platform_name, "size_sol": size_sol, "confidence_multiplier": confidence_multiplier, "prior_encounters": len(prior_entries)},
     )
 
     open_paper_position(
@@ -1811,7 +1813,43 @@ def top_up_conviction_position(state: LedgerState, token: str, current_price: fl
 DIP_BUY_ADD_FRACTION = 0.5  # adds 50% of the original position size when buying a dip
 
 
-def get_entry_opinion(symbol: str, name: str, trader_name: str, platform_name: str, top10_pct: float, dev_pct: float, max_multiplier: float) -> dict:
+def _format_journal_timestamp(ts: str) -> str:
+    try:
+        return datetime.fromisoformat(ts).strftime("%b %d %H:%M UTC")
+    except Exception:
+        return ts
+
+
+def summarize_token_history(entries: list) -> str:
+    """
+    Turns raw journal_store entries for one token into a compact,
+    human-readable line per past encounter, newest first — this is
+    what gets dropped into the entry-opinion prompt as real memory of
+    what Ledger already did with this exact token, instead of every
+    repeat encounter reading as if it were the first. Informational
+    only — never used to gate or block a copy decision.
+    """
+    if not entries:
+        return ""
+
+    lines = []
+    for entry in entries:
+        when = _format_journal_timestamp(entry.get("timestamp", ""))
+        meta = entry.get("meta") or {}
+        if "pnl_sol" in meta:
+            result = "profit" if meta["pnl_sol"] >= 0 else "loss"
+            lines.append(f"{when}: closed for a {result} ({meta['pnl_sol']:+.4f} SOL) — {meta.get('reason', 'exit')}")
+        elif "confidence_multiplier" in meta and "size_sol" in meta:
+            lines.append(f"{when}: opened at {meta['confidence_multiplier']:.1f}x confidence")
+        elif "add_size_sol" in meta:
+            lines.append(f"{when}: topped up on a confirmed dip")
+        else:
+            lines.append(f"{when}: {entry.get('text', '')}")
+
+    return "; ".join(lines)
+
+
+def get_entry_opinion(symbol: str, name: str, trader_name: str, platform_name: str, top10_pct: float, dev_pct: float, max_multiplier: float, history_context: str = None) -> dict:
     """
     Ledger's actual take on a token being copied from a trusted
     trader, plus a genuine confidence-based sizing decision — not a
@@ -1829,16 +1867,18 @@ def get_entry_opinion(symbol: str, name: str, trader_name: str, platform_name: s
         context_bits.append(f"Top 10 holders: {top10_pct:.1f}%")
     if dev_pct is not None:
         context_bits.append(f"Dev holding: {dev_pct:.1f}%")
+    if history_context:
+        context_bits.append(f"Ledger's history with this token: {history_context}")
 
     prompt = f"""You are Ledger. A trader you copy just bought a token, and you're mirroring the entry. Give your own brief, genuine take on THIS specific token — not a generic template line — and decide how much conviction this specific setup deserves.
 
 Token: {symbol} ({name})
 {chr(10).join(context_bits)}
 
-Respond with ONLY valid JSON, no other text: {{"opinion": "<one short sentence, professional trader voice, correct grammar, no slang, no dollar signs — reference something specific about this token or situation, never mention 'priority' or 'trust' as the reason>", "confidence_multiplier": <number from 1.0 to {max_multiplier}, where 1.0 is baseline size and {max_multiplier} is maximum conviction — base this on how clean the holder distribution looks and how strong the setup is, not just on who the trader is>}}"""
+Respond with ONLY valid JSON, no other text: {{"opinion": "<one short sentence, professional trader voice, correct grammar, no slang, no dollar signs — reference something specific about this token or situation, never mention 'priority' or 'trust' as the reason>", "confidence_multiplier": <number from 1.0 to {max_multiplier} — do not default to 1.0 out of habit; move up the scale whenever holder distribution and setup strength genuinely earn it, and down toward 1.0 only when the setup is truly just average>}}"""
 
     headers = {"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"}
-    payload = {"model": ANTHROPIC_MODEL, "max_tokens": 400, "messages": [{"role": "user", "content": prompt}]}
+    payload = {"model": ANTHROPIC_MODEL, "max_tokens": 800, "messages": [{"role": "user", "content": prompt}]}  # Sonnet 5 reserves budget for adaptive thinking by default — low values can silently truncate the JSON and fall back to confidence_multiplier=1.0
     try:
         resp = requests.post(ANTHROPIC_API_URL, headers=headers, json=payload, timeout=20)
         resp.raise_for_status()
@@ -1862,7 +1902,7 @@ Respond with ONLY valid JSON, no other text: {{"opinion": "<one short sentence, 
         return {"opinion": f"{trader_name} entered.", "confidence_multiplier": 1.0}
 
 
-def get_snipe_confidence(symbol: str, name: str, top10_pct: float, dev_pct: float, max_multiplier: float) -> dict:
+def get_snipe_confidence(symbol: str, name: str, top10_pct: float, dev_pct: float, max_multiplier: float, history_context: str = None) -> dict:
     """
     Same idea as get_entry_opinion, but for a Sniper Mode launch —
     no trader being copied, just Ledger's own read on the fresh
@@ -1877,16 +1917,18 @@ def get_snipe_confidence(symbol: str, name: str, top10_pct: float, dev_pct: floa
         context_bits.append(f"Top 10 holders: {top10_pct:.1f}%")
     if dev_pct is not None:
         context_bits.append(f"Dev holding: {dev_pct:.1f}%")
+    if history_context:
+        context_bits.append(f"Ledger's history with this token: {history_context}")
 
     prompt = f"""You are Ledger, sniping a fresh Pump.fun launch that already passed your safety filters. Give a brief, genuine take on THIS specific token, and decide how much conviction it deserves.
 
 Token: {symbol} ({name})
 {chr(10).join(context_bits) if context_bits else "No holder data available yet."}
 
-Respond with ONLY valid JSON, no other text: {{"opinion": "<one short sentence, professional trader voice, correct grammar, no slang, no dollar signs>", "confidence_multiplier": <number from 1.0 to {max_multiplier}, where 1.0 is baseline size and {max_multiplier} is maximum conviction — base this on the theme/name and how clean the holder distribution looks>}}"""
+Respond with ONLY valid JSON, no other text: {{"opinion": "<one short sentence, professional trader voice, correct grammar, no slang, no dollar signs>", "confidence_multiplier": <number from 1.0 to {max_multiplier} — do not default to 1.0 out of habit; move up the scale whenever the theme/name and holder distribution genuinely earn it, and down toward 1.0 only when the setup is truly just average>}}"""
 
     headers = {"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"}
-    payload = {"model": ANTHROPIC_MODEL, "max_tokens": 400, "messages": [{"role": "user", "content": prompt}]}
+    payload = {"model": ANTHROPIC_MODEL, "max_tokens": 800, "messages": [{"role": "user", "content": prompt}]}  # Sonnet 5 reserves budget for adaptive thinking by default — low values can silently truncate the JSON and fall back to confidence_multiplier=1.0
     try:
         resp = requests.post(ANTHROPIC_API_URL, headers=headers, json=payload, timeout=20)
         resp.raise_for_status()
@@ -1928,7 +1970,7 @@ Result: {change_pct:+.1%} ({pnl:+.4f} SOL)
 Write ONE short sentence, professional trader voice, correct grammar, no slang, no dollar signs — a genuine read on how this one played out. Respond with ONLY the sentence, no quotes, no JSON."""
 
     headers = {"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"}
-    payload = {"model": ANTHROPIC_MODEL, "max_tokens": 300, "messages": [{"role": "user", "content": prompt}]}
+    payload = {"model": ANTHROPIC_MODEL, "max_tokens": 500, "messages": [{"role": "user", "content": prompt}]}  # Sonnet 5 reserves budget for adaptive thinking by default — low values can silently truncate the reflection to an empty string
     try:
         resp = requests.post(ANTHROPIC_API_URL, headers=headers, json=payload, timeout=20)
         resp.raise_for_status()
@@ -2557,7 +2599,11 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
     # flip — a token that passed every mechanical filter still only
     # gets bought if Ledger's own read on it clears a real conviction
     # bar, not at random.
-    judgment = get_snipe_confidence(symbol, name, top10_pct, dev_pct, max_multiplier=SNIPER_MAX_SIZE_MULTIPLIER)
+    prior_entries = get_token_history(symbol, limit=5)
+    judgment = get_snipe_confidence(
+        symbol, name, top10_pct, dev_pct, max_multiplier=SNIPER_MAX_SIZE_MULTIPLIER,
+        history_context=summarize_token_history(prior_entries),
+    )
     snipe_opinion = judgment["opinion"]
     confidence_multiplier = judgment["confidence_multiplier"]
 
@@ -2589,7 +2635,7 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
         color=COLOR_BUY,
         fields=[{"name": "CA:", "value": mint, "inline": False}],
         journal_kind="did", token_ticker=symbol,
-        journal_meta={"preset": SNIPER_ACTIVE_PRESET, "size_sol": size_sol, "confidence_multiplier": confidence_multiplier},
+        journal_meta={"preset": SNIPER_ACTIVE_PRESET, "size_sol": size_sol, "confidence_multiplier": confidence_multiplier, "prior_encounters": len(prior_entries)},
     )
 
     # opened_by stores the actual creator address (not a placeholder

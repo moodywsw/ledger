@@ -79,3 +79,32 @@ def get_recent_journal(limit: int = 50) -> list:
                 continue
 
     return list(reversed(entries[-limit:]))
+
+
+def get_token_history(token_ticker: str, limit: int = 5) -> list:
+    """
+    Returns up to `limit` most recent journal entries for one specific
+    token ticker, newest first — everything Ledger has already said or
+    done about this exact token in past encounters, not just the most
+    recent overall activity. Same full-file read as get_recent_journal
+    (fine at this scale), filtered to the ticker before truncating, so
+    a busy day for other tokens can't crowd this token's own past
+    entries out of the last `limit`.
+    """
+    if not token_ticker or not JOURNAL_FILE.exists():
+        return []
+
+    entries = []
+    with JOURNAL_FILE.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if entry.get("token_ticker") == token_ticker:
+                entries.append(entry)
+
+    return list(reversed(entries[-limit:]))
