@@ -25,10 +25,15 @@ Entry shape:
 """
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-JOURNAL_FILE = Path("journal.jsonl")
+# DATA_DIR points at a mounted persistent volume in production (Railway:
+# DATA_DIR=/data) so this file survives deploys/restarts instead of
+# living in the working directory, which gets wiped every time. Defaults
+# to "." for local dev, where no volume is mounted.
+JOURNAL_FILE = Path(os.environ.get("DATA_DIR", ".")) / "journal.jsonl"
 
 VALID_KINDS = {"read", "did", "refused", "commentary"}
 
@@ -50,6 +55,7 @@ def log_journal(kind: str, text: str, token_ticker: str = None, meta: dict = Non
         "meta": meta,
     }
     try:
+        JOURNAL_FILE.parent.mkdir(parents=True, exist_ok=True)
         with JOURNAL_FILE.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
     except Exception as e:

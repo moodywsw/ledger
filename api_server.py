@@ -39,7 +39,12 @@ from theses_store import get_theses
 
 API_PORT = int(os.environ.get("API_PORT", os.environ.get("PORT", "8080")))
 
-STATE_FILE = Path("ledger_state.json")
+# Must resolve the same way as ledger_bot.py's STATE_FILE (same DATA_DIR
+# env var) since this reads the exact file ledger_bot.py writes, from
+# the same process/dyno — a mismatch here would mean the dashboard
+# reads stale/empty state from the old ephemeral path while the bot
+# writes to the persistent volume.
+STATE_FILE = Path(os.environ.get("DATA_DIR", ".")) / "ledger_state.json"
 JUPITER_PRICE_API = "https://lite-api.jup.ag/price/v3"
 
 # The static dashboard lives in /site (index.html, style.css, app.js) and

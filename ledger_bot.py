@@ -408,7 +408,11 @@ CUPSEY_DEV_SELL_EXIT_THRESHOLD_PCT = 0.5  # if the dev's holding drops to ≤50%
 
 # ── State ────────────────────────────────────────────────────────────
 
-STATE_FILE = Path("ledger_state.json")
+# DATA_DIR points at a mounted persistent volume in production (Railway:
+# DATA_DIR=/data) so this file survives deploys/restarts instead of
+# living in the working directory, which gets wiped every time. Defaults
+# to "." for local dev, where no volume is mounted.
+STATE_FILE = Path(os.environ.get("DATA_DIR", ".")) / "ledger_state.json"
 
 # Set RESET_STATE_ON_BOOT=true (Railway Variables) to wipe the saved
 # paper trading state on the next restart — useful for a clean start
@@ -462,6 +466,7 @@ class LedgerState:
     def save(self):
         # Cap seen_signatures so this doesn't grow forever
         self.seen_signatures = self.seen_signatures[-2000:]
+        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
         STATE_FILE.write_text(json.dumps(self.__dict__, indent=2, default=str))
 
     @classmethod

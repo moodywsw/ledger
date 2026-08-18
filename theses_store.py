@@ -29,10 +29,15 @@ Record shape:
 """
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-THESES_FILE = Path("theses.json")
+# DATA_DIR points at a mounted persistent volume in production (Railway:
+# DATA_DIR=/data) so this file survives deploys/restarts instead of
+# living in the working directory, which gets wiped every time. Defaults
+# to "." for local dev, where no volume is mounted.
+THESES_FILE = Path(os.environ.get("DATA_DIR", ".")) / "theses.json"
 
 VALID_STATUSES = {"stalking", "holding", "closed", "invalidated"}
 
@@ -47,6 +52,7 @@ def _load_all() -> dict:
 
 
 def _save_all(theses: dict):
+    THESES_FILE.parent.mkdir(parents=True, exist_ok=True)
     THESES_FILE.write_text(json.dumps(theses, indent=2))
 
 
