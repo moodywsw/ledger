@@ -1000,8 +1000,7 @@ def copy_priority_wallet_entry(
         print(f"  [SKIP] {display_symbol}: already holding a position, not copying this buy.")
         return
 
-    prices = get_token_prices_usd([token])
-    entry_price = prices.get(token)
+    entry_price = get_sniper_entry_price(token)
     if entry_price is None:
         print(f"  [SKIP] {display_symbol}: no price data yet for this copy.")
         return
@@ -2040,6 +2039,30 @@ def get_sniper_exit_price(mint: str) -> float:
         return None
 
 
+def get_sniper_entry_price(mint: str) -> float:
+    """
+    Entry-side counterpart to get_sniper_exit_price() — same
+    DexScreener priceUsd source, same staleness rationale, just
+    delegating to it directly (the logic doesn't differ; this exists
+    as its own name purely for readability at the entry call sites).
+
+    Used ONLY at the two sniper/priority-copy entry points
+    (evaluate_snipe_candidate, copy_priority_wallet_entry) so that
+    entry_price and the exit price fetched later in
+    check_sniper_positions come from the SAME provider. Mixing Jupiter
+    (entry) with DexScreener (exit) was confirmed live to produce a
+    change_pct that doesn't match the entry_mc -> exit_mc move shown
+    in the same message — e.g. BOLLOCKS: Entry $298K MC -> Exit $283K
+    MC (a real ~5% drop) displayed as +0.60%, because the % was being
+    computed from two different providers' quotes for two different
+    moments. This closes that gap for the sniper/priority-copy path.
+    Scout/conviction entries (main loop) keep using
+    get_token_prices_usd() (Jupiter) — they're held far longer than a
+    minute, so this mismatch never mattered there.
+    """
+    return get_sniper_exit_price(mint)
+
+
 def check_sniper_positions(state: LedgerState):
     """
     Cupsey-style exit for Sniper Mode positions — capped at a hard
@@ -2468,8 +2491,7 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
         print(f"[SNIPE SKIP] {symbol}: wash-trading flag — {wash_flag['reason']}")
         return
 
-    prices = get_token_prices_usd([mint])
-    entry_price = prices.get(mint)
+    entry_price = get_sniper_entry_price(mint)
     if entry_price is None:
         print(f"[SNIPE SKIP] {symbol}: no price data yet")
         return
