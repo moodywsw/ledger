@@ -292,6 +292,35 @@ SNIPER_MAX_SIZE_MULTIPLIER = 4.0
 
 SNIPER_MIN_LIQUIDITY_USD = 1_000     # below this, a launch is too thin to trade safely
 SNIPER_MAX_ENTRY_MARKET_CAP_USD = 250_000  # above this, it's no longer an "early" entry
+
+# Priority-copy gets far more room than the sniper ceiling above — it's
+# following a trusted trader, not blind speed-sniping a fresh launch —
+# but $5M+ is already well past "memecoin play" territory. Confirmed
+# live: USD1 at $157.84M MC and TRUMP at $1.4B MC both get blocked by
+# this, as they should — those aren't memecoin plays, copying them was
+# never the point of this mechanism.
+PRIORITY_COPY_MAX_ENTRY_MARKET_CAP_USD = 5_000_000
+
+# Known stablecoin mints — verified addresses only, nothing guessed.
+# If a priority-copy target is one of these, there's no trading thesis
+# in copying it regardless of market cap: it's pegged to ~$1 and isn't
+# going anywhere.
+KNOWN_STABLECOIN_MINTS = {
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # USDC
+    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",  # USDT
+    "USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB",   # USD1 (World Liberty Financial) — verified live against the $157.84M MC example
+}
+# Symbol backup — catches stablecoins whose exact mint isn't hardcoded
+# above, and copycat/impostor tokens riding a stablecoin's ticker
+# (equally pointless to copy: a real peg goes nowhere, and a fake one
+# trading on a stablecoin's name isn't a memecoin thesis either).
+KNOWN_STABLECOIN_SYMBOLS = {"USDC", "USDT", "USD1", "DAI", "BUSD", "TUSD", "FDUSD", "PYUSD", "USDE", "FRAX", "USDD"}
+
+
+def is_known_stablecoin(mint: str, symbol: str) -> bool:
+    if mint in KNOWN_STABLECOIN_MINTS:
+        return True
+    return (symbol or "").strip().upper() in KNOWN_STABLECOIN_SYMBOLS
 SNIPER_MAX_QUEUE_DRAIN_PER_CYCLE = 20   # cap how many freshly-launched tokens enter the pending list per cycle
 SNIPER_MAX_PENDING_EVAL_PER_CYCLE = 20  # cap how many pending (aging-in) candidates get evaluated per cycle
 SNIPER_CHECK_INTERVAL_SECONDS = 20      # sniper positions get checked this often, not the full 2-min main cycle
@@ -988,16 +1017,44 @@ def copy_priority_wallet_entry(
     PRIORITY_MAX_SIZE_MULTIPLIER instead of a fixed multiplier applied
     identically to every copy.
 
-    ONE exception to "no pass possible": the wash-trading flag
-    (get_wash_trading_flag) still skips the copy. That's a data-quality
-    safety check, not a conviction judgment — even a fully trusted
-    wallet's buy isn't worth mirroring into a pool where the last
-    hour's activity doesn't look like real trading.
+    Exceptions to "no pass possible" — none of these are conviction
+    judgments, they're mechanical safety/sanity checks that apply
+    regardless of how trusted the wallet is:
+      - the wash-trading flag (get_wash_trading_flag) — the last
+        hour's activity doesn't look like real trading;
+      - PRIORITY_COPY_MAX_ENTRY_MARKET_CAP_USD — the token is well
+        past memecoin-play territory (a trusted trader buying a $150M+
+        or $1B+ MC asset isn't the "follow a degen wallet into a fresh
+        play" scenario this mechanism exists for);
+      - is_known_stablecoin() — the token is a stablecoin (or a
+        copycat riding a stablecoin's ticker), which has no trading
+        thesis at any market cap.
     """
     display_symbol = metadata.get("symbol") or token[:6] + "..."
 
     if token in state.open_positions:
         print(f"  [SKIP] {display_symbol}: already holding a position, not copying this buy.")
+        return
+
+    if is_known_stablecoin(token, metadata.get("symbol", "")):
+        print(f"  [SKIP] {display_symbol}: known stablecoin — no trading thesis in copying a ~$1.00 peg.")
+        log_journal(
+            kind="refused",
+            text=f"Skipped copying {trader_name}'s buy of {display_symbol} — known stablecoin, nothing to trade.",
+            token_ticker=display_symbol,
+            meta={"wallet": trader_name, "mint": token},
+        )
+        return
+
+    _, entry_mc = get_liquidity_and_market_cap(token)
+    if entry_mc is not None and entry_mc > PRIORITY_COPY_MAX_ENTRY_MARKET_CAP_USD:
+        print(f"  [SKIP] {display_symbol}: market cap {format_market_cap(entry_mc)} exceeds priority-copy ceiling ({format_market_cap(PRIORITY_COPY_MAX_ENTRY_MARKET_CAP_USD)})")
+        log_journal(
+            kind="refused",
+            text=f"Skipped copying {trader_name}'s buy of {display_symbol} — market cap {format_market_cap(entry_mc)} is well past a memecoin-play ceiling.",
+            token_ticker=display_symbol,
+            meta={"wallet": trader_name, "market_cap_usd": entry_mc},
+        )
         return
 
     entry_price = get_sniper_entry_price(token)
@@ -1018,7 +1075,7 @@ def copy_priority_wallet_entry(
 
     dev_pct = get_dev_holding_pct(token, wallet)
     top10_pct = get_top10_holder_pct(token)
-    _, entry_mc = get_liquidity_and_market_cap(token)
+    # entry_mc already fetched above for the market-cap ceiling check — reused here, not re-fetched
 
     judgment = get_entry_opinion(
         display_symbol, metadata.get("name", ""), trader_name, platform_name,
