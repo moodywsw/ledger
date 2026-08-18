@@ -21,7 +21,10 @@ Read-only by design: every route only reads from disk
 state or can influence trading decisions.
 
 Env vars:
-  API_PORT - port to listen on (default 8080)
+  API_PORT - port to listen on. Defaults to Railway's own $PORT (the
+             one it already injects and exposes publicly for a "web"
+             process), falling back to 8080 for local runs where
+             neither is set.
 """
 
 import os
@@ -34,7 +37,7 @@ from flask import Flask, jsonify, request
 from journal_store import get_recent_journal
 from theses_store import get_theses
 
-API_PORT = int(os.environ.get("API_PORT", "8080"))
+API_PORT = int(os.environ.get("API_PORT", os.environ.get("PORT", "8080")))
 
 STATE_FILE = Path("ledger_state.json")
 JUPITER_PRICE_API = "https://lite-api.jup.ag/price/v3"
