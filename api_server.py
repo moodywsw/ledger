@@ -32,7 +32,7 @@ import json
 import threading
 import requests
 from pathlib import Path
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 
 from journal_store import get_recent_journal
 from theses_store import get_theses
@@ -42,7 +42,18 @@ API_PORT = int(os.environ.get("API_PORT", os.environ.get("PORT", "8080")))
 STATE_FILE = Path("ledger_state.json")
 JUPITER_PRICE_API = "https://lite-api.jup.ag/price/v3"
 
-app = Flask(__name__)
+# The static dashboard lives in /site (index.html, style.css, app.js) and
+# is served straight from this same Flask app/process/port — no separate
+# static host needed. static_url_path="" puts its files at the domain
+# root (e.g. site/app.js -> /app.js) instead of under /static.
+SITE_DIR = Path(__file__).resolve().parent / "site"
+
+app = Flask(__name__, static_folder=str(SITE_DIR), static_url_path="")
+
+
+@app.route("/")
+def dashboard():
+    return send_from_directory(app.static_folder, "index.html")
 
 
 @app.after_request

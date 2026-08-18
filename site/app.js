@@ -1,9 +1,8 @@
 // ── Config ──────────────────────────────────────────────────────────
-// Change this to wherever api_server.py is actually reachable — e.g.
-// your Railway public URL. Left as "http://localhost:8080" for local
-// testing against `python3 ledger_bot.py` running on the default
-// API_PORT.
-const API_BASE_URL = "http://localhost:8080";
+// Empty string: the dashboard is now served by the same Flask process
+// as the API (api_server.py), on the same origin, so fetch("/api/...")
+// already resolves correctly without a host to specify.
+const API_BASE_URL = "";
 
 const POLL_INTERVAL_MS = 10_000;
 
