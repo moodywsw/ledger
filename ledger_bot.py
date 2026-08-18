@@ -1272,11 +1272,22 @@ def is_trading_paused(state: LedgerState) -> bool:
 def check_daily_loss_pause(state: LedgerState):
     """
     A percentage-based circuit breaker, separate from the fixed
-    MAX_DAILY_LOSS_SOL limit: if the balance drops 12% below where
+    MAX_DAILY_LOSS_SOL limit: if EQUITY (cash + capital committed to
+    open positions — see compute_total_equity) drops 12% below where
     this run started, pause ALL new buys for 4 hours instead of
     continuing to trade through a bad stretch. Clears itself once the
     pause window elapses, starting a fresh baseline for the next
     stretch.
+
+    Deliberately equity, not state.balance_sol: opening a position
+    moves capital from cash into a position, it doesn't lose it —
+    comparing raw cash against a cash baseline would read normal
+    position-opening as a loss and could trip the pause on a perfectly
+    healthy run (confirmed: 3x 0.5 SOL positions opened against a 10
+    SOL run_start_balance — 15% of cash committed, zero SOL actually
+    lost — used to trip this exact breaker before any of them closed).
+    run_start_balance still stores an equity value despite the name;
+    not renamed here to avoid an unrelated state-schema change.
     """
     if is_trading_paused(state):
         return  # still within an active pause — nothing to do yet
@@ -1284,13 +1295,13 @@ def check_daily_loss_pause(state: LedgerState):
     if state.trading_paused_until:
         # Pause window has elapsed — clear it and start a fresh baseline
         state.trading_paused_until = None
-        state.run_start_balance = state.balance_sol
+        state.run_start_balance = compute_total_equity(state)
         state.save()
         return
 
     if state.run_start_balance <= 0:
         return
-    drawdown_pct = (state.balance_sol - state.run_start_balance) / state.run_start_balance
+    drawdown_pct = (compute_total_equity(state) - state.run_start_balance) / state.run_start_balance
     if drawdown_pct <= DAILY_LOSS_PAUSE_PCT:
         pause_until = datetime.now(timezone.utc) + timedelta(hours=DAILY_LOSS_PAUSE_HOURS)
         state.trading_paused_until = pause_until.isoformat()
@@ -1308,21 +1319,30 @@ def check_daily_loss_pause(state: LedgerState):
 
 def check_ultra_conservative_mode(state: LedgerState):
     """
-    Tracks the highest balance ever seen this run (the "peak"). If the
-    current balance falls 25% below that peak, switches on ultra-
-    conservative mode (halved position sizing everywhere) until the
-    balance recovers back above the trigger line. This is a DIFFERENT
-    signal from the daily-loss pause above — that one resets its
-    baseline each stretch, this one always measures from the best the
-    run has ever done.
+    Tracks the highest EQUITY ever seen this run (the "peak" — cash +
+    capital committed to open positions, see compute_total_equity). If
+    current equity falls 25% below that peak, switches on ultra-
+    conservative mode (halved position sizing everywhere) until it
+    recovers back above the trigger line. This is a DIFFERENT signal
+    from the daily-loss pause above — that one resets its baseline
+    each stretch, this one always measures from the best the run has
+    ever done.
+
+    Equity, not state.balance_sol, for the same reason as
+    check_daily_loss_pause: opening positions moves cash into
+    positions, it doesn't destroy it, and comparing raw cash against a
+    cash peak would read normal position-opening as a fresh drawdown.
+    peak_balance still stores an equity value despite the name; not
+    renamed here to avoid an unrelated state-schema change.
     """
-    if state.balance_sol > state.peak_balance:
-        state.peak_balance = state.balance_sol
+    current_equity = compute_total_equity(state)
+    if current_equity > state.peak_balance:
+        state.peak_balance = current_equity
 
     if state.peak_balance <= 0:
         return
 
-    drawdown_from_peak = (state.balance_sol - state.peak_balance) / state.peak_balance
+    drawdown_from_peak = (current_equity - state.peak_balance) / state.peak_balance
 
     if not state.ultra_conservative_mode and drawdown_from_peak <= PEAK_DRAWDOWN_ULTRA_CONSERVATIVE_PCT:
         state.ultra_conservative_mode = True
