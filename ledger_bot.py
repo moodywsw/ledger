@@ -1104,10 +1104,11 @@ def copy_priority_wallet_entry(
         return
 
     mc_display = format_market_cap(entry_mc)
+    sol_price = get_sol_price_usd()
     speak(
         title=f"⭐ TRADE OPENED — {display_symbol}",
         description=(
-            f"Entry: `{mc_display}` · Size: `{size_sol:.4f} SOL` (confidence {confidence_multiplier:.1f}x)\n"
+            f"Entry: `{mc_display}` · Size: `{format_usd(size_sol, sol_price)}` (confidence {confidence_multiplier:.1f}x)\n"
             f"Copying **{trader_name}** on {platform_name}\n"
             f"**{entry_opinion}**"
         ),
@@ -1368,10 +1369,11 @@ def check_daily_loss_pause(state: LedgerState):
     if drawdown_pct <= DAILY_LOSS_PAUSE_PCT:
         pause_until = datetime.now(timezone.utc) + timedelta(hours=DAILY_LOSS_PAUSE_HOURS)
         state.trading_paused_until = pause_until.isoformat()
+        sol_price = get_sol_price_usd()
         speak(
             title="⏸️ Trading Paused — Daily Loss Limit",
             description=(
-                f"Balance down {drawdown_pct:.1%} from the run's start ({state.run_start_balance:.4f} SOL). "
+                f"Balance down {drawdown_pct:.1%} from the run's start ({format_usd(state.run_start_balance, sol_price)}). "
                 f"Pausing all new buys for {DAILY_LOSS_PAUSE_HOURS}h — back at {pause_until.strftime('%H:%M UTC')}."
             ),
             color=COLOR_LOSS,
@@ -1409,10 +1411,11 @@ def check_ultra_conservative_mode(state: LedgerState):
 
     if not state.ultra_conservative_mode and drawdown_from_peak <= PEAK_DRAWDOWN_ULTRA_CONSERVATIVE_PCT:
         state.ultra_conservative_mode = True
+        sol_price = get_sol_price_usd()
         speak(
             title="🛡️ Ultra-Conservative Mode ON",
             description=(
-                f"Balance down {drawdown_from_peak:.1%} from this run's peak ({state.peak_balance:.4f} SOL). "
+                f"Balance down {drawdown_from_peak:.1%} from this run's peak ({format_usd(state.peak_balance, sol_price)}). "
                 f"Halving position sizing until it recovers."
             ),
             color=COLOR_LOSS,
@@ -1449,11 +1452,12 @@ def check_goal_deadline(state: LedgerState):
 
     state.goal_deadline_announced = True
     hit_goal = state.balance_sol >= DAILY_TARGET_SOL
+    sol_price = get_sol_price_usd()
     speak(
         title="⏰ 72-Hour Goal Deadline Reached",
         description=(
             f"{'🏆 Goal hit' if hit_goal else '📉 Goal not reached'} — "
-            f"balance is {state.balance_sol:.4f} SOL vs the {DAILY_TARGET_SOL} SOL target "
+            f"balance is {format_usd(state.balance_sol, sol_price)} vs the {format_usd(DAILY_TARGET_SOL, sol_price)} target "
             f"({(state.balance_sol / DAILY_TARGET_SOL * 100):.0f}% of the way there)."
         ),
         color=COLOR_PROFIT if hit_goal else COLOR_NEUTRAL,
@@ -1556,13 +1560,12 @@ def partial_close_paper_position(state: LedgerState, token: str, exit_price: flo
 
     sol_price = get_sol_price_usd()
     pnl_usd = pnl * sol_price if sol_price else None
-    balance_usd = state.balance_sol * sol_price if sol_price else None
 
     entry_mc = pos.get("entry_market_cap_usd")
     _, exit_mc = get_liquidity_and_market_cap(token)
 
     result_emoji = "🟢" if is_win else "❌"
-    balance_str = f"`${balance_usd:,.0f} USDC`" if balance_usd is not None else f"`{state.balance_sol:.4f} SOL`"
+    balance_str = f"`{format_balance_usd(state.balance_sol, sol_price)}`"
     pnl_usd_bold = f" · **{'+${:,.0f}'.format(pnl_usd) if is_win else '-${:,.0f}'.format(abs(pnl_usd))} USDC**" if pnl_usd is not None else ""
 
     lines = [
@@ -1618,14 +1621,13 @@ def close_paper_position(state: LedgerState, token: str, exit_price: float, reas
 
     sol_price = get_sol_price_usd()
     pnl_usd = pnl * sol_price if sol_price else None
-    balance_usd = state.balance_sol * sol_price if sol_price else None
 
     entry_mc = pos.get("entry_market_cap_usd")
     _, exit_mc = get_liquidity_and_market_cap(token)
 
     result_emoji = "🟢" if is_win else "❌"
     pnl_usd_bold = f" · **{'+${:,.0f}'.format(pnl_usd) if is_win else '-${:,.0f}'.format(abs(pnl_usd))} USDC**" if pnl_usd is not None else ""
-    balance_str = f"`${balance_usd:,.0f} USDC`" if balance_usd is not None else f"`{state.balance_sol:.4f} SOL`"
+    balance_str = f"`{format_balance_usd(state.balance_sol, sol_price)}`"
 
     lines = [
         f"**Entry:** `{format_market_cap(entry_mc)}` → **Exit:** `{format_market_cap(exit_mc)}`",
@@ -1802,11 +1804,12 @@ def top_up_conviction_position(state: LedgerState, token: str, current_price: fl
     state.save()
 
     display_name = pos.get("symbol") or token
+    sol_price = get_sol_price_usd()
     speak(
         title=f"➕ TOPPED UP — {display_name}",
         description=(
-            f"Growth confirmed (+{change_pct:.1%} from entry) — added {add_size:.4f} SOL, "
-            f"now {new_size:.4f} of {target:.4f} SOL target."
+            f"Growth confirmed (+{change_pct:.1%} from entry) — added {format_usd(add_size, sol_price)}, "
+            f"now {format_usd(new_size, sol_price)} of {format_usd(target, sol_price)} target."
         ),
         color=COLOR_BUY,
         fields=[{"name": "CA:", "value": token, "inline": False}],
@@ -2405,11 +2408,12 @@ def check_for_blowup_reset(state: LedgerState):
     state.ultra_conservative_mode = False
     state.goal_deadline_announced = False
     state.trading_paused_until = None
+    sol_price = get_sol_price_usd()
     speak(
         title="💀 Bankroll Wiped — Restarting",
         description=(
-            f"Balance hit dust ({BLOWUP_DUST_THRESHOLD_SOL} SOL floor). "
-            f"Resetting to {STARTING_PAPER_BALANCE_SOL} SOL and starting the next run.\n\n"
+            f"Balance hit dust ({format_usd(BLOWUP_DUST_THRESHOLD_SOL, sol_price)} floor). "
+            f"Resetting to {format_usd(STARTING_PAPER_BALANCE_SOL, sol_price)} and starting the next run.\n\n"
             f"**Total resets so far:** {state.total_resets}"
         ),
         color=COLOR_LOSS,
@@ -2426,10 +2430,11 @@ def check_for_daily_target_hit(state: LedgerState):
         return
 
     state.daily_target_hit_this_run = True
+    sol_price = get_sol_price_usd()
     speak(
         title="🏆 Daily Target Hit",
         description=(
-            f"Balance reached {state.balance_sol:.4f} SOL — past the {DAILY_TARGET_SOL} SOL target. "
+            f"Balance reached {format_usd(state.balance_sol, sol_price)} — past the {format_usd(DAILY_TARGET_SOL, sol_price)} target. "
             f"Still running, not resetting on a win — only a wipeout triggers a restart."
         ),
         color=COLOR_PROFIT,
@@ -2464,8 +2469,9 @@ def post_performance_recap(state: LedgerState):
         lines.append(f"**Scout win rate:** {stats['scout_win_rate_pct']:.0f}% ({stats['scout_exit_count']} exits)")
     if stats["sniper_win_rate_pct"] is not None:
         lines.append(f"**Sniper win rate:** {stats['sniper_win_rate_pct']:.0f}% ({stats['sniper_exit_count']} exits)")
-    lines.append(f"**Total realized PnL:** {stats['total_pnl_sol']:+.4f} SOL")
-    lines.append(f"**Current balance:** {state.balance_sol:.4f} SOL  •  **Bankroll resets so far:** {state.total_resets}")
+    pnl_sign = "+" if stats["total_pnl_sol"] >= 0 else "-"
+    lines.append(f"**Total realized PnL:** {pnl_sign}{format_usd(abs(stats['total_pnl_sol']), sol_price_usd)}")
+    lines.append(f"**Current balance:** {format_usd(state.balance_sol, sol_price_usd)}  •  **Bankroll resets so far:** {state.total_resets}")
 
     if monthly_pnl_usd is not None:
         progress_pct = max(0, monthly_pnl_usd) / MONTHLY_PROFIT_GOAL_USD * 100
@@ -2631,10 +2637,11 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
         return
 
     mc_display = format_market_cap(market_cap_usd)
+    sol_price = get_sol_price_usd()
     speak(
         title=f"🎯 TRADE OPENED — {symbol}",
         description=(
-            f"Entry: `{mc_display}` · Size: `{size_sol:.4f} SOL` (confidence {confidence_multiplier:.1f}x)\n"
+            f"Entry: `{mc_display}` · Size: `{format_usd(size_sol, sol_price)}` (confidence {confidence_multiplier:.1f}x)\n"
             f"**{snipe_opinion}**"
         ),
         color=COLOR_BUY,
@@ -2673,6 +2680,29 @@ def get_sol_price_usd() -> float:
     """Current SOL/USD price — used to convert SOL-denominated PnL and balance into USDC-style dollar figures."""
     prices = get_token_prices_usd([SOL_MINT])
     return prices.get(SOL_MINT, 0)
+
+
+def format_usd(sol_amount: float, sol_price: float) -> str:
+    """
+    Formats a SOL-denominated amount as its USD (USDC-backed) value —
+    the primary figure shown to the user everywhere — with the raw
+    SOL amount kept alongside in parentheses as a technical reference.
+    Falls back to plain SOL if no price is available (e.g. the price
+    API is briefly down), so a message never silently drops the number.
+    The single conversion point every user-facing SOL figure should
+    route through, so Discord messages never drift out of sync with
+    each other the way balance-only USD conversion used to.
+    """
+    if sol_price:
+        return f"${sol_amount * sol_price:,.2f} ({sol_amount:.4f} SOL)"
+    return f"{sol_amount:.4f} SOL"
+
+
+def format_balance_usd(balance_sol: float, sol_price: float) -> str:
+    """Same conversion as format_usd(), styled for balance call-outs (trade closes, recaps)."""
+    if sol_price:
+        return f"${balance_sol * sol_price:,.0f} USDC"
+    return f"{balance_sol:.4f} SOL"
 
 
 def get_liquidity_and_market_cap(mint: str):
@@ -3050,9 +3080,10 @@ def main():
                         print(f"  [BLOCKED] {display_symbol}: {block_reason}")
                         continue
 
+                    sol_price = get_sol_price_usd()
                     notes_lines = [
                         f"• **Risk Assessment:** {risk_bucket} {risk_score}/10",
-                        f"• **Amount Bought:** {size_sol:.4f} SOL (of {target_size_sol:.4f} SOL target — scaling in on confirmed growth)",
+                        f"• **Amount Bought:** {format_usd(size_sol, sol_price)} (of {format_usd(target_size_sol, sol_price)} target — scaling in on confirmed growth)",
                     ]
                     if not analysis["independent"]:
                         # Only credit/mention the wallet when the call actually
