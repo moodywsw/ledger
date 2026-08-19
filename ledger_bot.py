@@ -595,15 +595,50 @@ def rank_wallets_by_balance(wallets: list) -> list:
     return ranked
 
 
+
+# Every Helius call in this file goes through request_with_backoff()
+# below, which made it the one place a global pace limit could cover
+# ALL of them (wallet-transaction checks, holder concentration, dev
+# holding, holder count) without touching each call site individually.
+# This is a SEPARATE mechanism from the exponential backoff inside
+# request_with_backoff: backoff only reacts after a 429 has already
+# happened to one call; this prevents back-to-back calls for different
+# wallets/mints from ever firing without a gap in the first place —
+# which is what was actually tripping Helius's per-second limit (calls
+# for different wallets/mints were never rate-limited against EACH
+# OTHER, only retried individually after they'd already failed).
+HELIUS_MIN_REQUEST_INTERVAL_SECONDS = 0.75  # ~80 req/min ceiling, process-wide
+_helius_pacing_lock = threading.Lock()
+_helius_last_request_at = 0.0
+
+
+def _throttle_helius_request():
+    global _helius_last_request_at
+    with _helius_pacing_lock:
+        now = time.monotonic()
+        wait = _helius_last_request_at + HELIUS_MIN_REQUEST_INTERVAL_SECONDS - now
+        if wait > 0:
+            time.sleep(wait)
+            now = time.monotonic()
+        _helius_last_request_at = now
+
+
 def request_with_backoff(method, url, max_retries=5, **kwargs):
     """
     Wraps a requests call with exponential backoff on rate-limit (429)
     responses — instead of hammering Helius and getting blocked
     harder, it waits progressively longer (2s, 4s, 8s...) and retries.
     This is what keeps a free-tier setup usable without paying.
+
+    Also paces Helius requests specifically (see _throttle_helius_request
+    above) before every attempt, including retries, so consecutive
+    calls for different wallets/mints never fire back-to-back
+    regardless of which function triggered them.
     """
     delay = 2
     for attempt in range(max_retries):
+        if "helius" in url:
+            _throttle_helius_request()
         resp = requests.request(method, url, **kwargs)
         if resp.status_code != 429:
             resp.raise_for_status()
