@@ -97,10 +97,17 @@ function renderTheses(theses) {
   `).join("");
 }
 
-function renderJournal(entries) {
-  const body = document.getElementById("journal-body");
+// "did" entries are real trade actions (opened/closed/topped up);
+// everything else (commentary, refused, read) is Ledger's ongoing
+// reasoning rather than an actual trade, and renders in "Live
+// Thoughts" instead. New kinds default to Live Thoughts, not Trades —
+// safer to over-show reasoning than to silently miss a real trade.
+const TRADE_KINDS = new Set(["did"]);
+
+function renderJournalEntries(containerId, entries, emptyText) {
+  const body = document.getElementById(containerId);
   if (!entries || entries.length === 0) {
-    body.innerHTML = `<div class="empty">No journal entries yet.</div>`;
+    body.innerHTML = `<div class="empty">${emptyText}</div>`;
     return;
   }
 
@@ -111,6 +118,14 @@ function renderJournal(entries) {
       <span class="journal-text">${e.token_ticker ? `<strong>${escapeHtml(e.token_ticker)}</strong> — ` : ""}${escapeHtml(e.text)}</span>
     </div>
   `).join("");
+}
+
+function renderJournal(entries) {
+  entries = entries || [];
+  const trades = entries.filter(e => TRADE_KINDS.has(e.kind));
+  const liveThoughts = entries.filter(e => !TRADE_KINDS.has(e.kind));
+  renderJournalEntries("live-thoughts-body", liveThoughts, "No live thoughts yet.");
+  renderJournalEntries("trades-body", trades, "No trades yet.");
 }
 
 function setConnStatus(ok) {
@@ -126,7 +141,7 @@ async function pollOnce() {
     const [state, theses, journal] = await Promise.all([
       fetchJson("/api/state"),
       fetchJson("/api/theses"),
-      fetchJson("/api/journal?limit=50"),
+      fetchJson("/api/journal?limit=150"),
     ]);
     renderState(state);
     renderTheses(theses);
