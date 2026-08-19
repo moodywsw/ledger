@@ -1413,8 +1413,15 @@ def copy_priority_wallet_entry(
         )
         return
 
-    entry_price = get_sniper_entry_price(token)
-    if entry_price is None:
+    # Cheap existence check only — confirms price data is available at
+    # all before paying for the wash-trading/holder/dev-pct checks and
+    # the get_entry_opinion() LLM call below, on a token that might not
+    # even be tradeable yet. The value actually recorded as entry_price
+    # is re-fetched fresh immediately before open_paper_position(), see
+    # below — those checks plus the LLM call can take several seconds,
+    # long enough on a token this fresh for price to move meaningfully
+    # in between, which was biasing entry_price stale vs. the real fill.
+    if get_sniper_entry_price(token) is None:
         print(f"  [SKIP] {display_symbol}: no price data yet for this copy.")
         return
 
@@ -1452,6 +1459,17 @@ def copy_priority_wallet_entry(
     ok, block_reason = can_open_position(state, size_sol)
     if not ok:
         print(f"  [BLOCKED] {display_symbol}: {block_reason}")
+        return
+
+    # Re-fetched fresh here — right before the trade is actually
+    # announced/opened, after every check above (including the
+    # get_entry_opinion() LLM call) has already run. Kept just before
+    # speak() rather than after it, so a rare disappearance of price
+    # data at this last moment skips out before announcing a trade
+    # that never actually opened, instead of after.
+    entry_price = get_sniper_entry_price(token)
+    if entry_price is None:
+        print(f"  [SKIP] {display_symbol}: price data disappeared before entry.")
         return
 
     mc_display = format_market_cap(entry_mc)
@@ -2952,8 +2970,12 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
         print(f"[SNIPE SKIP] {symbol}: wash-trading flag — {wash_flag['reason']}")
         return
 
-    entry_price = get_sniper_entry_price(mint)
-    if entry_price is None:
+    # Cheap existence check only — see the matching comment in
+    # copy_priority_wallet_entry(). The value actually recorded as
+    # entry_price is re-fetched fresh immediately before
+    # open_paper_position(), after the get_snipe_confidence() LLM call
+    # below has already run.
+    if get_sniper_entry_price(mint) is None:
         print(f"[SNIPE SKIP] {symbol}: no price data yet")
         return
 
@@ -2985,6 +3007,16 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
     ok, block_reason = can_open_position(state, size_sol)
     if not ok:
         print(f"[SNIPE BLOCKED] {symbol}: {block_reason}")
+        return
+
+    # Re-fetched fresh here — see the matching comment in
+    # copy_priority_wallet_entry(). Kept just before speak() rather
+    # than after it, so a rare disappearance of price data at this
+    # last moment skips out before announcing a trade that never
+    # actually opened, instead of after.
+    entry_price = get_sniper_entry_price(mint)
+    if entry_price is None:
+        print(f"[SNIPE SKIP] {symbol}: price data disappeared before entry.")
         return
 
     mc_display = format_market_cap(market_cap_usd)
