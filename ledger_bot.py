@@ -321,9 +321,14 @@ def is_known_stablecoin(mint: str, symbol: str) -> bool:
     if mint in KNOWN_STABLECOIN_MINTS:
         return True
     return (symbol or "").strip().upper() in KNOWN_STABLECOIN_SYMBOLS
-SNIPER_MAX_QUEUE_DRAIN_PER_CYCLE = 20   # cap how many freshly-launched tokens enter the pending list per cycle
-SNIPER_MAX_PENDING_EVAL_PER_CYCLE = 20  # cap how many pending (aging-in) candidates get evaluated per cycle
-SNIPER_CHECK_INTERVAL_SECONDS = 20      # sniper positions get checked this often, not the full 2-min main cycle
+SNIPER_MAX_QUEUE_DRAIN_PER_CYCLE = 10   # cap how many freshly-launched tokens enter the pending list per cycle
+                                         # (halved from 20 — Helius free-tier 429s meant most evals were failing
+                                         # anyway; this trims launch throughput, not which ones pass the filters)
+SNIPER_MAX_PENDING_EVAL_PER_CYCLE = 10  # cap how many pending (aging-in) candidates get evaluated per cycle (halved, same reason)
+SNIPER_CHECK_INTERVAL_SECONDS = 30      # sniper positions get checked this often, not the full 2-min main cycle
+                                         # (was 20s — 30s still gets 2 checks in within the 60s hard hold cap,
+                                         # and combined with HELIUS_CACHE_TTL_SECONDS the dev-sell check below
+                                         # now costs ~1 real Helius call per position instead of ~3)
 MAX_CONCURRENT_SNIPER_POSITIONS = 8    # hard cap on simultaneous sniper/priority-copy positions
 
 # Daily loss pause — a percentage-based circuit breaker separate from
@@ -495,24 +500,28 @@ def get_top10_holder_pct(mint: str) -> float:
     """
     if not HELIUS_API_KEY:
         return None
-    try:
-        supply_payload = {"jsonrpc": "2.0", "id": 1, "method": "getTokenSupply", "params": [mint]}
-        supply_resp = request_with_backoff("POST", HELIUS_RPC_URL, json=supply_payload, timeout=15)
-        supply_data = supply_resp.json()
-        total_supply = float(supply_data.get("result", {}).get("value", {}).get("uiAmount") or 0)
-        if total_supply <= 0:
+
+    def _fetch():
+        try:
+            supply_payload = {"jsonrpc": "2.0", "id": 1, "method": "getTokenSupply", "params": [mint]}
+            supply_resp = request_with_backoff("POST", HELIUS_RPC_URL, json=supply_payload, timeout=15)
+            supply_data = supply_resp.json()
+            total_supply = float(supply_data.get("result", {}).get("value", {}).get("uiAmount") or 0)
+            if total_supply <= 0:
+                return None
+
+            largest_payload = {"jsonrpc": "2.0", "id": 1, "method": "getTokenLargestAccounts", "params": [mint]}
+            largest_resp = request_with_backoff("POST", HELIUS_RPC_URL, json=largest_payload, timeout=15)
+            largest_data = largest_resp.json()
+            accounts = largest_data.get("result", {}).get("value", [])[:10]
+            top10_amount = sum(float(a.get("uiAmount") or 0) for a in accounts)
+
+            return (top10_amount / total_supply) * 100
+        except Exception as e:
+            print(f"[WARN] holder concentration check failed for {mint}: {e}")
             return None
 
-        largest_payload = {"jsonrpc": "2.0", "id": 1, "method": "getTokenLargestAccounts", "params": [mint]}
-        largest_resp = request_with_backoff("POST", HELIUS_RPC_URL, json=largest_payload, timeout=15)
-        largest_data = largest_resp.json()
-        accounts = largest_data.get("result", {}).get("value", [])[:10]
-        top10_amount = sum(float(a.get("uiAmount") or 0) for a in accounts)
-
-        return (top10_amount / total_supply) * 100
-    except Exception as e:
-        print(f"[WARN] holder concentration check failed for {mint}: {e}")
-        return None
+    return _helius_cached(f"top10:{mint}", _fetch)
 
 
 def get_wallet_total_value_usd(wallet_address: str) -> float:
@@ -606,6 +615,29 @@ def request_with_backoff(method, url, max_retries=5, **kwargs):
     return resp
 
 
+# Helius's free tier rate-limits at a request/minute level, and several
+# lookups below get asked for the SAME mint more than once in a short
+# window — e.g. a sniper candidate is evaluated then its dev-sell
+# status gets re-checked every check cycle afterward, or a token's
+# metadata is fetched once when a wallet buy is first detected and
+# again moments later when the paper position actually opens. A short
+# TTL cache collapses those repeats into one real call. It never
+# changes what the data means or any pass/fail threshold — only how
+# often the SAME lookup gets re-fetched.
+HELIUS_CACHE_TTL_SECONDS = 45
+_helius_cache = {}  # cache_key -> (fetched_at, value)
+
+
+def _helius_cached(cache_key: str, fetch_fn):
+    now = time.time()
+    entry = _helius_cache.get(cache_key)
+    if entry is not None and (now - entry[0]) < HELIUS_CACHE_TTL_SECONDS:
+        return entry[1]
+    value = fetch_fn()
+    _helius_cache[cache_key] = (now, value)
+    return value
+
+
 def get_token_metadata(mint: str) -> dict:
     """
     Resolves a mint address to its real symbol/name/description via
@@ -618,25 +650,29 @@ def get_token_metadata(mint: str) -> dict:
     """
     if not HELIUS_API_KEY:
         return {"symbol": "", "name": "", "description": ""}
-    payload = {
-        "jsonrpc": "2.0",
-        "id": "ledger",
-        "method": "getAsset",
-        "params": {"id": mint},
-    }
-    try:
-        resp = request_with_backoff("POST", HELIUS_RPC_URL, json=payload, timeout=15)
-        data = resp.json()
-        content = data.get("result", {}).get("content", {})
-        metadata = content.get("metadata", {})
-        return {
-            "symbol": metadata.get("symbol", ""),
-            "name": metadata.get("name", ""),
-            "description": metadata.get("description", ""),
+
+    def _fetch():
+        payload = {
+            "jsonrpc": "2.0",
+            "id": "ledger",
+            "method": "getAsset",
+            "params": {"id": mint},
         }
-    except Exception as e:
-        print(f"[WARN] metadata lookup failed for {mint}: {e}")
-        return {"symbol": "", "name": "", "description": ""}
+        try:
+            resp = request_with_backoff("POST", HELIUS_RPC_URL, json=payload, timeout=15)
+            data = resp.json()
+            content = data.get("result", {}).get("content", {})
+            metadata = content.get("metadata", {})
+            return {
+                "symbol": metadata.get("symbol", ""),
+                "name": metadata.get("name", ""),
+                "description": metadata.get("description", ""),
+            }
+        except Exception as e:
+            print(f"[WARN] metadata lookup failed for {mint}: {e}")
+            return {"symbol": "", "name": "", "description": ""}
+
+    return _helius_cached(f"metadata:{mint}", _fetch)
 
 
 # ── Market research (merged from the standalone market_intel.py) ─────
@@ -2816,29 +2852,36 @@ def get_dev_holding_pct(mint: str, creator: str) -> float:
     """
     if not creator or not HELIUS_API_KEY:
         return None
-    try:
-        payload = {
-            "jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner",
-            "params": [creator, {"mint": mint}, {"encoding": "jsonParsed"}],
-        }
-        resp = request_with_backoff("POST", HELIUS_RPC_URL, json=payload, timeout=15)
-        data = resp.json()
-        accounts = data.get("result", {}).get("value", [])
-        dev_amount = sum(
-            float(a["account"]["data"]["parsed"]["info"]["tokenAmount"]["uiAmount"] or 0)
-            for a in accounts
-        )
 
-        supply_payload = {"jsonrpc": "2.0", "id": 1, "method": "getTokenSupply", "params": [mint]}
-        supply_resp = request_with_backoff("POST", HELIUS_RPC_URL, json=supply_payload, timeout=15)
-        total_supply = float(supply_resp.json().get("result", {}).get("value", {}).get("uiAmount") or 0)
-        if total_supply <= 0:
+    def _fetch():
+        try:
+            payload = {
+                "jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner",
+                "params": [creator, {"mint": mint}, {"encoding": "jsonParsed"}],
+            }
+            resp = request_with_backoff("POST", HELIUS_RPC_URL, json=payload, timeout=15)
+            data = resp.json()
+            accounts = data.get("result", {}).get("value", [])
+            dev_amount = sum(
+                float(a["account"]["data"]["parsed"]["info"]["tokenAmount"]["uiAmount"] or 0)
+                for a in accounts
+            )
+
+            supply_payload = {"jsonrpc": "2.0", "id": 1, "method": "getTokenSupply", "params": [mint]}
+            supply_resp = request_with_backoff("POST", HELIUS_RPC_URL, json=supply_payload, timeout=15)
+            total_supply = float(supply_resp.json().get("result", {}).get("value", {}).get("uiAmount") or 0)
+            if total_supply <= 0:
+                return None
+
+            return (dev_amount / total_supply) * 100
+        except Exception as e:
+            print(f"[WARN] dev holding check failed for {mint}: {e}")
             return None
 
-        return (dev_amount / total_supply) * 100
-    except Exception as e:
-        print(f"[WARN] dev holding check failed for {mint}: {e}")
-        return None
+    # Keyed on mint+creator (not just mint) since callers pass different
+    # creator addresses in principle — in practice a mint has one creator,
+    # so this still collapses to one real call per mint within the TTL.
+    return _helius_cached(f"devpct:{mint}:{creator}", _fetch)
 
 
 def get_approx_holder_count(mint: str) -> int:
@@ -2851,14 +2894,18 @@ def get_approx_holder_count(mint: str) -> int:
     """
     if not HELIUS_API_KEY:
         return None
-    try:
-        payload = {"jsonrpc": "2.0", "id": 1, "method": "getTokenLargestAccounts", "params": [mint]}
-        resp = request_with_backoff("POST", HELIUS_RPC_URL, json=payload, timeout=15)
-        accounts = resp.json().get("result", {}).get("value", [])
-        return len([a for a in accounts if float(a.get("uiAmount") or 0) > 0])
-    except Exception as e:
-        print(f"[WARN] holder count check failed for {mint}: {e}")
-        return None
+
+    def _fetch():
+        try:
+            payload = {"jsonrpc": "2.0", "id": 1, "method": "getTokenLargestAccounts", "params": [mint]}
+            resp = request_with_backoff("POST", HELIUS_RPC_URL, json=payload, timeout=15)
+            accounts = resp.json().get("result", {}).get("value", [])
+            return len([a for a in accounts if float(a.get("uiAmount") or 0) > 0])
+        except Exception as e:
+            print(f"[WARN] holder count check failed for {mint}: {e}")
+            return None
+
+    return _helius_cached(f"holdercount:{mint}", _fetch)
 
 
 SNIPER_PENDING = {}  # mint -> candidate dict with launch metadata, held until it ages into the preset's window
