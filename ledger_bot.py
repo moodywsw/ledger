@@ -2,7 +2,9 @@
 Ledger — Solana memecoin trench agent (paper trading scaffold)
 
 What this does right now:
-  - Watches a list of wallet addresses for new buys (via Helius)
+  - Watches a list of wallet addresses for new buys (via Alchemy's
+    Solana RPC — standard getSignaturesForAddress/getTransaction, not
+    a proprietary enhanced-transactions endpoint)
   - Checks each watched wallet's TOTAL portfolio value (SOL + every
     token held, priced in USD via Jupiter) and flags whales — accounts
     at 6-figure+ total value — weighting their buys as stronger signals
@@ -20,9 +22,13 @@ What this does NOT do yet:
   - Read FOMO app callout text (no public API for that — see notes)
 
 Env vars required:
-  HELIUS_API_KEY   - from https://helius.dev (free tier is fine to start)
+  ALCHEMY_RPC_URL  - a Solana Mainnet RPC URL from an Alchemy app,
+                      e.g. https://solana-mainnet.g.alchemy.com/v2/<key>
 
 Optional:
+  HELIUS_API_KEY    - no longer used by this file (migrated to
+                       Alchemy) — still read by test_wallet_feed.py,
+                       kept here only as a documented rollback path.
   ANTHROPIC_API_KEY - enables periodic market/trend research (see
                        run_market_research below). Without it, that
                        part is silently skipped — everything else
@@ -39,9 +45,11 @@ Optional:
                        launches that pass), instead of only trading on
                        wallet-detected buys. Off by default. Requires
                        the "websockets" package (see Install below).
+                       Its launch feed comes from pumpdev.io (see
+                       SNIPER_WS_URL), not from Alchemy/Helius.
 
 Install:
-  pip install requests websockets --break-system-packages
+  pip install requests websockets base58 --break-system-packages
 """
 
 import os
@@ -49,10 +57,13 @@ import json
 import time
 import re
 import random
+import hashlib
+import base64
 import threading
 import queue
 import asyncio
 import requests
+import base58
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -63,9 +74,48 @@ from api_server import start_api_server
 
 # ── Config ────────────────────────────────────────────────────────────
 
+# Kept (not removed) even though no function below reads it anymore —
+# still used by the standalone test_wallet_feed.py debug script, and
+# left here as a documented rollback path. All real data fetching
+# migrated to Alchemy (see ALCHEMY_RPC_URL below) after Helius's free
+# tier ran out of credits and stalled the bot.
 HELIUS_API_KEY = os.environ.get("HELIUS_API_KEY", "")
 HELIUS_BASE_URL = "https://api.helius.xyz/v0"
 HELIUS_RPC_URL = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+
+# Standard Solana JSON-RPC endpoint from an Alchemy app (Solana Mainnet) —
+# e.g. https://solana-mainnet.g.alchemy.com/v2/<api-key>. Replaces every
+# Helius call in this file (wallet-transaction checks, holder
+# concentration, dev holding, holder count, token metadata, wallet
+# value) with equivalent standard RPC methods, or (for the two Helius-
+# proprietary endpoints — DAS getAsset and the Wallet Balances API)
+# with a manual reconstruction from raw RPC data. Sniper Mode's launch
+# feed is unrelated (see SNIPER_WS_URL) and unaffected by this.
+ALCHEMY_RPC_URL = os.environ.get("ALCHEMY_RPC_URL", "")
+
+# Well-known Solana program IDs, needed for the raw-RPC replacements
+# below (PDA derivation for on-chain token metadata, and best-effort
+# DEX/platform detection from transaction instructions).
+TOKEN_METADATA_PROGRAM_ID = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"  # Metaplex Token Metadata program — verified live against BONK's metadata account
+TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"  # SPL Token
+TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"  # SPL Token-2022
+
+# Maps known DEX/aggregator program IDs to the same source codes
+# SOURCE_DISPLAY_NAMES already understands — this is the raw-RPC,
+# best-effort replacement for what Helius's enhanced-transaction
+# "source" field used to give for free. Not exhaustive: an unmapped
+# program ID just falls back to "Unknown Platform", same as an
+# unrecognized Helius source code always did.
+KNOWN_DEX_PROGRAM_IDS = {
+    "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P": "PUMPFUN",       # Pump.fun bonding curve
+    "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA": "PUMP_AMM",      # Pump.fun AMM (graduated pools)
+    "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8": "RAYDIUM",      # Raydium AMM V4
+    "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc": "ORCA",          # Orca Whirlpool
+    "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4": "JUPITER",       # Jupiter Aggregator v6
+    "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo": "METEORA",       # Meteora DLMM
+    "PhoeNiXZ8ByJGLkxNfZRnkUfjvmuYqLR1vzB5rYZckyN": "PHOENIX",      # Phoenix
+    "opnb2LAfJYbRMAHHvqjCwQxanZn7ReEHp1k81EohpZb": "OPENBOOK",      # OpenBook v2
+}
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
@@ -93,7 +143,8 @@ WHALE_VALUE_USD_THRESHOLD = 100_000
 
 JUPITER_PRICE_API = "https://lite-api.jup.ag/price/v3"
 
-# Maps Helius's internal source codes to readable platform names —
+# Maps the source codes _detect_dex_source() derives from known
+# program IDs (see KNOWN_DEX_PROGRAM_IDS) to readable platform names —
 # without this, the "Source" field would show raw codes like
 # "PUMP_AMM" or worse, unrecognized values, instead of "Pump.fun".
 SOURCE_DISPLAY_NAMES = {
@@ -109,7 +160,7 @@ SOURCE_DISPLAY_NAMES = {
 
 
 def get_source_display_name(source_code: str) -> str:
-    """Turns a raw Helius source code into a readable platform name."""
+    """Turns a raw DEX/platform source code into a readable platform name."""
     if not source_code:
         return "Unknown Platform"
     return SOURCE_DISPLAY_NAMES.get(
@@ -232,10 +283,11 @@ def load_wallets():
 
 WATCHED_WALLETS, WALLET_HANDLES, PRIORITY_WALLETS = load_wallets()
 
-# Poll interval — how often to check each wallet for new buys.
-# Kept conservative (2 min) to stay comfortably inside Helius's free
-# tier limits with 30+ wallets tracked. Free tier is enough for this
-# — no need to pay, just don't hammer it.
+# Poll interval — how often to check each wallet for new buys. Each
+# check is now 1 + (a few) Alchemy RPC calls (getSignaturesForAddress
+# + one getTransaction per new signature), paced by
+# ALCHEMY_MIN_REQUEST_INTERVAL_SECONDS — kept conservative (2 min)
+# with 30+ wallets tracked so this stays well inside any Alchemy plan.
 POLL_SECONDS = 120
 
 # ── Risk limits (hard-coded, not suggestions) ───────────────────────────
@@ -322,13 +374,13 @@ def is_known_stablecoin(mint: str, symbol: str) -> bool:
         return True
     return (symbol or "").strip().upper() in KNOWN_STABLECOIN_SYMBOLS
 SNIPER_MAX_QUEUE_DRAIN_PER_CYCLE = 10   # cap how many freshly-launched tokens enter the pending list per cycle
-                                         # (halved from 20 — Helius free-tier 429s meant most evals were failing
-                                         # anyway; this trims launch throughput, not which ones pass the filters)
+                                         # (halved from 20 — free-tier 429s meant most evals were failing anyway;
+                                         # this trims launch throughput, not which ones pass the filters)
 SNIPER_MAX_PENDING_EVAL_PER_CYCLE = 10  # cap how many pending (aging-in) candidates get evaluated per cycle (halved, same reason)
 SNIPER_CHECK_INTERVAL_SECONDS = 30      # sniper positions get checked this often, not the full 2-min main cycle
                                          # (was 20s — 30s still gets 2 checks in within the 60s hard hold cap,
-                                         # and combined with HELIUS_CACHE_TTL_SECONDS the dev-sell check below
-                                         # now costs ~1 real Helius call per position instead of ~3)
+                                         # and combined with RPC_CACHE_TTL_SECONDS the dev-sell check below
+                                         # now costs ~1 real RPC call per position instead of ~3)
 MAX_CONCURRENT_SNIPER_POSITIONS = 8    # hard cap on simultaneous sniper/priority-copy positions
 
 # Daily loss pause — a percentage-based circuit breaker separate from
@@ -498,20 +550,20 @@ def get_top10_holder_pct(mint: str) -> float:
     indexed supply data yet) — callers must treat that as "unknown,"
     never as "safe."
     """
-    if not HELIUS_API_KEY:
+    if not ALCHEMY_RPC_URL:
         return None
 
     def _fetch():
         try:
             supply_payload = {"jsonrpc": "2.0", "id": 1, "method": "getTokenSupply", "params": [mint]}
-            supply_resp = request_with_backoff("POST", HELIUS_RPC_URL, json=supply_payload, timeout=15)
+            supply_resp = request_with_backoff("POST", ALCHEMY_RPC_URL, json=supply_payload, timeout=15)
             supply_data = supply_resp.json()
             total_supply = float(supply_data.get("result", {}).get("value", {}).get("uiAmount") or 0)
             if total_supply <= 0:
                 return None
 
             largest_payload = {"jsonrpc": "2.0", "id": 1, "method": "getTokenLargestAccounts", "params": [mint]}
-            largest_resp = request_with_backoff("POST", HELIUS_RPC_URL, json=largest_payload, timeout=15)
+            largest_resp = request_with_backoff("POST", ALCHEMY_RPC_URL, json=largest_payload, timeout=15)
             largest_data = largest_resp.json()
             accounts = largest_data.get("result", {}).get("value", [])[:10]
             top10_amount = sum(float(a.get("uiAmount") or 0) for a in accounts)
@@ -521,28 +573,51 @@ def get_top10_holder_pct(mint: str) -> float:
             print(f"[WARN] holder concentration check failed for {mint}: {e}")
             return None
 
-    return _helius_cached(f"top10:{mint}", _fetch)
+    return _rpc_cached(f"top10:{mint}", _fetch)
 
 
 def get_wallet_total_value_usd(wallet_address: str) -> float:
     """
-    Total portfolio value in USD via Helius's Wallet API (v1) —
-    replaces the old v0 balances endpoint, which was retired and now
-    returns 404. The v1 endpoint conveniently returns totalUsdValue
-    directly (already summed across SOL + every token), sourced from
-    Helius's own DAS pricing — no separate price lookup needed for
-    this. NOTE: this endpoint costs 100 credits per call (Helius's
-    pricing, not ours) — that's why balance checks are deliberately
-    infrequent (see BALANCE_RECHECK_EVERY_N_CYCLES) rather than every
-    poll cycle, to stay well within free-tier monthly credits.
+    Total portfolio value in USD (SOL + every SPL/Token-2022 token
+    held, priced via Jupiter) — the raw-RPC replacement for Helius's
+    proprietary Wallet API v1 (/balances), which returned a
+    pre-computed totalUsdValue directly from Helius's own pricing.
+    Reconstructed here from getBalance + getTokenAccountsByOwner
+    (checked against both token programs) + get_token_prices_usd,
+    using the same $0-for-unpriced-token simplification already used
+    everywhere else in this file for illiquid/unlisted tokens. Costs
+    more RPC calls per check than the old single-call endpoint did —
+    that's why balance checks are deliberately infrequent (see
+    BALANCE_RECHECK_EVERY_N_CYCLES) rather than every poll cycle.
     """
-    if not HELIUS_API_KEY:
-        raise RuntimeError("Set HELIUS_API_KEY env var first.")
-    url = f"https://api.helius.xyz/v1/wallet/{wallet_address}/balances"
-    headers = {"X-Api-Key": HELIUS_API_KEY}
-    resp = request_with_backoff("GET", url, headers=headers, timeout=15)
-    data = resp.json()
-    return data.get("totalUsdValue", 0.0)
+    if not ALCHEMY_RPC_URL:
+        raise RuntimeError("Set ALCHEMY_RPC_URL env var first.")
+
+    balance_payload = {"jsonrpc": "2.0", "id": 1, "method": "getBalance", "params": [wallet_address]}
+    balance_resp = request_with_backoff("POST", ALCHEMY_RPC_URL, json=balance_payload, timeout=15)
+    sol_lamports = balance_resp.json().get("result", {}).get("value", 0) or 0
+
+    token_balances = []  # [(mint, ui_amount), ...]
+    for program_id in (TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID):
+        tokens_payload = {
+            "jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner",
+            "params": [wallet_address, {"programId": program_id}, {"encoding": "jsonParsed"}],
+        }
+        tokens_resp = request_with_backoff("POST", ALCHEMY_RPC_URL, json=tokens_payload, timeout=15)
+        accounts = tokens_resp.json().get("result", {}).get("value", [])
+        for acc in accounts:
+            info = acc.get("account", {}).get("data", {}).get("parsed", {}).get("info", {})
+            ui_amount = float((info.get("tokenAmount") or {}).get("uiAmount") or 0)
+            mint = info.get("mint")
+            if mint and ui_amount > 0:
+                token_balances.append((mint, ui_amount))
+
+    prices = get_token_prices_usd([SOL_MINT] + [mint for mint, _ in token_balances])
+
+    total_usd = (sol_lamports / 1e9) * prices.get(SOL_MINT, 0)
+    for mint, ui_amount in token_balances:
+        total_usd += ui_amount * prices.get(mint, 0)
+    return total_usd
 
 
 def get_token_prices_usd(mints: list) -> dict:
@@ -596,49 +671,54 @@ def rank_wallets_by_balance(wallets: list) -> list:
 
 
 
-# Every Helius call in this file goes through request_with_backoff()
+# Every Alchemy call in this file goes through request_with_backoff()
 # below, which made it the one place a global pace limit could cover
 # ALL of them (wallet-transaction checks, holder concentration, dev
-# holding, holder count) without touching each call site individually.
-# This is a SEPARATE mechanism from the exponential backoff inside
-# request_with_backoff: backoff only reacts after a 429 has already
-# happened to one call; this prevents back-to-back calls for different
-# wallets/mints from ever firing without a gap in the first place —
-# which is what was actually tripping Helius's per-second limit (calls
-# for different wallets/mints were never rate-limited against EACH
-# OTHER, only retried individually after they'd already failed).
-HELIUS_MIN_REQUEST_INTERVAL_SECONDS = 0.75  # ~80 req/min ceiling, process-wide
-_helius_pacing_lock = threading.Lock()
-_helius_last_request_at = 0.0
+# holding, holder count, token metadata, wallet value) without
+# touching each call site individually. This is a SEPARATE mechanism
+# from the exponential backoff inside request_with_backoff: backoff
+# only reacts after a 429 has already happened to one call; this
+# prevents back-to-back calls for different wallets/mints from ever
+# firing without a gap in the first place — which is what actually
+# tripped Helius's per-second limit before this migration (calls for
+# different wallets/mints were never rate-limited against EACH OTHER,
+# only retried individually after they'd already failed). Alchemy's
+# throughput is normally much higher than Helius's free tier was, so
+# this starts conservative (0.2s ≈ 300 req/min) — tune this one
+# constant up or down if Railway logs show it's too tight or too loose.
+ALCHEMY_MIN_REQUEST_INTERVAL_SECONDS = 0.2
+_alchemy_pacing_lock = threading.Lock()
+_alchemy_last_request_at = 0.0
 
 
-def _throttle_helius_request():
-    global _helius_last_request_at
-    with _helius_pacing_lock:
+def _throttle_alchemy_request():
+    global _alchemy_last_request_at
+    with _alchemy_pacing_lock:
         now = time.monotonic()
-        wait = _helius_last_request_at + HELIUS_MIN_REQUEST_INTERVAL_SECONDS - now
+        wait = _alchemy_last_request_at + ALCHEMY_MIN_REQUEST_INTERVAL_SECONDS - now
         if wait > 0:
             time.sleep(wait)
             now = time.monotonic()
-        _helius_last_request_at = now
+        _alchemy_last_request_at = now
 
 
 def request_with_backoff(method, url, max_retries=5, **kwargs):
     """
     Wraps a requests call with exponential backoff on rate-limit (429)
-    responses — instead of hammering Helius and getting blocked
-    harder, it waits progressively longer (2s, 4s, 8s...) and retries.
-    This is what keeps a free-tier setup usable without paying.
+    responses — instead of hammering the RPC provider and getting
+    blocked harder, it waits progressively longer (2s, 4s, 8s...) and
+    retries. This is what keeps a free/growth-tier setup usable
+    without paying for more.
 
-    Also paces Helius requests specifically (see _throttle_helius_request
+    Also paces Alchemy requests specifically (see _throttle_alchemy_request
     above) before every attempt, including retries, so consecutive
     calls for different wallets/mints never fire back-to-back
     regardless of which function triggered them.
     """
     delay = 2
     for attempt in range(max_retries):
-        if "helius" in url:
-            _throttle_helius_request()
+        if "alchemy" in url:
+            _throttle_alchemy_request()
         resp = requests.request(method, url, **kwargs)
         if resp.status_code != 429:
             resp.raise_for_status()
@@ -650,64 +730,163 @@ def request_with_backoff(method, url, max_retries=5, **kwargs):
     return resp
 
 
-# Helius's free tier rate-limits at a request/minute level, and several
-# lookups below get asked for the SAME mint more than once in a short
-# window — e.g. a sniper candidate is evaluated then its dev-sell
-# status gets re-checked every check cycle afterward, or a token's
-# metadata is fetched once when a wallet buy is first detected and
-# again moments later when the paper position actually opens. A short
-# TTL cache collapses those repeats into one real call. It never
-# changes what the data means or any pass/fail threshold — only how
-# often the SAME lookup gets re-fetched.
-HELIUS_CACHE_TTL_SECONDS = 45
-_helius_cache = {}  # cache_key -> (fetched_at, value)
+# Several RPC-backed lookups below get asked for the SAME mint more
+# than once in a short window — e.g. a sniper candidate is evaluated
+# then its dev-sell status gets re-checked every check cycle
+# afterward, or a token's metadata is fetched once when a wallet buy
+# is first detected and again moments later when the paper position
+# actually opens. A short TTL cache collapses those repeats into one
+# real call. It never changes what the data means or any pass/fail
+# threshold — only how often the SAME lookup gets re-fetched.
+RPC_CACHE_TTL_SECONDS = 45
+_rpc_cache = {}  # cache_key -> (fetched_at, value)
 
 
-def _helius_cached(cache_key: str, fetch_fn):
+def _rpc_cached(cache_key: str, fetch_fn):
     now = time.time()
-    entry = _helius_cache.get(cache_key)
-    if entry is not None and (now - entry[0]) < HELIUS_CACHE_TTL_SECONDS:
+    entry = _rpc_cache.get(cache_key)
+    if entry is not None and (now - entry[0]) < RPC_CACHE_TTL_SECONDS:
         return entry[1]
     value = fetch_fn()
-    _helius_cache[cache_key] = (now, value)
+    _rpc_cache[cache_key] = (now, value)
     return value
+
+
+# ── Solana PDA derivation (needed for on-chain token metadata) ───────
+#
+# Standard Solana Program Derived Address algorithm: try bump seeds
+# from 255 down to 0, concatenating seeds + [bump] + program_id +
+# "ProgramDerivedAddress", sha256 it, and accept the first result that
+# is NOT a valid point on the Ed25519 curve (which is exactly what
+# guarantees no private key exists for it — the whole point of a PDA).
+# Verified live before wiring this in: derived BONK's metadata PDA
+# this way and confirmed the account it points to is owned by
+# TOKEN_METADATA_PROGRAM_ID and decodes to name="Bonk", symbol="Bonk".
+_ED25519_P = 2 ** 255 - 19
+_ED25519_D = (-121665 * pow(121666, _ED25519_P - 2, _ED25519_P)) % _ED25519_P
+
+
+def _is_on_ed25519_curve(point_bytes: bytes) -> bool:
+    y = int.from_bytes(point_bytes, "little") & ((1 << 255) - 1)  # clear the sign bit
+    if y >= _ED25519_P:
+        return False
+    y2 = (y * y) % _ED25519_P
+    u = (y2 - 1) % _ED25519_P
+    v = (_ED25519_D * y2 + 1) % _ED25519_P
+    if v == 0:
+        return False
+    x2 = (u * pow(v, _ED25519_P - 2, _ED25519_P)) % _ED25519_P
+    return pow(x2, (_ED25519_P - 1) // 2, _ED25519_P) in (0, 1)  # Euler's criterion for a quadratic residue
+
+
+def find_program_address(seeds: list, program_id: str) -> str:
+    """Derives a Program Derived Address, base58-encoded — same algorithm every Solana SDK uses."""
+    program_id_bytes = base58.b58decode(program_id)
+    for bump in range(255, -1, -1):
+        candidate = hashlib.sha256(
+            b"".join(seeds) + bytes([bump]) + program_id_bytes + b"ProgramDerivedAddress"
+        ).digest()
+        if not _is_on_ed25519_curve(candidate):
+            return base58.b58encode(candidate).decode()
+    raise ValueError(f"Unable to find a viable PDA bump seed for program {program_id}")
+
+
+def _describe_from_metadata_uri(uri: str) -> str:
+    """Best-effort fetch of the off-chain metadata JSON (Arweave/IPFS/HTTP) an on-chain URI points to, for its 'description' field. Third-party host, not Alchemy — no backoff/pacing, fails silently."""
+    if not uri:
+        return ""
+    try:
+        uri_resp = requests.get(uri, timeout=8)
+        uri_resp.raise_for_status()
+        return uri_resp.json().get("description", "") or ""
+    except Exception:
+        return ""
 
 
 def get_token_metadata(mint: str) -> dict:
     """
-    Resolves a mint address to its real symbol/name/description via
-    Helius's DAS API (getAsset) — this is what turns an unreadable
-    address like 'H3mqq7...' into something like 'MOONCAT', and pulls
-    the coin's "lore" (its description, when the launch included one)
-    for conviction analysis to reference. Returns {"symbol": ...,
-    "name": ..., "description": ...}, with empty strings if metadata
-    isn't available (very new/unlisted tokens sometimes have none yet).
+    Resolves a mint address to its real symbol/name/description — the
+    raw-RPC replacement for Helius's proprietary DAS API (getAsset),
+    which returned the same fields already parsed regardless of which
+    of the two schemes below actually backed a given token. Tries, in
+    order (confirmed live against real tracked-wallet buys — recent
+    Pump.fun launches turned out to use the SECOND scheme, not the
+    first, so both are needed):
+
+      1. The legacy Metaplex Token Metadata PDA (older/non-Pump.fun
+         tokens, e.g. BONK) — derived and the account read directly.
+      2. Token-2022's embedded metadata extension (current Pump.fun
+         launches create THIS instead of a separate Metaplex account)
+         — read straight off the mint account itself, already parsed
+         by the RPC's own jsonParsed encoding, no manual byte parsing
+         needed for this path.
+
+    Turns an unreadable address like 'H3mqq7...' into something like
+    'MOONCAT', and pulls the coin's "lore" (its description, read from
+    the off-chain JSON the on-chain URI points to, when the launch
+    included one) for conviction analysis to reference. Returns
+    {"symbol": ..., "name": ..., "description": ...}, with empty
+    strings if metadata isn't available from either source.
     """
-    if not HELIUS_API_KEY:
+    if not ALCHEMY_RPC_URL:
         return {"symbol": "", "name": "", "description": ""}
 
-    def _fetch():
+    def _fetch_legacy_metaplex():
+        mint_bytes = base58.b58decode(mint)
+        metadata_program_bytes = base58.b58decode(TOKEN_METADATA_PROGRAM_ID)
+        pda = find_program_address(
+            [b"metadata", metadata_program_bytes, mint_bytes], TOKEN_METADATA_PROGRAM_ID
+        )
         payload = {
-            "jsonrpc": "2.0",
-            "id": "ledger",
-            "method": "getAsset",
-            "params": {"id": mint},
+            "jsonrpc": "2.0", "id": "ledger", "method": "getAccountInfo",
+            "params": [pda, {"encoding": "base64"}],
         }
+        resp = request_with_backoff("POST", ALCHEMY_RPC_URL, json=payload, timeout=15)
+        value = resp.json().get("result", {}).get("value")
+        if not value:
+            return None
+
+        raw = base64.b64decode(value["data"][0])
+        offset = 1 + 32 + 32  # key (1 byte) + update_authority (32) + mint (32)
+
+        def read_borsh_string(data, offset):
+            length = int.from_bytes(data[offset:offset + 4], "little")
+            offset += 4
+            s = data[offset:offset + length].decode("utf-8", errors="replace").rstrip("\x00").strip()
+            return s, offset + length
+
+        name, offset = read_borsh_string(raw, offset)
+        symbol, offset = read_borsh_string(raw, offset)
+        uri, offset = read_borsh_string(raw, offset)
+        return {"symbol": symbol, "name": name, "description": _describe_from_metadata_uri(uri)}
+
+    def _fetch_token2022_extension():
+        payload = {
+            "jsonrpc": "2.0", "id": "ledger", "method": "getAccountInfo",
+            "params": [mint, {"encoding": "jsonParsed"}],
+        }
+        resp = request_with_backoff("POST", ALCHEMY_RPC_URL, json=payload, timeout=15)
+        value = resp.json().get("result", {}).get("value") or {}
+        info = (value.get("data") or {}).get("parsed", {}).get("info", {})
+        for ext in info.get("extensions", []):
+            if ext.get("extension") == "tokenMetadata":
+                state = ext.get("state", {})
+                return {
+                    "symbol": state.get("symbol", ""),
+                    "name": state.get("name", ""),
+                    "description": _describe_from_metadata_uri(state.get("uri")),
+                }
+        return None
+
+    def _fetch():
         try:
-            resp = request_with_backoff("POST", HELIUS_RPC_URL, json=payload, timeout=15)
-            data = resp.json()
-            content = data.get("result", {}).get("content", {})
-            metadata = content.get("metadata", {})
-            return {
-                "symbol": metadata.get("symbol", ""),
-                "name": metadata.get("name", ""),
-                "description": metadata.get("description", ""),
-            }
+            result = _fetch_legacy_metaplex() or _fetch_token2022_extension()
+            return result or {"symbol": "", "name": "", "description": ""}
         except Exception as e:
             print(f"[WARN] metadata lookup failed for {mint}: {e}")
             return {"symbol": "", "name": "", "description": ""}
 
-    return _helius_cached(f"metadata:{mint}", _fetch)
+    return _rpc_cached(f"metadata:{mint}", _fetch)
 
 
 # ── Market research (merged from the standalone market_intel.py) ─────
@@ -866,31 +1045,144 @@ def check_is_narrative_token(name: str, symbol: str) -> bool:
 
 # ── Wallet watching ──────────────────────────────────────────────────
 
-def get_wallet_transactions(wallet_address: str, limit: int = 10):
-    """Pull recent transactions for a wallet via Helius."""
-    if not HELIUS_API_KEY:
-        raise RuntimeError("Set HELIUS_API_KEY env var first.")
-    url = f"{HELIUS_BASE_URL}/addresses/{wallet_address}/transactions"
-    params = {"api-key": HELIUS_API_KEY, "limit": limit}
-    resp = request_with_backoff("GET", url, params=params, timeout=15)
-    return resp.json()
+def get_wallet_transactions(wallet_address: str, limit: int = 10) -> list:
+    """
+    Pull recent transactions for a wallet via standard Solana RPC:
+    getSignaturesForAddress for the recent signature list, then
+    getTransaction (jsonParsed, maxSupportedTransactionVersion=0) for
+    each one — the raw-RPC replacement for Helius's proprietary
+    enhanced-transactions endpoint, which returned the same window
+    already parsed into a swap-friendly shape. Skips any signature
+    getSignaturesForAddress already shows as failed on-chain (err is
+    set) — a failed transaction was never a real buy, no need to fetch
+    its full detail. Returns a list of raw getTransaction results for
+    extract_new_buys() to parse.
+    """
+    if not ALCHEMY_RPC_URL:
+        raise RuntimeError("Set ALCHEMY_RPC_URL env var first.")
+
+    sigs_payload = {
+        "jsonrpc": "2.0", "id": 1, "method": "getSignaturesForAddress",
+        "params": [wallet_address, {"limit": limit}],
+    }
+    sigs_resp = request_with_backoff("POST", ALCHEMY_RPC_URL, json=sigs_payload, timeout=15)
+    signatures = sigs_resp.json().get("result") or []
+
+    transactions = []
+    for sig_entry in signatures:
+        if sig_entry.get("err") is not None:
+            continue
+        tx_payload = {
+            "jsonrpc": "2.0", "id": 1, "method": "getTransaction",
+            "params": [sig_entry["signature"], {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}],
+        }
+        try:
+            tx_resp = request_with_backoff("POST", ALCHEMY_RPC_URL, json=tx_payload, timeout=15)
+            tx = tx_resp.json().get("result")
+            if tx is not None:
+                transactions.append(tx)
+        except Exception as e:
+            print(f"[WARN] getTransaction failed for {sig_entry.get('signature')}: {e}")
+
+    return transactions
+
+
+def _token_balance_deltas(meta: dict, wallet_address: str) -> dict:
+    """
+    Returns {mint: ui_amount_delta} for token accounts owned by
+    wallet_address in one transaction, from meta.preTokenBalances /
+    postTokenBalances (both keyed by accountIndex — an account can
+    only ever hold one mint, so accountIndex maps 1:1 to a (owner,
+    mint) pair for the duration of this transaction). A missing side
+    (account newly created, or fully drained and closed) is treated as
+    a 0 balance on that side, same as Helius's flattened transfers
+    implicitly did.
+    """
+    pre = {b["accountIndex"]: b for b in (meta.get("preTokenBalances") or [])}
+    post = {b["accountIndex"]: b for b in (meta.get("postTokenBalances") or [])}
+    deltas = {}
+    for idx in set(pre) | set(post):
+        entry = post.get(idx) or pre.get(idx)
+        if entry.get("owner") != wallet_address:
+            continue
+        mint = entry.get("mint")
+        if not mint:
+            continue
+        pre_amount = float(((pre.get(idx) or {}).get("uiTokenAmount") or {}).get("uiAmount") or 0)
+        post_amount = float(((post.get(idx) or {}).get("uiTokenAmount") or {}).get("uiAmount") or 0)
+        deltas[mint] = deltas.get(mint, 0.0) + (post_amount - pre_amount)
+    return deltas
+
+
+def _all_instructions(tx: dict) -> list:
+    """Flattens a jsonParsed transaction's top-level + inner instructions into one list."""
+    message = (tx.get("transaction") or {}).get("message") or {}
+    meta = tx.get("meta") or {}
+    instructions = list(message.get("instructions") or [])
+    for inner in (meta.get("innerInstructions") or []):
+        instructions.extend(inner.get("instructions") or [])
+    return instructions
+
+
+def _wallet_paid_native_sol(tx: dict, wallet_address: str) -> bool:
+    """
+    True if the wallet is the source of a plain System Program SOL
+    transfer anywhere in the transaction (top-level or, same as
+    Pump.fun bonding-curve buys, nested inside another program's CPI
+    as an inner instruction) — the raw-RPC equivalent of Helius's
+    flattened nativeTransfers array.
+    """
+    for ix in _all_instructions(tx):
+        parsed = ix.get("parsed")
+        if not isinstance(parsed, dict) or ix.get("program") != "system":
+            continue
+        if parsed.get("type") not in ("transfer", "transferWithSeed"):
+            continue
+        info = parsed.get("info") or {}
+        if info.get("source") == wallet_address and (info.get("lamports") or 0) > 0:
+            return True
+    return False
+
+
+def _detect_dex_source(tx: dict) -> str:
+    """
+    Best-effort DEX/aggregator identification from the program IDs
+    actually invoked in this transaction — the raw-RPC replacement for
+    the "source" field Helius's enhanced transactions used to include
+    for free. Checks top-level instructions first (the program the
+    wallet directly called), falling back to inner instructions (e.g.
+    a Jupiter route that hops through Raydium). Returns None — which
+    get_source_display_name already renders as "Unknown Platform" — if
+    nothing recognized shows up; not exhaustive, purely informational.
+    """
+    message = (tx.get("transaction") or {}).get("message") or {}
+    meta = tx.get("meta") or {}
+    for ix in (message.get("instructions") or []):
+        code = KNOWN_DEX_PROGRAM_IDS.get(ix.get("programId"))
+        if code:
+            return code
+    for inner in (meta.get("innerInstructions") or []):
+        for ix in (inner.get("instructions") or []):
+            code = KNOWN_DEX_PROGRAM_IDS.get(ix.get("programId"))
+            if code:
+                return code
+    return None
 
 
 def extract_new_buys(transactions: list, wallet_address: str) -> list:
     """
-    Filter transactions down to real token buys, based on the actual
-    Helius tokenTransfers structure (confirmed against live data):
+    Filter transactions down to real token buys, parsed from raw
+    getTransaction data — the raw-RPC replacement for the old
+    Helius-tokenTransfers-based version, same detection logic:
 
-        tokenTransfers: [
-            { fromUserAccount, toUserAccount, mint, tokenAmount, ... },
-            ...
-        ]
-
-    A "buy" = the watched wallet receives (toUserAccount) a token that
-    isn't SOL/USDC/USDT — i.e. it swapped something stable/SOL for a
-    new token. Only looks at type == "SWAP" transactions; TRANSFER and
-    UNKNOWN types are skipped (confirmed via live testing these are
-    mostly plain transfers, not trades).
+    A "buy" = the watched wallet BOTH pays something out (native SOL,
+    or a stablecoin/wrapped-SOL token) AND receives a token that isn't
+    SOL/USDC/USDT, in the SAME transaction. Requiring the matching
+    outflow (not just an inflow) confirms the wallet is the one
+    actually executing and paying for the trade — a token sent
+    directly to the wallet by someone else, or the wallet showing up
+    as an incidental hop in someone else's swap, would otherwise look
+    identical to a real purchase.
     """
     STABLE_OR_SOL_MINTS = {
         "So11111111111111111111111111111111111111112",  # wrapped SOL
@@ -900,45 +1192,33 @@ def extract_new_buys(transactions: list, wallet_address: str) -> list:
 
     buys = []
     for tx in transactions:
-        if tx.get("type") != "SWAP":
+        meta = tx.get("meta") or {}
+        if meta.get("err") is not None:
             continue
 
-        transfers = tx.get("tokenTransfers", [])
+        token_deltas = _token_balance_deltas(meta, wallet_address)
+        received = {
+            mint: delta for mint, delta in token_deltas.items()
+            if delta > 0 and mint not in STABLE_OR_SOL_MINTS
+        }
+        if not received:
+            continue
 
-        # A genuine buy means the wallet BOTH pays something out (native
-        # SOL, or a stablecoin/wrapped-SOL token) AND receives the new
-        # token, in the SAME transaction. Checking only the inflow isn't
-        # enough — a token sent directly to the wallet by someone else,
-        # or the wallet showing up as an incidental hop in someone
-        # else's swap, would otherwise look identical to a real
-        # purchase. Requiring a matching outflow confirms the wallet is
-        # the one actually executing and paying for the trade. Checks
-        # BOTH tokenTransfers (wrapped SOL/USDC/USDT) and nativeTransfers
-        # (plain SOL) — Pump.fun buys typically pay in native SOL, which
-        # Helius records separately from SPL token transfers.
-        wallet_paid_out = any(
-            transfer.get("fromUserAccount") == wallet_address
-            and transfer.get("mint") in STABLE_OR_SOL_MINTS
-            for transfer in transfers
-        ) or any(
-            native.get("fromUserAccount") == wallet_address
-            and (native.get("amount") or 0) > 0
-            for native in tx.get("nativeTransfers", [])
+        paid_stable_token = any(
+            mint in STABLE_OR_SOL_MINTS and delta < 0 for mint, delta in token_deltas.items()
         )
-        if not wallet_paid_out:
+        if not (paid_stable_token or _wallet_paid_native_sol(tx, wallet_address)):
             continue
 
-        for transfer in transfers:
-            if (
-                transfer.get("toUserAccount") == wallet_address
-                and transfer.get("mint") not in STABLE_OR_SOL_MINTS
-            ):
-                buys.append({
-                    "signature": tx.get("signature"),
-                    "mint": transfer.get("mint"),
-                    "amount": transfer.get("tokenAmount"),
-                    "source": tx.get("source"),
-                })
+        signature = (((tx.get("transaction") or {}).get("signatures")) or [None])[0]
+        source_code = _detect_dex_source(tx)
+        for mint, amount in received.items():
+            buys.append({
+                "signature": signature,
+                "mint": mint,
+                "amount": amount,
+                "source": source_code,
+            })
 
     return buys
 
@@ -2885,7 +3165,7 @@ def get_dev_holding_pct(mint: str, creator: str) -> float:
     free via the same Solana RPC methods as get_top10_holder_pct.
     Returns None if the creator address is unknown or the check fails.
     """
-    if not creator or not HELIUS_API_KEY:
+    if not creator or not ALCHEMY_RPC_URL:
         return None
 
     def _fetch():
@@ -2894,7 +3174,7 @@ def get_dev_holding_pct(mint: str, creator: str) -> float:
                 "jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner",
                 "params": [creator, {"mint": mint}, {"encoding": "jsonParsed"}],
             }
-            resp = request_with_backoff("POST", HELIUS_RPC_URL, json=payload, timeout=15)
+            resp = request_with_backoff("POST", ALCHEMY_RPC_URL, json=payload, timeout=15)
             data = resp.json()
             accounts = data.get("result", {}).get("value", [])
             dev_amount = sum(
@@ -2903,7 +3183,7 @@ def get_dev_holding_pct(mint: str, creator: str) -> float:
             )
 
             supply_payload = {"jsonrpc": "2.0", "id": 1, "method": "getTokenSupply", "params": [mint]}
-            supply_resp = request_with_backoff("POST", HELIUS_RPC_URL, json=supply_payload, timeout=15)
+            supply_resp = request_with_backoff("POST", ALCHEMY_RPC_URL, json=supply_payload, timeout=15)
             total_supply = float(supply_resp.json().get("result", {}).get("value", {}).get("uiAmount") or 0)
             if total_supply <= 0:
                 return None
@@ -2916,7 +3196,7 @@ def get_dev_holding_pct(mint: str, creator: str) -> float:
     # Keyed on mint+creator (not just mint) since callers pass different
     # creator addresses in principle — in practice a mint has one creator,
     # so this still collapses to one real call per mint within the TTL.
-    return _helius_cached(f"devpct:{mint}:{creator}", _fetch)
+    return _rpc_cached(f"devpct:{mint}:{creator}", _fetch)
 
 
 def get_approx_holder_count(mint: str) -> int:
@@ -2927,20 +3207,20 @@ def get_approx_holder_count(mint: str) -> int:
     exact count — a full accurate count needs a paid indexing service.
     Returns None on failure.
     """
-    if not HELIUS_API_KEY:
+    if not ALCHEMY_RPC_URL:
         return None
 
     def _fetch():
         try:
             payload = {"jsonrpc": "2.0", "id": 1, "method": "getTokenLargestAccounts", "params": [mint]}
-            resp = request_with_backoff("POST", HELIUS_RPC_URL, json=payload, timeout=15)
+            resp = request_with_backoff("POST", ALCHEMY_RPC_URL, json=payload, timeout=15)
             accounts = resp.json().get("result", {}).get("value", [])
             return len([a for a in accounts if float(a.get("uiAmount") or 0) > 0])
         except Exception as e:
             print(f"[WARN] holder count check failed for {mint}: {e}")
             return None
 
-    return _helius_cached(f"holdercount:{mint}", _fetch)
+    return _rpc_cached(f"holdercount:{mint}", _fetch)
 
 
 SNIPER_PENDING = {}  # mint -> candidate dict with launch metadata, held until it ages into the preset's window

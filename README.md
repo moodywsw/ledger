@@ -9,11 +9,12 @@ and market research.
 
 ## Components
 
-- **`ledger_bot.py`** — The core loop. Polls watched wallets (via Helius) for
-  new buys, flags "whale" wallets by total portfolio value, generates a
-  thesis for each buy, and simulates opening/scaling/closing paper positions
-  under hard-coded risk limits. Optionally posts every thesis/trade/exit to a
-  Discord channel via webhook. State persists to `ledger_state.json`.
+- **`ledger_bot.py`** — The core loop. Polls watched wallets (via Alchemy's
+  Solana RPC) for new buys, flags "whale" wallets by total portfolio value,
+  generates a thesis for each buy, and simulates opening/scaling/closing
+  paper positions under hard-coded risk limits. Optionally posts every
+  thesis/trade/exit to a Discord channel via webhook. State persists to
+  `ledger_state.json`.
 - **`ledger_discord_bot.py`** — The conversational half. Responds when
   mentioned or DM'd in a Discord server, using Claude and grounding its
   replies in `ledger_state.json` (current paper positions/PnL) and
@@ -45,7 +46,7 @@ and market research.
 - **`ledger_background.log`** — Log output from running the bot(s) in the
   background.
 - **`requirements.txt`** — Python dependencies (`requests`, `discord.py`,
-  `websockets`).
+  `websockets`, `flask`, `base58`).
 - **`Procfile`** — Process declaration for deployment (`web: python3
   ledger_bot.py`).
 
@@ -53,7 +54,8 @@ and market research.
 
 | Variable | Required by | Notes |
 |---|---|---|
-| `HELIUS_API_KEY` | `ledger_bot.py`, `test_wallet_feed.py` | From https://helius.dev, free tier is fine |
+| `ALCHEMY_RPC_URL` | `ledger_bot.py` | Solana Mainnet RPC URL from an Alchemy app, e.g. `https://solana-mainnet.g.alchemy.com/v2/<key>` |
+| `HELIUS_API_KEY` | `test_wallet_feed.py` only | From https://helius.dev — no longer used by `ledger_bot.py` (migrated to Alchemy) |
 | `DISCORD_WEBHOOK_URL` | `ledger_bot.py` (optional) | Ledger's public voice; leave unset to run silently |
 | `LEDGER_AVATAR_URL` | `ledger_bot.py` (optional) | Avatar for the Discord webhook posts |
 | `DISCORD_BOT_TOKEN` | `ledger_discord_bot.py` | Needs the "Message Content" privileged intent enabled |
