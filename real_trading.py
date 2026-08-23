@@ -224,7 +224,7 @@ def _check_gas_reserve() -> tuple:
     return True, sol_balance
 
 
-def _check_onchain_token_balance_raw(mint: str) -> int:
+def _check_onchain_token_balance_raw(mint: str, _zero_retries: int = 2) -> int:
     """
     The real, on-chain source of truth for how much of `mint` this
     wallet actually holds right now, in raw (smallest-unit) terms —
@@ -241,6 +241,24 @@ def _check_onchain_token_balance_raw(mint: str) -> int:
     silently returns zero accounts rather than erroring, which is
     exactly the shape of bug this function used to have (found live:
     a wallet holding real USDC read back as a $0.00 balance).
+
+    A *reading* of exactly zero is treated with one extra dose of
+    suspicion before being trusted: reproduced live on 2026-08-23,
+    Alchemy's getTokenAccountsByOwner returned a well-formed 200
+    response — the right token account, no error field — but reported
+    its balance as 0 for several seconds while the wallet genuinely
+    held ~$38 USDC (independently confirmed against Solana's public
+    RPC at the same moment, and against Alchemy itself moments later).
+    Nothing about that response looks malformed, so no amount of
+    stricter parsing would have caught it — it has to be treated as
+    "possibly stale" and re-confirmed. A real balance dropping to
+    exactly zero with no intervening trade is implausible, so a fresh
+    $0 is re-queried (fresh HTTP requests, not a retried connection —
+    the same staleness was observed to persist across several distinct
+    connections in a row) up to `_zero_retries` more times, with a
+    growing delay between attempts, before being accepted as true; a
+    wallet that legitimately holds zero just pays a couple of extra RPC
+    round trips.
     """
     if not ALCHEMY_RPC_URL:
         raise RuntimeError("Set ALCHEMY_RPC_URL env var first.")
@@ -251,13 +269,26 @@ def _check_onchain_token_balance_raw(mint: str) -> int:
     }
     resp = _request_with_backoff("POST", ALCHEMY_RPC_URL, json=payload, timeout=15)
     resp.raise_for_status()
-    accounts = resp.json().get("result", {}).get("value", [])
+    body = resp.json()
+    if "error" in body:
+        raise RuntimeError(f"Alchemy RPC error for getTokenAccountsByOwner(mint={mint}): {body['error']}")
+    accounts = body.get("result", {}).get("value", [])
     total_raw = 0
     for acc in accounts:
         info = acc.get("account", {}).get("data", {}).get("parsed", {}).get("info", {})
         amount_str = info.get("tokenAmount", {}).get("amount")
         if amount_str is not None:
             total_raw += int(amount_str)
+
+    if total_raw == 0 and _zero_retries > 0:
+        delay = 2.0 * (3 - _zero_retries)  # 2.0s on the first retry, 4.0s on the second
+        print(f"[real_trading] suspicious $0 balance from Alchemy for mint={mint} "
+              f"wallet={wallet} ({len(accounts)} token account(s) in response) — "
+              f"re-confirming ({_zero_retries} attempt(s) left) before trusting it. "
+              f"Raw response: {body}")
+        time.sleep(delay)
+        return _check_onchain_token_balance_raw(mint, _zero_retries=_zero_retries - 1)
+
     return total_raw
 
 
