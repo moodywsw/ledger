@@ -8,6 +8,9 @@
   --green: #22c55e;
   --red: #ef4444;
   --amber: #f59e0b;
+  /* Same magenta as COLOR_REAL in ledger_bot.py's Discord embeds — one
+     color means "real money" everywhere in the system, not just here. */
+  --real: #ec4899;
   --mono: "SF Mono", "Cascadia Code", "Consolas", "Menlo", monospace;
 }
 
@@ -48,11 +51,35 @@ body {
   margin-left: 10px;
 }
 
-.stats {
+.stats-row {
   display: flex;
   gap: 28px;
   flex-wrap: wrap;
+  align-items: center;
 }
+
+.stats-group {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.group-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  padding: 3px 7px;
+  border-radius: 3px;
+}
+
+.badge-real { background: rgba(236,72,153,0.18); color: var(--real); }
+.badge-paper { background: rgba(107,120,133,0.18); color: var(--text-dim); }
+
+.badge-real.unarmed { background: rgba(107,120,133,0.18); color: var(--text-dim); }
 
 .stat {
   display: flex;
@@ -110,6 +137,57 @@ body {
   border-bottom: 1px solid var(--border);
   padding-bottom: 8px;
 }
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+}
+
+.panel-header h2 {
+  margin: 0;
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.panel-header-note {
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+}
+
+/* Filters both Live Thoughts and Trades at once — one control, one
+   consistent lens, so the two panels can never disagree about which
+   mode is being viewed. */
+.filter-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.filter-btn {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  padding: 5px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.filter-btn + .filter-btn { border-left: 1px solid var(--border); }
+
+.filter-btn.filter-real.active { background: rgba(236,72,153,0.18); color: var(--real); }
+.filter-btn.filter-paper.active { background: rgba(59,130,246,0.15); color: var(--accent); }
 
 .panel-wide {
   border-bottom: 1px solid var(--border);
@@ -195,6 +273,7 @@ body {
 }
 
 .kind-did { background: rgba(59,130,246,0.15); color: var(--accent); }
+.kind-did_real { background: rgba(236,72,153,0.18); color: var(--real); }
 .kind-refused { background: rgba(239,68,68,0.15); color: var(--red); }
 .kind-read { background: rgba(245,158,11,0.15); color: var(--amber); }
 .kind-commentary { background: rgba(107,120,133,0.15); color: var(--text-dim); }

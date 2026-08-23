@@ -13,6 +13,11 @@ function fmtSol(value, decimals = 4) {
   return `${value.toFixed(decimals)} SOL`;
 }
 
+function fmtUsdc(value, decimals = 2) {
+  if (value === null || value === undefined) return "—";
+  return `$${value.toFixed(decimals)}`;
+}
+
 function pnlClass(value) {
   if (value === null || value === undefined) return "pnl-zero";
   if (value > 0) return "pnl-pos";
@@ -75,6 +80,22 @@ function renderState(state) {
   `).join("");
 }
 
+function renderRealState(realState) {
+  const badge = document.getElementById("real-armed-badge");
+  badge.textContent = realState.armed ? "REAL" : "REAL (unarmed)";
+  badge.classList.toggle("unarmed", !realState.armed);
+
+  document.getElementById("stat-real-balance").textContent = fmtUsdc(realState.balance_usdc);
+  document.getElementById("stat-real-gas").textContent = fmtSol(realState.balance_sol, 4);
+
+  const pnlEl = document.getElementById("stat-real-pnl");
+  pnlEl.textContent = fmtUsdc(realState.realized_pnl_usdc);
+  pnlEl.className = `stat-value ${pnlClass(realState.realized_pnl_usdc)}`;
+
+  const positions = realState.open_real_positions || [];
+  document.getElementById("stat-real-open-count").textContent = positions.length;
+}
+
 function renderTheses(theses) {
   const body = document.getElementById("theses-body");
   if (!theses || theses.length === 0) {
@@ -97,12 +118,38 @@ function renderTheses(theses) {
   `).join("");
 }
 
-// "did" entries are real trade actions (opened/closed/topped up);
-// everything else (commentary, refused, read) is Ledger's ongoing
-// reasoning rather than an actual trade, and renders in "Live
-// Thoughts" instead. New kinds default to Live Thoughts, not Trades —
-// safer to over-show reasoning than to silently miss a real trade.
-const TRADE_KINDS = new Set(["did"]);
+// Two independent questions about every journal entry:
+//
+//   isReal — did this entry come from the real-money path? kind
+//   "did_real" covers every real-trading outcome (armed success,
+//   unarmed, blocked, failed) by design — see real_trading.py. The one
+//   exception is the gas-reserve refusal, which deliberately logs as
+//   kind "refused" (its own record, distinct from a guard rail simply
+//   not liking a trade) but still carries meta.min_sol_for_gas, which
+//   is what identifies it as real-money-related here.
+//
+//   isTrade — did this entry represent an actual completed action
+//   (opened/closed/topped up), vs. Ledger's reasoning about one? A
+//   paper "did" always is. A real "did_real" only is when it actually
+//   filled (meta.status === "success") — an unarmed/blocked/failed
+//   did_real entry is Ledger explaining why nothing happened, which
+//   belongs in Live Thoughts, not Trades.
+//
+// New kinds default to both false — safer to under-classify into Live
+// Thoughts / Paper than to silently miscount a real fill as paper or
+// bury an actual trade among reasoning.
+function classifyEntry(e) {
+  const isReal =
+    e.kind === "did_real" ||
+    (e.kind === "refused" && e.meta && Object.prototype.hasOwnProperty.call(e.meta, "min_sol_for_gas"));
+  const isTrade =
+    e.kind === "did" ||
+    (e.kind === "did_real" && e.meta && e.meta.status === "success");
+  return { isReal, isTrade };
+}
+
+let lastJournalEntries = [];
+let activityFilter = "real"; // "real" | "paper" — starts on "real" now that REAL_TRADING_ENABLED is armed
 
 function renderJournalEntries(containerId, entries, emptyText) {
   const body = document.getElementById(containerId);
@@ -121,12 +168,31 @@ function renderJournalEntries(containerId, entries, emptyText) {
 }
 
 function renderJournal(entries) {
-  entries = entries || [];
-  const trades = entries.filter(e => TRADE_KINDS.has(e.kind));
-  const liveThoughts = entries.filter(e => !TRADE_KINDS.has(e.kind));
-  renderJournalEntries("live-thoughts-body", liveThoughts, "No live thoughts yet.");
-  renderJournalEntries("trades-body", trades, "No trades yet.");
+  if (entries) lastJournalEntries = entries; // cache so the filter toggle can re-render without a re-fetch
+  entries = lastJournalEntries || [];
+
+  const wantReal = activityFilter === "real";
+  const filtered = entries.filter(e => classifyEntry(e).isReal === wantReal);
+  const trades = filtered.filter(e => classifyEntry(e).isTrade);
+  const liveThoughts = filtered.filter(e => !classifyEntry(e).isTrade);
+
+  const noun = wantReal ? "real" : "paper";
+  renderJournalEntries("live-thoughts-body", liveThoughts, `No ${noun} activity yet.`);
+  renderJournalEntries("trades-body", trades, `No ${noun} trades yet.`);
 }
+
+function setActivityFilter(filter) {
+  activityFilter = filter;
+  document.querySelectorAll("#activity-filter .filter-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.filter === filter);
+  });
+  renderJournal(); // re-render from the cache — no need to wait for the next poll
+}
+
+document.getElementById("activity-filter").addEventListener("click", (event) => {
+  const btn = event.target.closest(".filter-btn");
+  if (btn) setActivityFilter(btn.dataset.filter);
+});
 
 function setConnStatus(ok) {
   const el = document.getElementById("conn-status");
@@ -138,12 +204,14 @@ function setConnStatus(ok) {
 
 async function pollOnce() {
   try {
-    const [state, theses, journal] = await Promise.all([
+    const [state, realState, theses, journal] = await Promise.all([
       fetchJson("/api/state"),
+      fetchJson("/api/real_state"),
       fetchJson("/api/theses"),
       fetchJson("/api/journal?limit=150"),
     ]);
     renderState(state);
+    renderRealState(realState);
     renderTheses(theses);
     renderJournal(journal);
     setConnStatus(true);

@@ -36,6 +36,11 @@ from flask import Flask, jsonify, request, send_from_directory
 
 from journal_store import get_recent_journal
 from theses_store import get_theses
+from real_trading import (
+    REAL_TRADING_ENABLED, MAX_REAL_POSITION_PCT, MAX_TOTAL_EXPOSURE_PCT,
+    get_wallet_balances, get_open_real_positions_summary, get_realized_pnl_usdc,
+    get_max_real_position_usdc,
+)
 
 API_PORT = int(os.environ.get("API_PORT", os.environ.get("PORT", "8080")))
 
@@ -128,6 +133,55 @@ def api_state():
         "balance_sol": state.get("balance_sol"),
         "realized_pnl_sol": state.get("realized_pnl_sol"),
         "open_positions": positions,
+    })
+
+
+@app.route("/api/real_state")
+def api_real_state():
+    """
+    Real (on-chain) trading state — separate from /api/state, which is
+    paper-only. Kept as its own endpoint rather than folded into
+    /api/state so a real_trading.py problem (missing key, RPC down)
+    can't take the paper-trading dashboard down with it: every real-
+    money field here is best-effort, caught individually, and reported
+    as null/empty rather than raising.
+    """
+    balances = {"usdc": None, "sol": None}
+    balances_error = None
+    try:
+        balances = get_wallet_balances()
+    except Exception as e:
+        balances_error = str(e)
+
+    try:
+        open_positions = get_open_real_positions_summary()
+    except Exception:
+        open_positions = []
+
+    try:
+        realized_pnl_usdc = get_realized_pnl_usdc()
+    except Exception:
+        realized_pnl_usdc = None
+
+    exposure_usdc = sum(p["cost_basis_usdc"] for p in open_positions)
+    max_position_usdc = None
+    max_total_exposure_usdc = None
+    if balances.get("usdc") is not None:
+        max_position_usdc = get_max_real_position_usdc(balances["usdc"])
+        max_total_exposure_usdc = (balances["usdc"] + exposure_usdc) * MAX_TOTAL_EXPOSURE_PCT
+
+    return jsonify({
+        "armed": REAL_TRADING_ENABLED,
+        "balance_usdc": balances.get("usdc"),
+        "balance_sol": balances.get("sol"),
+        "balance_error": balances_error,
+        "open_real_positions": open_positions,
+        "exposure_usdc": exposure_usdc,
+        "realized_pnl_usdc": realized_pnl_usdc,
+        "max_real_position_usdc": max_position_usdc,
+        "max_total_exposure_usdc": max_total_exposure_usdc,
+        "max_real_position_pct": MAX_REAL_POSITION_PCT,
+        "max_total_exposure_pct": MAX_TOTAL_EXPOSURE_PCT,
     })
 
 

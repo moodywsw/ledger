@@ -8,19 +8,41 @@
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">LEDGER<span class="brand-sub">// paper trading, live</span></div>
-  <div class="stats">
-    <div class="stat">
-      <span class="stat-label">Balance</span>
-      <span class="stat-value" id="stat-balance">—</span>
+  <div class="brand">LEDGER<span class="brand-sub">// paper + real trading, live</span></div>
+  <div class="stats-row">
+    <div class="stats-group">
+      <span class="group-badge badge-real" id="real-armed-badge">REAL</span>
+      <div class="stat">
+        <span class="stat-label">USDC Balance</span>
+        <span class="stat-value" id="stat-real-balance">—</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Real PnL</span>
+        <span class="stat-value" id="stat-real-pnl">—</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Real Positions</span>
+        <span class="stat-value" id="stat-real-open-count">—</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Gas (SOL)</span>
+        <span class="stat-value" id="stat-real-gas">—</span>
+      </div>
     </div>
-    <div class="stat">
-      <span class="stat-label">Realized PnL</span>
-      <span class="stat-value" id="stat-pnl">—</span>
-    </div>
-    <div class="stat">
-      <span class="stat-label">Open Positions</span>
-      <span class="stat-value" id="stat-open-count">—</span>
+    <div class="stats-group">
+      <span class="group-badge badge-paper">PAPER</span>
+      <div class="stat">
+        <span class="stat-label">Balance</span>
+        <span class="stat-value" id="stat-balance">—</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Realized PnL</span>
+        <span class="stat-value" id="stat-pnl">—</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Open Positions</span>
+        <span class="stat-value" id="stat-open-count">—</span>
+      </div>
     </div>
     <div class="stat conn">
       <span class="stat-label">Status</span>
@@ -30,7 +52,13 @@
 </header>
 
 <section class="panel panel-wide" id="panel-live-thoughts">
-  <h2>Live Thoughts</h2>
+  <div class="panel-header">
+    <h2>Live Thoughts <span class="panel-header-note">&amp; Trades</span></h2>
+    <div class="filter-toggle" id="activity-filter">
+      <button class="filter-btn filter-real active" data-filter="real" type="button">REAL</button>
+      <button class="filter-btn filter-paper" data-filter="paper" type="button">PAPER</button>
+    </div>
+  </div>
   <div class="panel-body" id="live-thoughts-body">
     <div class="empty">No live thoughts yet.</div>
   </div>

@@ -346,6 +346,17 @@ def _record_spend(positions: dict, usdc_spent: float):
     positions["_meta"] = meta
 
 
+def _record_realized_pnl(positions: dict, delta_usdc: float):
+    """
+    All-time running total, unlike _record_spend's daily reset — a
+    realized gain/loss doesn't expire at UTC midnight the way a daily
+    spend cap does.
+    """
+    meta = positions.get("_meta", {})
+    meta["realized_pnl_usdc"] = meta.get("realized_pnl_usdc", 0.0) + delta_usdc
+    positions["_meta"] = meta
+
+
 def _get_order(input_mint: str, output_mint: str, amount_raw: int, taker: str = None) -> dict:
     if not JUPITER_API_KEY:
         raise RuntimeError("JUPITER_API_KEY env var is not set.")
@@ -594,6 +605,13 @@ def _execute_sell(token: str, amount_usdc: float) -> dict:
         return _result("failed", reason=f"execute returned status={exec_result.get('status')!r}", raw_result=exec_result)
 
     usdc_received_raw = int(order.get("outAmount") or 0)
+    usdc_received = usdc_received_raw / USDC_UNITS_PER_USDC
+    # cost_basis (captured above, before the reduction below) times the
+    # fraction just sold is what was originally paid for exactly this
+    # slice — proceeds minus that is this sell's realized gain/loss,
+    # accumulated into positions["_meta"]["realized_pnl_usdc"] so the
+    # dashboard has real, not paper, P&L to show.
+    _record_realized_pnl(positions, usdc_received - cost_basis * fraction)
     existing["raw_amount"] -= raw_to_sell
     existing["cost_basis_usdc"] = max(0.0, existing["cost_basis_usdc"] * (1 - fraction))
     existing["sell_signatures"].append(exec_result["signature"])
@@ -605,7 +623,7 @@ def _execute_sell(token: str, amount_usdc: float) -> dict:
 
     return _result(
         "success", signature=exec_result["signature"], tokens_sold=raw_to_sell,
-        usdc_received=usdc_received_raw / USDC_UNITS_PER_USDC, price_impact_pct=price_impact,
+        usdc_received=usdc_received, price_impact_pct=price_impact,
         fraction_sold=fraction,
     )
 
@@ -622,3 +640,44 @@ def _sign_transaction(tx_b64: str) -> str:
 def has_real_position(token: str) -> bool:
     positions = _load_real_positions()
     return token in positions and positions[token].get("raw_amount", 0) > 0
+
+
+# ── Read-only accessors for external callers (e.g. api_server.py's ──
+# ── dashboard endpoint) — public (no leading underscore) since these ──
+# ── are meant to be called from outside this module. ─────────────────
+
+def get_realized_pnl_usdc() -> float:
+    """All-time realized P&L across every real sell, ever."""
+    positions = _load_real_positions()
+    return positions.get("_meta", {}).get("realized_pnl_usdc", 0.0)
+
+
+def get_open_real_positions_summary() -> list:
+    """
+    Open real positions for DISPLAY — trusts real_positions.json
+    directly, no live on-chain reconciliation per position. Deliberately
+    cheap (zero RPC calls) so a dashboard can poll this every few
+    seconds without hammering the RPC provider or Jupiter. The actual
+    trading path (_execute_sell, _compute_real_exposure_usdc) always
+    re-derives from the chain before acting on a position; this is
+    read-only display data, not something a trading decision is made
+    from, so the file's own bookkeeping is close enough.
+    """
+    positions = _load_real_positions()
+    return [
+        {"mint": mint, "cost_basis_usdc": pos.get("cost_basis_usdc", 0.0), "raw_amount": pos.get("raw_amount", 0)}
+        for mint, pos in positions.items()
+        if mint != "_meta" and pos.get("raw_amount", 0) > 0
+    ]
+
+
+def get_wallet_balances() -> dict:
+    """
+    Live on-chain USDC and SOL balances, for display. Unlike the
+    position summary above, this DOES hit the RPC (both balances are
+    single cheap calls, not one-per-position) — a balance figure is
+    exactly the kind of thing that's misleading if stale, so it's worth
+    the round trip on every dashboard poll. Raises if SOLANA_PRIVATE_KEY
+    or ALCHEMY_RPC_URL aren't configured; callers should catch that.
+    """
+    return {"usdc": _check_wallet_balance_usdc(), "sol": _check_wallet_balance_sol()}
