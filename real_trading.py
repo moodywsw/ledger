@@ -112,8 +112,6 @@ USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 USDC_DECIMALS = 6
 USDC_UNITS_PER_USDC = 10 ** USDC_DECIMALS
 LAMPORTS_PER_SOL = 1_000_000_000
-TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
 
 REAL_POSITIONS_FILE = Path(os.environ.get("DATA_DIR", ".")) / "real_positions.json"
 
@@ -216,29 +214,36 @@ def _check_onchain_token_balance_raw(mint: str) -> int:
     """
     The real, on-chain source of truth for how much of `mint` this
     wallet actually holds right now, in raw (smallest-unit) terms —
-    summed across every token account for this mint under either the
-    classic or Token-2022 program. Used to reconcile real_positions.json
-    before every sell (and, for USDC, before every buy) so a stale/
-    drifted local record can never cause an attempt to spend or sell
-    more than genuinely exists.
+    summed across every token account for this mint (a mint belongs to
+    exactly one token program, so filtering by mint alone already
+    covers both the classic and Token-2022 cases; no need to loop over
+    program IDs). Used to reconcile real_positions.json before every
+    sell (and, for USDC, before every buy) so a stale/drifted local
+    record can never cause an attempt to spend or sell more than
+    genuinely exists.
+
+    Solana's getTokenAccountsByOwner filter takes EITHER "mint" OR
+    "programId", never both in the same filter object — combining them
+    silently returns zero accounts rather than erroring, which is
+    exactly the shape of bug this function used to have (found live:
+    a wallet holding real USDC read back as a $0.00 balance).
     """
     if not ALCHEMY_RPC_URL:
         raise RuntimeError("Set ALCHEMY_RPC_URL env var first.")
     wallet = _wallet_pubkey_str()
+    payload = {
+        "jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner",
+        "params": [wallet, {"mint": mint}, {"encoding": "jsonParsed"}],
+    }
+    resp = _request_with_backoff("POST", ALCHEMY_RPC_URL, json=payload, timeout=15)
+    resp.raise_for_status()
+    accounts = resp.json().get("result", {}).get("value", [])
     total_raw = 0
-    for program_id in (TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID):
-        payload = {
-            "jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner",
-            "params": [wallet, {"mint": mint, "programId": program_id}, {"encoding": "jsonParsed"}],
-        }
-        resp = _request_with_backoff("POST", ALCHEMY_RPC_URL, json=payload, timeout=15)
-        resp.raise_for_status()
-        accounts = resp.json().get("result", {}).get("value", [])
-        for acc in accounts:
-            info = acc.get("account", {}).get("data", {}).get("parsed", {}).get("info", {})
-            amount_str = info.get("tokenAmount", {}).get("amount")
-            if amount_str is not None:
-                total_raw += int(amount_str)
+    for acc in accounts:
+        info = acc.get("account", {}).get("data", {}).get("parsed", {}).get("info", {})
+        amount_str = info.get("tokenAmount", {}).get("amount")
+        if amount_str is not None:
+            total_raw += int(amount_str)
     return total_raw
 
 
