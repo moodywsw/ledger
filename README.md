@@ -74,8 +74,9 @@ set explicitly.
 | `SOLANA_PRIVATE_KEY` | `real_trading.py`, only if armed | Base58 secret key of a dedicated trading wallet. Never written to a file, logged, or committed — env var only. |
 | `SOLANA_WALLET_ADDRESS` | `real_trading.py` (optional) | Pins the expected public key; if `SOLANA_PRIVATE_KEY` derives a different address, loading fails loudly instead of trading from an unexpected wallet. |
 | `JUPITER_API_KEY` | `real_trading.py`, only if armed | From https://developers.jup.ag/portal — required by Jupiter's Ultra Swap API (`x-api-key`). |
-| `MAX_REAL_POSITION_USDC` | `real_trading.py` (optional) | Hard per-position ceiling for real trades, in USDC, independent of paper-trading sizing. Default `2.00`. |
-| `MAX_REAL_DAILY_USDC` | `real_trading.py` (optional) | Hard ceiling on total real USDC spent per rolling UTC day, across all positions. Default `6.00`. |
+| `MAX_REAL_POSITION_PCT` | `real_trading.py` (optional) | Per-position ceiling as a fraction of the CURRENT live on-chain USDC balance, recomputed on every buy — not a fixed dollar figure. Default `0.30` (30%). |
+| `MAX_TOTAL_EXPOSURE_PCT` | `real_trading.py` (optional) | Ceiling on total USDC value across every open real position combined (existing + new), as a fraction of total balance (liquid + committed), confirmed against the chain. Stops Sniper Mode's rapid-fire entries from committing the whole wallet even though each individual buy respects `MAX_REAL_POSITION_PCT`. Default `0.85` (85%, leaving a 15% floor always liquid). |
+| `MAX_REAL_DAILY_USDC` | `real_trading.py` (optional) | Hard ceiling on total real USDC spent per rolling UTC day, across all positions — a fixed dollar figure, independent of the percentage caps above. Default `6.00`. |
 | `MIN_REAL_TICKET_USDC` | `real_trading.py` (optional) | Real buys below this size are skipped (mostly fees at that point). Default `1.00`. |
 | `MIN_SOL_FOR_GAS` | `real_trading.py` (optional) | Trades are in USDC, but every Solana transaction still costs SOL for network fees — below this SOL balance, a real trade is refused outright instead of failing mid-transaction. Default `0.01`. |
 
@@ -138,11 +139,18 @@ real sells quote token→USDC. SOL is still required unconditionally for
 network fees on every Solana transaction regardless of what the trade itself
 is denominated in; a live SOL balance below `MIN_SOL_FOR_GAS` refuses the
 trade outright (logged as a `refused` journal entry) rather than letting a
-transaction fail midway for lack of gas. Real position sizing is capped
-independently of paper trading by `MAX_REAL_POSITION_USDC` and
-`MAX_REAL_DAILY_USDC`, and every real sell re-derives the actual on-chain
-token balance before selling a single unit more than genuinely exists in the
-wallet.
+transaction fail midway for lack of gas. Position sizing is dynamic, not a
+fixed dollar amount: every real buy is capped at `MAX_REAL_POSITION_PCT`
+(30% by default) of the current live USDC balance, recomputed fresh on every
+call — never a stored number. A second, independent ceiling,
+`MAX_TOTAL_EXPOSURE_PCT` (85% by default), caps the combined USDC value
+across every open real position at once, confirmed against the chain — this
+exists because Sniper Mode can open several positions in quick succession,
+and the per-position cap alone wouldn't stop that sequence from eventually
+committing nearly the whole wallet. `MAX_REAL_DAILY_USDC` is a third, fixed-
+dollar ceiling on top of both. Every real sell re-derives the actual
+on-chain token balance before selling a single unit more than genuinely
+exists in the wallet.
 
 Use `real_trading.dry_run_quote(token_mint, amount_usdc, side)` to
 sanity-check a quote against Jupiter before ever arming — e.g.

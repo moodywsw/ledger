@@ -36,14 +36,23 @@ Safety contract (non-negotiable, per the person running this bot):
   - REAL_TRADING_ENABLED defaults to False and is controlled ONLY by the
     REAL_TRADING_ENABLED env var — flipping it needs no code change and
     no deploy, just a Railway env var edit.
-  - MAX_REAL_POSITION_USDC is a hard ceiling on total USDC committed to
-    any single real position (initial buy + any top-ups combined),
-    enforced inside execute_real_trade() regardless of what paper-trading
+  - Position sizing is dynamic, not a fixed dollar figure: every buy is
+    capped at MAX_REAL_POSITION_PCT (default 30%) of the CURRENT live
+    on-chain USDC balance, recomputed fresh on every call via
+    get_max_real_position_usdc() — never cached, never a stored number.
+    Enforced inside execute_real_trade() regardless of what paper-trading
     position sizing calculated. It is never bypassed.
-  - MAX_REAL_DAILY_USDC is a second, independent ceiling on total real
-    USDC spent across ALL positions in a rolling UTC day — a single
-    overly conviction-scaled position can't drain the wallet even if
-    each individual buy respects MAX_REAL_POSITION_USDC.
+  - MAX_TOTAL_EXPOSURE_PCT (default 85%) is a second, independent ceiling
+    on total USDC value committed across ALL open real positions combined
+    (existing cost basis, confirmed against the chain) plus the new buy —
+    this exists because Sniper Mode can open several positions in quick
+    succession, and the per-position cap alone doesn't stop that sequence
+    from eventually committing nearly the whole wallet. A minimum reserve
+    (100% - MAX_TOTAL_EXPOSURE_PCT) always stays liquid.
+  - MAX_REAL_DAILY_USDC is a third, independent ceiling on total real
+    USDC spent across ALL positions in a rolling UTC day — a fixed dollar
+    figure (not a percentage), since resetting daily doesn't scale with
+    balance the way per-position/total-exposure sizing should.
   - MIN_SOL_FOR_GAS is checked before every real order, buy or sell, and
     is unconditional — trading in USDC doesn't make SOL optional, since
     there is no such thing as a gas-free Solana transaction. Falling
@@ -82,13 +91,18 @@ from journal_store import log_journal
 
 REAL_TRADING_ENABLED = os.environ.get("REAL_TRADING_ENABLED", "false").strip().lower() == "true"
 
-# $2.00 / $6.00 / $1.00 — roughly what the previous SOL-denominated
-# defaults (0.02 / 0.06 / 0.002 SOL) worked out to at the time this was
-# switched to USDC, rounded to clean dollar figures. All three are
-# env-var overridable without a deploy; treat these as a starting point
-# to size up once the USDC-denominated path is confirmed working.
-MAX_REAL_POSITION_USDC = float(os.environ.get("MAX_REAL_POSITION_USDC", "2.00"))
-MAX_REAL_DAILY_USDC = float(os.environ.get("MAX_REAL_DAILY_USDC", "6.00"))  # independent of the per-position cap
+# Per-position sizing is a PERCENTAGE of the current live USDC balance,
+# not a fixed dollar figure — see get_max_real_position_usdc() below.
+# 30% means a sequence of buys tapers geometrically (each is 30% of
+# whatever's left), which alone approaches full exposure only in the
+# limit; MAX_TOTAL_EXPOSURE_PCT below is the explicit hard backstop.
+MAX_REAL_POSITION_PCT = float(os.environ.get("MAX_REAL_POSITION_PCT", "0.30"))
+# 85% of total USDC value (live liquid balance + already-committed real
+# positions, confirmed against the chain) — see _compute_real_exposure_usdc().
+# Leaves a 15% floor always liquid: a buffer for exit slippage and so the
+# wallet is never fully committed to open positions at once.
+MAX_TOTAL_EXPOSURE_PCT = float(os.environ.get("MAX_TOTAL_EXPOSURE_PCT", "0.85"))
+MAX_REAL_DAILY_USDC = float(os.environ.get("MAX_REAL_DAILY_USDC", "6.00"))  # fixed $, independent of the % caps above
 # $1 minimum rather than a strict pro-rata conversion of the old SOL
 # minimum — Jupiter's platform fee plus network fee eats a large
 # fraction of anything much smaller than this, so a sub-$1 "real" fill
@@ -250,6 +264,47 @@ def _check_onchain_token_balance_raw(mint: str) -> int:
 def _check_wallet_balance_usdc() -> float:
     """Live on-chain USDC balance, in dollar terms (not raw units)."""
     return _check_onchain_token_balance_raw(USDC_MINT) / USDC_UNITS_PER_USDC
+
+
+def get_max_real_position_usdc(live_usdc_balance: float = None) -> float:
+    """
+    MAX_REAL_POSITION_PCT (default 30%) of the CURRENT live on-chain USDC
+    balance — recomputed fresh every time this is called, never cached
+    or stored. As the wallet's liquid balance changes (spent into
+    positions, topped up, drawn down by a sell), the cap moves with it
+    automatically instead of drifting stale relative to a fixed dollar
+    figure.
+
+    Pass `live_usdc_balance` when the caller already fetched it this
+    same call (as _execute_buy does) to avoid a redundant RPC round
+    trip; otherwise this fetches it itself.
+    """
+    if live_usdc_balance is None:
+        live_usdc_balance = _check_wallet_balance_usdc()
+    return live_usdc_balance * MAX_REAL_POSITION_PCT
+
+
+def _compute_real_exposure_usdc(positions: dict) -> float:
+    """
+    Sums cost_basis_usdc across every tracked real position — but only
+    counts a position whose on-chain token balance is confirmed to
+    still be > 0 right now. A position closed out through some other
+    path (a manual sell, a bug, a previous run's incomplete cleanup)
+    shouldn't keep inflating exposure just because real_positions.json
+    hasn't caught up. This is the "idealmente confirmado contra a
+    chain" half of the total-exposure cap — one getTokenAccountsByOwner
+    call per tracked position, which is fine at the position counts a
+    bot this size ever realistically holds at once.
+    """
+    total = 0.0
+    for mint, pos in positions.items():
+        if mint == "_meta":
+            continue
+        if pos.get("raw_amount", 0) <= 0:
+            continue
+        if _check_onchain_token_balance_raw(mint) > 0:
+            total += pos.get("cost_basis_usdc", 0.0)
+    return total
 
 
 def _load_real_positions() -> dict:
@@ -419,26 +474,43 @@ def _execute_buy(token: str, amount_usdc: float) -> dict:
     positions = _load_real_positions()
     existing = positions.get(token, {"raw_amount": 0, "cost_basis_usdc": 0.0, "buy_signatures": [], "sell_signatures": []})
 
+    # Re-derive from the chain rather than trusting only what this file
+    # last recorded — the wallet may have been spent from elsewhere, or a
+    # prior run may have crashed after signing but before saving state.
+    # Fetched once here and reused below for both the position-size cap
+    # and the final balance-sufficiency check, instead of two RPC calls.
+    live_usdc_balance = _check_wallet_balance_usdc()
+    max_position_usdc = get_max_real_position_usdc(live_usdc_balance)
+
     already_committed = existing["cost_basis_usdc"]
-    remaining_position_budget = MAX_REAL_POSITION_USDC - already_committed
+    remaining_position_budget = max_position_usdc - already_committed
     if remaining_position_budget <= 0:
-        return _result("blocked", reason=f"MAX_REAL_POSITION_USDC (${MAX_REAL_POSITION_USDC:.2f}) already committed to {token}")
+        return _result("blocked", reason=f"MAX_REAL_POSITION_PCT ({MAX_REAL_POSITION_PCT:.0%} of current ${live_usdc_balance:.2f} balance = ${max_position_usdc:.2f}) already committed to {token}")
 
     spent_today = _spent_today_usdc(positions)
     remaining_daily_budget = MAX_REAL_DAILY_USDC - spent_today
     if remaining_daily_budget <= 0:
         return _result("blocked", reason=f"MAX_REAL_DAILY_USDC (${MAX_REAL_DAILY_USDC:.2f}) already spent today (${spent_today:.2f})")
 
-    clamped_amount_usdc = min(amount_usdc, remaining_position_budget, remaining_daily_budget)
+    # Sniper Mode can open several positions in quick succession — the
+    # per-position cap alone doesn't stop that sequence from eventually
+    # committing nearly the whole wallet, so this is an independent,
+    # explicit ceiling on total USDC value across every open real
+    # position combined (existing exposure confirmed against the chain,
+    # not just trusted from the file).
+    existing_exposure = _compute_real_exposure_usdc(positions)
+    total_balance = live_usdc_balance + existing_exposure
+    max_total_exposure = total_balance * MAX_TOTAL_EXPOSURE_PCT
+    remaining_exposure_headroom = max_total_exposure - existing_exposure
+    if remaining_exposure_headroom <= 0:
+        return _result("blocked", reason=f"MAX_TOTAL_EXPOSURE_PCT ({MAX_TOTAL_EXPOSURE_PCT:.0%} of ${total_balance:.2f} total = ${max_total_exposure:.2f}) already committed across open real positions")
+
+    clamped_amount_usdc = min(amount_usdc, remaining_position_budget, remaining_daily_budget, remaining_exposure_headroom)
     if clamped_amount_usdc < MIN_REAL_TICKET_USDC:
         return _result("blocked", reason=f"clamped size ${clamped_amount_usdc:.2f} is below MIN_REAL_TICKET_USDC (${MIN_REAL_TICKET_USDC:.2f})")
 
-    # Re-derive from the chain rather than trusting only what this file
-    # last recorded — the wallet may have been spent from elsewhere, or a
-    # prior run may have crashed after signing but before saving state.
-    wallet_usdc_balance = _check_wallet_balance_usdc()
-    if wallet_usdc_balance < clamped_amount_usdc:
-        return _result("blocked", reason=f"live wallet USDC balance (${wallet_usdc_balance:.2f}) is insufficient for a ${clamped_amount_usdc:.2f} buy")
+    if live_usdc_balance < clamped_amount_usdc:
+        return _result("blocked", reason=f"live wallet USDC balance (${live_usdc_balance:.2f}) is insufficient for a ${clamped_amount_usdc:.2f} buy")
 
     taker = _wallet_pubkey_str()
     amount_raw = round(clamped_amount_usdc * USDC_UNITS_PER_USDC)

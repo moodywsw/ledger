@@ -2781,7 +2781,8 @@ def check_sniper_positions(state: LedgerState):
 #
 # execute_real_trade() is imported from real_trading.py (top of file) —
 # that module owns all real-money config (REAL_TRADING_ENABLED,
-# MAX_REAL_POSITION_USDC, MAX_REAL_DAILY_USDC, MIN_SOL_FOR_GAS, ...) and
+# MAX_REAL_POSITION_PCT, MAX_TOTAL_EXPOSURE_PCT, MAX_REAL_DAILY_USDC,
+# MIN_SOL_FOR_GAS, ...) and
 # is the only place SOLANA_PRIVATE_KEY is ever read. REAL_TRADING_ENABLED
 # is controlled purely by a Railway env var — no code change or deploy
 # needed to flip it.
