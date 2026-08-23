@@ -4,6 +4,12 @@ isolated from ledger_bot.py's paper-trading logic on purpose: this is the
 only module that ever touches SOLANA_PRIVATE_KEY, so keeping it small and
 self-contained makes it easy to audit end-to-end.
 
+Trading currency is USDC, not SOL — the wallet holds USDC for the trades
+themselves (buys quote USDC->token, sells quote token->USDC). SOL is still
+required, unconditionally, for every Solana transaction's network fee
+regardless of what the trade itself is denominated in — see
+_check_gas_reserve() below, which is checked before every real order.
+
 Two patterns below are adapted from omo (github.com/omotrades/omo, MIT
 license) — see the README's Acknowledgements section:
 
@@ -19,7 +25,7 @@ license) — see the README's Acknowledgements section:
     is a cache/journal of what this bot believes it holds — it can drift
     from what's actually in the wallet (a prior run crashed mid-update,
     something else touched the wallet, a bug). Every buy checks the
-    live SOL balance; every sell checks the live token balance and
+    live USDC balance; every sell checks the live token balance and
     shrinks to whatever's actually there before selling a single unit
     more than truly exists on-chain.
 
@@ -30,14 +36,20 @@ Safety contract (non-negotiable, per the person running this bot):
   - REAL_TRADING_ENABLED defaults to False and is controlled ONLY by the
     REAL_TRADING_ENABLED env var — flipping it needs no code change and
     no deploy, just a Railway env var edit.
-  - MAX_REAL_POSITION_SOL is a hard ceiling on total SOL committed to any
-    single real position (initial buy + any top-ups combined), enforced
-    inside execute_real_trade() regardless of what paper-trading position
-    sizing calculated. It is never bypassed.
-  - MAX_REAL_DAILY_SOL is a second, independent ceiling on total real SOL
-    spent across ALL positions in a rolling UTC day — a single overly
-    conviction-scaled position can't drain the wallet even if each
-    individual buy respects MAX_REAL_POSITION_SOL.
+  - MAX_REAL_POSITION_USDC is a hard ceiling on total USDC committed to
+    any single real position (initial buy + any top-ups combined),
+    enforced inside execute_real_trade() regardless of what paper-trading
+    position sizing calculated. It is never bypassed.
+  - MAX_REAL_DAILY_USDC is a second, independent ceiling on total real
+    USDC spent across ALL positions in a rolling UTC day — a single
+    overly conviction-scaled position can't drain the wallet even if
+    each individual buy respects MAX_REAL_POSITION_USDC.
+  - MIN_SOL_FOR_GAS is checked before every real order, buy or sell, and
+    is unconditional — trading in USDC doesn't make SOL optional, since
+    there is no such thing as a gas-free Solana transaction. Falling
+    below it refuses the trade outright with a clear reason, logged as
+    a "refused" journal entry, instead of letting a transaction fail
+    midway for lack of fees.
   - Every real-trading outcome — including "disabled", "guard rail
     tripped", and "attempted but failed" — is caught here and returned
     as a typed status rather than raised, so a Jupiter outage, a bad
@@ -66,12 +78,29 @@ from pathlib import Path
 
 import requests
 
+from journal_store import log_journal
+
 REAL_TRADING_ENABLED = os.environ.get("REAL_TRADING_ENABLED", "false").strip().lower() == "true"
-MAX_REAL_POSITION_SOL = float(os.environ.get("MAX_REAL_POSITION_SOL", "0.02"))
-MAX_REAL_DAILY_SOL = float(os.environ.get("MAX_REAL_DAILY_SOL", "0.06"))  # independent of the per-position cap
-MIN_REAL_TICKET_SOL = float(os.environ.get("MIN_REAL_TICKET_SOL", "0.002"))  # below this, a real fill is mostly fees
+
+# $2.00 / $6.00 / $1.00 — roughly what the previous SOL-denominated
+# defaults (0.02 / 0.06 / 0.002 SOL) worked out to at the time this was
+# switched to USDC, rounded to clean dollar figures. All three are
+# env-var overridable without a deploy; treat these as a starting point
+# to size up once the USDC-denominated path is confirmed working.
+MAX_REAL_POSITION_USDC = float(os.environ.get("MAX_REAL_POSITION_USDC", "2.00"))
+MAX_REAL_DAILY_USDC = float(os.environ.get("MAX_REAL_DAILY_USDC", "6.00"))  # independent of the per-position cap
+# $1 minimum rather than a strict pro-rata conversion of the old SOL
+# minimum — Jupiter's platform fee plus network fee eats a large
+# fraction of anything much smaller than this, so a sub-$1 "real" fill
+# would mostly just be fees.
+MIN_REAL_TICKET_USDC = float(os.environ.get("MIN_REAL_TICKET_USDC", "1.00"))
 MAX_ACCEPTABLE_PRICE_IMPACT_PCT = 5.0  # skip the trade if Jupiter's quote implies more slippage than this
-MIN_SOL_FEE_BUFFER = 0.02  # kept unspent for network/priority fees on top of any buy amount
+
+# Every Solana transaction costs SOL for network fees, full stop — moving
+# the trading currency to USDC does not change that. Checked before every
+# real order; falling below this refuses the trade outright rather than
+# letting it fail midway for lack of gas.
+MIN_SOL_FOR_GAS = float(os.environ.get("MIN_SOL_FOR_GAS", "0.01"))
 
 SOLANA_PRIVATE_KEY = os.environ.get("SOLANA_PRIVATE_KEY", "")  # never printed, never logged
 SOLANA_WALLET_ADDRESS = os.environ.get("SOLANA_WALLET_ADDRESS", "")  # optional pin — see load_keypair()
@@ -79,7 +108,9 @@ JUPITER_API_KEY = os.environ.get("JUPITER_API_KEY", "")
 ALCHEMY_RPC_URL = os.environ.get("ALCHEMY_RPC_URL", "")
 
 JUPITER_ULTRA_BASE = "https://api.jup.ag/ultra/v1"
-WSOL_MINT = "So11111111111111111111111111111111111111112"
+USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+USDC_DECIMALS = 6
+USDC_UNITS_PER_USDC = 10 ** USDC_DECIMALS
 LAMPORTS_PER_SOL = 1_000_000_000
 TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
 TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
@@ -157,14 +188,39 @@ def _check_wallet_balance_sol() -> float:
     return lamports / LAMPORTS_PER_SOL
 
 
+def _check_gas_reserve() -> tuple:
+    """
+    Checked before every real order, buy or sell, regardless of the
+    trade's own currency. Trading in USDC doesn't make SOL optional —
+    every Solana transaction needs it for network fees, no exceptions.
+    Returns (ok: bool, sol_balance: float). On failure, logs a
+    kind="refused" journal entry (the same kind used elsewhere in this
+    codebase for a pre-flight refusal, e.g. is_known_stablecoin) rather
+    than folding it into the generic "did_real" reporting the caller
+    does for other blocked/failed outcomes — a drained gas tank is
+    structurally different from "a guard rail didn't like this trade"
+    and deserves its own clear record.
+    """
+    sol_balance = _check_wallet_balance_sol()
+    if sol_balance < MIN_SOL_FOR_GAS:
+        log_journal(
+            kind="refused",
+            text=f"Refused real trade — wallet SOL balance ({sol_balance:.4f}) is below the gas reserve floor (MIN_SOL_FOR_GAS={MIN_SOL_FOR_GAS})",
+            meta={"sol_balance": sol_balance, "min_sol_for_gas": MIN_SOL_FOR_GAS},
+        )
+        return False, sol_balance
+    return True, sol_balance
+
+
 def _check_onchain_token_balance_raw(mint: str) -> int:
     """
     The real, on-chain source of truth for how much of `mint` this
     wallet actually holds right now, in raw (smallest-unit) terms —
     summed across every token account for this mint under either the
     classic or Token-2022 program. Used to reconcile real_positions.json
-    before every sell, so a stale/drifted local record can never cause
-    an attempt to sell more than genuinely exists.
+    before every sell (and, for USDC, before every buy) so a stale/
+    drifted local record can never cause an attempt to spend or sell
+    more than genuinely exists.
     """
     if not ALCHEMY_RPC_URL:
         raise RuntimeError("Set ALCHEMY_RPC_URL env var first.")
@@ -184,6 +240,11 @@ def _check_onchain_token_balance_raw(mint: str) -> int:
             if amount_str is not None:
                 total_raw += int(amount_str)
     return total_raw
+
+
+def _check_wallet_balance_usdc() -> float:
+    """Live on-chain USDC balance, in dollar terms (not raw units)."""
+    return _check_onchain_token_balance_raw(USDC_MINT) / USDC_UNITS_PER_USDC
 
 
 def _load_real_positions() -> dict:
@@ -209,19 +270,19 @@ def _today_utc() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
-def _spent_today_sol(positions: dict) -> float:
+def _spent_today_usdc(positions: dict) -> float:
     meta = positions.get("_meta", {})
     if meta.get("date") != _today_utc():
         return 0.0
-    return meta.get("spent_sol", 0.0)
+    return meta.get("spent_usdc", 0.0)
 
 
-def _record_spend(positions: dict, sol_spent: float):
+def _record_spend(positions: dict, usdc_spent: float):
     today = _today_utc()
     meta = positions.get("_meta", {})
     if meta.get("date") != today:
-        meta = {"date": today, "spent_sol": 0.0}
-    meta["spent_sol"] = meta.get("spent_sol", 0.0) + sol_spent
+        meta = {"date": today, "spent_usdc": 0.0}
+    meta["spent_usdc"] = meta.get("spent_usdc", 0.0) + usdc_spent
     positions["_meta"] = meta
 
 
@@ -250,24 +311,26 @@ def _execute_order(signed_tx_b64: str, request_id: str) -> dict:
     return resp.json()
 
 
-def dry_run_quote(token_mint: str, amount_sol: float, side: str) -> dict:
+def dry_run_quote(token_mint: str, amount_usdc: float, side: str) -> dict:
     """
     SAFE TEST MODE — only calls GET /order, never touches
     SOLANA_PRIVATE_KEY (no `taker` is sent), never signs, never calls
     /execute. Impossible to spend money through this function by
     construction. Use this to sanity-check quotes before ever enabling
     REAL_TRADING_ENABLED.
+
+    amount_usdc is a dollar amount (e.g. 1.5 for $1.50), for both sides —
+    on "sell" there's no real holdings tracked in dry-run mode, so this
+    just quotes a nominal token-leg amount computed the same way, to
+    show the shape of a sell quote too; the number itself is
+    illustrative, not a real balance.
     """
     if side == "buy":
-        input_mint, output_mint = WSOL_MINT, token_mint
-        amount_raw = round(amount_sol * LAMPORTS_PER_SOL)
+        input_mint, output_mint = USDC_MINT, token_mint
+        amount_raw = round(amount_usdc * USDC_UNITS_PER_USDC)
     elif side == "sell":
-        input_mint, output_mint = token_mint, WSOL_MINT
-        # No real holdings tracked in dry-run — just quote a nominal
-        # amount so you can see the shape of a sell quote too. Uses
-        # lamports-equivalent as a stand-in raw amount for the token
-        # leg; the number itself is illustrative, not a real balance.
-        amount_raw = round(amount_sol * LAMPORTS_PER_SOL)
+        input_mint, output_mint = token_mint, USDC_MINT
+        amount_raw = round(amount_usdc * USDC_UNITS_PER_USDC)
     else:
         raise ValueError("side must be 'buy' or 'sell'")
 
@@ -275,7 +338,7 @@ def dry_run_quote(token_mint: str, amount_sol: float, side: str) -> dict:
     return {
         "side": side,
         "token_mint": token_mint,
-        "amount_sol_requested": amount_sol,
+        "amount_usdc_requested": amount_usdc,
         "out_amount": order.get("outAmount"),
         "price_impact_pct": order.get("priceImpact"),
         "router": order.get("router"),
@@ -290,7 +353,7 @@ def _result(status: str, **fields) -> dict:
     return {"status": status, "success": status == "success", **fields}
 
 
-def execute_real_trade(token: str, amount_sol: float, side: str) -> dict:
+def execute_real_trade(token: str, amount_usdc: float, side: str) -> dict:
     """
     Real execution, with a typed outcome instead of a bare pass/fail —
     adapted from omo's OrderResult (execute.server.ts), which
@@ -300,14 +363,19 @@ def execute_real_trade(token: str, amount_sol: float, side: str) -> dict:
     boolean, and conflating them either hides a real problem behind a
     routine "not trading today" state, or cries wolf about the reverse.
 
+    amount_usdc is always a dollar amount, for both sides: on "buy" it's
+    how much USDC to spend; on "sell" it's the USDC-equivalent slice of
+    the position's original cost basis to sell (converted internally to
+    a fraction of the real, on-chain-reconciled token balance).
+
     Statuses:
       "unarmed"  REAL_TRADING_ENABLED is false. Normal, expected, not an
                  error — the caller should report it plainly (once,
                  without alarm) and keep going on paper.
       "blocked"  A guard rail intentionally refused: price impact too
-                 high, a cap reached, insufficient/drifted balance, a
-                 misconfigured wallet pin, nothing to sell. The
-                 unwilling-but-correct outcome.
+                 high, a cap reached, insufficient/drifted balance,
+                 insufficient SOL for gas, a misconfigured wallet pin,
+                 nothing to sell. The unwilling-but-correct outcome.
       "failed"   An order was actually attempted and something broke
                  (network, Jupiter, signing, an unconfirmed fill).
       "success"  Filled and confirmed.
@@ -326,46 +394,50 @@ def execute_real_trade(token: str, amount_sol: float, side: str) -> dict:
         return _result("failed", reason=f"invalid side {side!r}, must be 'buy' or 'sell'")
 
     try:
+        gas_ok, sol_balance = _check_gas_reserve()
+        if not gas_ok:
+            return _result("blocked", reason=f"wallet SOL balance ({sol_balance:.4f}) is below MIN_SOL_FOR_GAS ({MIN_SOL_FOR_GAS}) — refusing rather than risk a mid-transaction failure for lack of gas")
+
         if side == "buy":
-            return _execute_buy(token, amount_sol)
-        return _execute_sell(token, amount_sol)
+            return _execute_buy(token, amount_usdc)
+        return _execute_sell(token, amount_usdc)
     except RuntimeError as e:
         # Configuration problems (missing key, wallet mismatch, missing
         # RPC/API key) — the guard-rail-style outcome, not a crash.
         return _result("blocked", reason=str(e))
     except Exception as e:
-        print(f"[REAL TRADE ERROR] {token} {side} {amount_sol}: {e}")
+        print(f"[REAL TRADE ERROR] {token} {side} {amount_usdc}: {e}")
         return _result("failed", reason=str(e))
 
 
-def _execute_buy(token: str, amount_sol: float) -> dict:
+def _execute_buy(token: str, amount_usdc: float) -> dict:
     positions = _load_real_positions()
-    existing = positions.get(token, {"raw_amount": 0, "cost_basis_sol": 0.0, "buy_signatures": [], "sell_signatures": []})
+    existing = positions.get(token, {"raw_amount": 0, "cost_basis_usdc": 0.0, "buy_signatures": [], "sell_signatures": []})
 
-    already_committed = existing["cost_basis_sol"]
-    remaining_position_budget = MAX_REAL_POSITION_SOL - already_committed
+    already_committed = existing["cost_basis_usdc"]
+    remaining_position_budget = MAX_REAL_POSITION_USDC - already_committed
     if remaining_position_budget <= 0:
-        return _result("blocked", reason=f"MAX_REAL_POSITION_SOL ({MAX_REAL_POSITION_SOL} SOL) already committed to {token}")
+        return _result("blocked", reason=f"MAX_REAL_POSITION_USDC (${MAX_REAL_POSITION_USDC:.2f}) already committed to {token}")
 
-    spent_today = _spent_today_sol(positions)
-    remaining_daily_budget = MAX_REAL_DAILY_SOL - spent_today
+    spent_today = _spent_today_usdc(positions)
+    remaining_daily_budget = MAX_REAL_DAILY_USDC - spent_today
     if remaining_daily_budget <= 0:
-        return _result("blocked", reason=f"MAX_REAL_DAILY_SOL ({MAX_REAL_DAILY_SOL} SOL) already spent today ({spent_today:.4f} SOL)")
+        return _result("blocked", reason=f"MAX_REAL_DAILY_USDC (${MAX_REAL_DAILY_USDC:.2f}) already spent today (${spent_today:.2f})")
 
-    clamped_amount_sol = min(amount_sol, remaining_position_budget, remaining_daily_budget)
-    if clamped_amount_sol < MIN_REAL_TICKET_SOL:
-        return _result("blocked", reason=f"clamped size {clamped_amount_sol:.5f} SOL is below MIN_REAL_TICKET_SOL ({MIN_REAL_TICKET_SOL} SOL)")
+    clamped_amount_usdc = min(amount_usdc, remaining_position_budget, remaining_daily_budget)
+    if clamped_amount_usdc < MIN_REAL_TICKET_USDC:
+        return _result("blocked", reason=f"clamped size ${clamped_amount_usdc:.2f} is below MIN_REAL_TICKET_USDC (${MIN_REAL_TICKET_USDC:.2f})")
 
     # Re-derive from the chain rather than trusting only what this file
     # last recorded — the wallet may have been spent from elsewhere, or a
     # prior run may have crashed after signing but before saving state.
-    wallet_balance = _check_wallet_balance_sol()
-    if wallet_balance < clamped_amount_sol + MIN_SOL_FEE_BUFFER:
-        return _result("blocked", reason=f"live wallet balance {wallet_balance:.4f} SOL is insufficient for {clamped_amount_sol:.4f} SOL + {MIN_SOL_FEE_BUFFER} SOL fee buffer")
+    wallet_usdc_balance = _check_wallet_balance_usdc()
+    if wallet_usdc_balance < clamped_amount_usdc:
+        return _result("blocked", reason=f"live wallet USDC balance (${wallet_usdc_balance:.2f}) is insufficient for a ${clamped_amount_usdc:.2f} buy")
 
     taker = _wallet_pubkey_str()
-    amount_raw = round(clamped_amount_sol * LAMPORTS_PER_SOL)
-    order = _get_order(WSOL_MINT, token, amount_raw, taker=taker)
+    amount_raw = round(clamped_amount_usdc * USDC_UNITS_PER_USDC)
+    order = _get_order(USDC_MINT, token, amount_raw, taker=taker)
 
     price_impact = float(order.get("priceImpact") or 0)
     if price_impact > MAX_ACCEPTABLE_PRICE_IMPACT_PCT:
@@ -386,19 +458,19 @@ def _execute_buy(token: str, amount_sol: float) -> dict:
 
     tokens_received = int(order.get("outAmount") or 0)
     existing["raw_amount"] += tokens_received
-    existing["cost_basis_sol"] += clamped_amount_sol
+    existing["cost_basis_usdc"] += clamped_amount_usdc
     existing["buy_signatures"].append(exec_result["signature"])
     positions[token] = existing
-    _record_spend(positions, clamped_amount_sol)
+    _record_spend(positions, clamped_amount_usdc)
     _save_real_positions(positions)
 
     return _result(
-        "success", signature=exec_result["signature"], sol_spent=clamped_amount_sol,
+        "success", signature=exec_result["signature"], usdc_spent=clamped_amount_usdc,
         tokens_received=tokens_received, price_impact_pct=price_impact,
     )
 
 
-def _execute_sell(token: str, amount_sol: float) -> dict:
+def _execute_sell(token: str, amount_usdc: float) -> dict:
     positions = _load_real_positions()
     existing = positions.get(token)
     if not existing or existing.get("raw_amount", 0) <= 0:
@@ -421,14 +493,14 @@ def _execute_sell(token: str, amount_sol: float) -> dict:
         print(f"[real_trading] {token}: real_positions.json said {existing['raw_amount']} raw, chain says {onchain_raw} — using the chain figure")
         existing["raw_amount"] = onchain_raw
 
-    cost_basis = existing["cost_basis_sol"] or 1e-9
-    fraction = max(0.0, min(1.0, amount_sol / cost_basis))
+    cost_basis = existing["cost_basis_usdc"] or 1e-9
+    fraction = max(0.0, min(1.0, amount_usdc / cost_basis))
     raw_to_sell = round(fraction * existing["raw_amount"])
     if raw_to_sell <= 0:
         return _result("blocked", reason="computed sell amount rounds to zero")
 
     taker = _wallet_pubkey_str()
-    order = _get_order(token, WSOL_MINT, raw_to_sell, taker=taker)
+    order = _get_order(token, USDC_MINT, raw_to_sell, taker=taker)
 
     price_impact = float(order.get("priceImpact") or 0)
     if price_impact > MAX_ACCEPTABLE_PRICE_IMPACT_PCT:
@@ -444,9 +516,9 @@ def _execute_sell(token: str, amount_sol: float) -> dict:
     if exec_result.get("status") != "Success":
         return _result("failed", reason=f"execute returned status={exec_result.get('status')!r}", raw_result=exec_result)
 
-    sol_received_lamports = int(order.get("outAmount") or 0)
+    usdc_received_raw = int(order.get("outAmount") or 0)
     existing["raw_amount"] -= raw_to_sell
-    existing["cost_basis_sol"] = max(0.0, existing["cost_basis_sol"] * (1 - fraction))
+    existing["cost_basis_usdc"] = max(0.0, existing["cost_basis_usdc"] * (1 - fraction))
     existing["sell_signatures"].append(exec_result["signature"])
     if existing["raw_amount"] <= 0:
         positions.pop(token, None)
@@ -456,7 +528,7 @@ def _execute_sell(token: str, amount_sol: float) -> dict:
 
     return _result(
         "success", signature=exec_result["signature"], tokens_sold=raw_to_sell,
-        sol_received=sol_received_lamports / LAMPORTS_PER_SOL, price_impact_pct=price_impact,
+        usdc_received=usdc_received_raw / USDC_UNITS_PER_USDC, price_impact_pct=price_impact,
         fraction_sold=fraction,
     )
 

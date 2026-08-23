@@ -74,9 +74,10 @@ set explicitly.
 | `SOLANA_PRIVATE_KEY` | `real_trading.py`, only if armed | Base58 secret key of a dedicated trading wallet. Never written to a file, logged, or committed — env var only. |
 | `SOLANA_WALLET_ADDRESS` | `real_trading.py` (optional) | Pins the expected public key; if `SOLANA_PRIVATE_KEY` derives a different address, loading fails loudly instead of trading from an unexpected wallet. |
 | `JUPITER_API_KEY` | `real_trading.py`, only if armed | From https://developers.jup.ag/portal — required by Jupiter's Ultra Swap API (`x-api-key`). |
-| `MAX_REAL_POSITION_SOL` | `real_trading.py` (optional) | Hard per-position ceiling for real trades, independent of paper-trading sizing. Default `0.02`. |
-| `MAX_REAL_DAILY_SOL` | `real_trading.py` (optional) | Hard ceiling on total real SOL spent per rolling UTC day, across all positions. Default `0.06`. |
-| `MIN_REAL_TICKET_SOL` | `real_trading.py` (optional) | Real buys below this size are skipped (mostly fees at that point). Default `0.002`. |
+| `MAX_REAL_POSITION_USDC` | `real_trading.py` (optional) | Hard per-position ceiling for real trades, in USDC, independent of paper-trading sizing. Default `2.00`. |
+| `MAX_REAL_DAILY_USDC` | `real_trading.py` (optional) | Hard ceiling on total real USDC spent per rolling UTC day, across all positions. Default `6.00`. |
+| `MIN_REAL_TICKET_USDC` | `real_trading.py` (optional) | Real buys below this size are skipped (mostly fees at that point). Default `1.00`. |
+| `MIN_SOL_FOR_GAS` | `real_trading.py` (optional) | Trades are in USDC, but every Solana transaction still costs SOL for network fees — below this SOL balance, a real trade is refused outright instead of failing mid-transaction. Default `0.01`. |
 
 ## Run it
 
@@ -130,13 +131,23 @@ entries/exits via `real_trading.py`, and is **disabled by default**
 every decision still runs and journals on paper exactly as before; only the
 signing step is gated. Arming it needs no code change or deploy, just setting
 `REAL_TRADING_ENABLED=true` alongside `SOLANA_PRIVATE_KEY` and
-`JUPITER_API_KEY`. Real position sizing is capped independently of paper
-trading by `MAX_REAL_POSITION_SOL` and `MAX_REAL_DAILY_SOL`, and every real
-sell re-derives the actual on-chain token balance before selling a single
-unit more than genuinely exists in the wallet.
+`JUPITER_API_KEY`.
 
-Use `real_trading.dry_run_quote()` to sanity-check a quote against Jupiter
-before ever arming — it only reads a quote, never signs or sends anything.
+The trading wallet holds **USDC**, not SOL — real buys quote USDC→token and
+real sells quote token→USDC. SOL is still required unconditionally for
+network fees on every Solana transaction regardless of what the trade itself
+is denominated in; a live SOL balance below `MIN_SOL_FOR_GAS` refuses the
+trade outright (logged as a `refused` journal entry) rather than letting a
+transaction fail midway for lack of gas. Real position sizing is capped
+independently of paper trading by `MAX_REAL_POSITION_USDC` and
+`MAX_REAL_DAILY_USDC`, and every real sell re-derives the actual on-chain
+token balance before selling a single unit more than genuinely exists in the
+wallet.
+
+Use `real_trading.dry_run_quote(token_mint, amount_usdc, side)` to
+sanity-check a quote against Jupiter before ever arming — e.g.
+`dry_run_quote("<mint>", 2.0, "buy")` for a $2 buy quote. It only reads a
+quote, never signs or sends anything.
 
 ## Acknowledgements
 

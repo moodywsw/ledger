@@ -1907,11 +1907,32 @@ def open_paper_position(
     # above; it's recorded and the bot keeps running on paper for this
     # token either way.
     if mirror_real:
-        real_result = execute_real_trade(token, size_sol, "buy")
+        real_symbol = symbol or token[:6]
+        amount_usdc = _sol_to_usdc(size_sol)
+        if amount_usdc is None:
+            real_result = {"status": "failed", "success": False, "reason": "no SOL/USD price available to size the real USDC trade"}
+        else:
+            real_result = execute_real_trade(token, amount_usdc, "buy")
         state.open_positions[token]["real_trading"] = real_result["status"] == "success"
-        _report_real_result(real_result, symbol or token[:6], token, "buy")
+        _report_real_result(real_result, real_symbol, token, "buy")
 
     state.save()
+
+
+def _sol_to_usdc(sol_amount: float):
+    """
+    Paper-trading positions are sized in SOL (size_sol); real_trading.py
+    now trades in USDC. Converts at the current SOL/USD price so the
+    real leg tracks the same conviction-scaled size the paper leg
+    computed, rather than a raw SOL number being passed somewhere that
+    expects dollars. Returns None (never 0 or a guess) when no price is
+    available, so a stale/missing price can't silently under- or
+    over-size a real trade.
+    """
+    sol_price = get_sol_price_usd()
+    if not sol_price:
+        return None
+    return sol_amount * sol_price
 
 
 def _report_real_result(real_result: dict, symbol: str, token: str, side: str, reason: str = None):
@@ -1931,9 +1952,9 @@ def _report_real_result(real_result: dict, symbol: str, token: str, side: str, r
     if status == "success":
         verb = "BUY" if side == "buy" else "SELL"
         if side == "buy":
-            amount_line = f"Spent `{real_result['sol_spent']:.4f}` SOL"
+            amount_line = f"Spent `${real_result['usdc_spent']:.2f}` USDC"
         else:
-            amount_line = f"Received `{real_result['sol_received']:.4f}` SOL ({real_result.get('fraction_sold', 1.0):.0%} of real position)"
+            amount_line = f"Received `${real_result['usdc_received']:.2f}` USDC ({real_result.get('fraction_sold', 1.0):.0%} of real position)"
         speak(
             title=f"🔴 REAL {verb} — {symbol}" + (f" ({reason})" if reason else ""),
             description=(
@@ -1970,7 +1991,11 @@ def _mirror_real_sell(pos: dict, token: str, amount_sol_equivalent: float, reaso
     if not pos.get("real_trading"):
         return
     real_symbol = pos.get("symbol") or token[:6]
-    real_result = execute_real_trade(token, amount_sol_equivalent, "sell")
+    amount_usdc = _sol_to_usdc(amount_sol_equivalent)
+    if amount_usdc is None:
+        real_result = {"status": "failed", "success": False, "reason": "no SOL/USD price available to size the real USDC sell"}
+    else:
+        real_result = execute_real_trade(token, amount_usdc, "sell")
     _report_real_result(real_result, real_symbol, token, "sell", reason=reason)
 
 
@@ -2538,7 +2563,11 @@ def buy_the_dip(state: LedgerState, token: str, current_price: float):
 
     if pos.get("real_trading"):
         real_symbol = pos.get("symbol") or token[:6]
-        real_result = execute_real_trade(token, add_size, "buy")
+        amount_usdc = _sol_to_usdc(add_size)
+        if amount_usdc is None:
+            real_result = {"status": "failed", "success": False, "reason": "no SOL/USD price available to size the real USDC dip buy"}
+        else:
+            real_result = execute_real_trade(token, amount_usdc, "buy")
         _report_real_result(real_result, real_symbol, token, "buy", reason="dip_buy")
 
     state.save()
@@ -2752,10 +2781,10 @@ def check_sniper_positions(state: LedgerState):
 #
 # execute_real_trade() is imported from real_trading.py (top of file) —
 # that module owns all real-money config (REAL_TRADING_ENABLED,
-# MAX_REAL_POSITION_SOL, MAX_REAL_DAILY_SOL, ...) and is the only place
-# SOLANA_PRIVATE_KEY is ever read. REAL_TRADING_ENABLED is controlled
-# purely by a Railway env var — no code change or deploy needed to
-# flip it.
+# MAX_REAL_POSITION_USDC, MAX_REAL_DAILY_USDC, MIN_SOL_FOR_GAS, ...) and
+# is the only place SOLANA_PRIVATE_KEY is ever read. REAL_TRADING_ENABLED
+# is controlled purely by a Railway env var — no code change or deploy
+# needed to flip it.
 
 
 # ── Performance analysis — "learning from losses" ────────────────────
