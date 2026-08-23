@@ -71,6 +71,7 @@ from pathlib import Path
 from journal_store import log_journal, get_token_history
 from theses_store import upsert_thesis
 from api_server import start_api_server
+from real_trading import execute_real_trade
 
 # ── Config ────────────────────────────────────────────────────────────
 
@@ -179,6 +180,7 @@ COLOR_PROFIT = 0x22c55e    # green — profit taken/locked in
 COLOR_LOSS = 0xef4444      # red — stop-loss / losing close
 COLOR_NEUTRAL = 0x64748b   # slate — informational
 COLOR_STRONG_SIGNAL = 0xf59e0b  # amber — whale-backed thesis
+COLOR_REAL = 0xec4899      # magenta — real on-chain trade, deliberately distinct from every paper-trading color above so it never blends in
 
 
 
@@ -1489,7 +1491,7 @@ def copy_priority_wallet_entry(
 
     open_paper_position(
         state, token, entry_price, size_sol, opened_by=wallet, strength="strong",
-        thesis=entry_opinion, entry_market_cap_usd=entry_mc,
+        thesis=entry_opinion, entry_market_cap_usd=entry_mc, mirror_real=True,
     )
     if token in state.open_positions:
         # Tagged to contain "Sniper" so it correctly routes through
@@ -1838,7 +1840,7 @@ def check_goal_deadline(state: LedgerState):
 def open_paper_position(
     state: LedgerState, token: str, price: float, size_sol: float, opened_by: str = "", strength: str = "weak",
     thesis: str = "", entry_market_cap_usd: float = None, risk_score: int = None, target_size_sol: float = 0.0,
-    entry_condition: str = None, invalidation: str = None,
+    entry_condition: str = None, invalidation: str = None, mirror_real: bool = False,
 ):
     if token in state.open_positions:
         # Never silently overwrite an existing position — that would
@@ -1895,7 +1897,81 @@ def open_paper_position(
         thesis_text=thesis, risk_score=risk_score,
         entry_condition=entry_condition, invalidation=invalidation,
     )
+
+    # Real-money mirror — only for the entry points that explicitly opt
+    # in (mirror_real=True, passed only from Sniper Mode and priority-
+    # copy). execute_real_trade() itself decides and reports whether
+    # it's armed — never gated here on REAL_TRADING_ENABLED, so an
+    # unarmed bot still gets a clear, typed report instead of silence.
+    # A non-"success" outcome never blocks or unwinds the paper position
+    # above; it's recorded and the bot keeps running on paper for this
+    # token either way.
+    if mirror_real:
+        real_result = execute_real_trade(token, size_sol, "buy")
+        state.open_positions[token]["real_trading"] = real_result["status"] == "success"
+        _report_real_result(real_result, symbol or token[:6], token, "buy")
+
     state.save()
+
+
+def _report_real_result(real_result: dict, symbol: str, token: str, side: str, reason: str = None):
+    """
+    Shared reporting for every real-trading outcome, across all three
+    mirror points (open_paper_position, _mirror_real_sell, buy_the_dip).
+    A "success" gets a Discord post via speak() — that's the rare,
+    actionable event. Every other status ("unarmed", "blocked",
+    "failed") is still fully reported — printed and journaled with
+    kind="did_real" — just without a Discord ping for what is, for an
+    unarmed bot, an expected outcome on every single trade rather than
+    something worth interrupting anyone over. "Unarmed" is deliberately
+    treated the same as any other non-success status here rather than
+    suppressed — the whole point is that it never goes unreported.
+    """
+    status = real_result["status"]
+    if status == "success":
+        verb = "BUY" if side == "buy" else "SELL"
+        if side == "buy":
+            amount_line = f"Spent `{real_result['sol_spent']:.4f}` SOL"
+        else:
+            amount_line = f"Received `{real_result['sol_received']:.4f}` SOL ({real_result.get('fraction_sold', 1.0):.0%} of real position)"
+        speak(
+            title=f"🔴 REAL {verb} — {symbol}" + (f" ({reason})" if reason else ""),
+            description=(
+                f"{amount_line} — signature `{real_result['signature']}`\n"
+                f"https://solscan.io/tx/{real_result['signature']}"
+            ),
+            color=COLOR_REAL,
+            journal_kind="did_real", token_ticker=symbol,
+            journal_meta={"side": side, "token": token, "reason": reason, **real_result},
+        )
+    else:
+        detail = real_result.get("reason", "no reason given")
+        print(f"[REAL TRADE {status.upper()}] {symbol} {side}: {detail}")
+        log_journal(
+            kind="did_real",
+            text=f"Real {side} — {status} for {symbol}: {detail}",
+            token_ticker=symbol,
+            meta={"side": side, "token": token, "reason": reason, "status": status, "detail": detail},
+        )
+
+
+def _mirror_real_sell(pos: dict, token: str, amount_sol_equivalent: float, reason: str = None):
+    """
+    Shared by partial_close_paper_position, close_paper_position, and
+    (indirectly, since it just checks the same flag) any future exit
+    path — mirrors a paper sell into a real one ONLY for positions
+    opened with mirror_real=True that a real buy actually succeeded
+    for (pos["real_trading"] is True). Never raises — a real-sell
+    failure is logged and the paper close proceeds regardless, since
+    leaving a paper position "stuck open" because the real leg failed
+    would just make the mismatch between paper and real state worse,
+    not better.
+    """
+    if not pos.get("real_trading"):
+        return
+    real_symbol = pos.get("symbol") or token[:6]
+    real_result = execute_real_trade(token, amount_sol_equivalent, "sell")
+    _report_real_result(real_result, real_symbol, token, "sell", reason=reason)
 
 
 def partial_close_paper_position(state: LedgerState, token: str, exit_price: float, fraction: float, reason: str = "✂️ Scaled Out"):
@@ -1909,6 +1985,7 @@ def partial_close_paper_position(state: LedgerState, token: str, exit_price: flo
         return
 
     sell_size = pos["size_sol"] * fraction
+    _mirror_real_sell(pos, token, sell_size, reason)
     pnl = (exit_price - pos["entry_price"]) / pos["entry_price"] * sell_size
     state.balance_sol += sell_size + pnl
     state.realized_pnl_sol += pnl
@@ -1969,9 +2046,11 @@ def partial_close_paper_position(state: LedgerState, token: str, exit_price: flo
 
 
 def close_paper_position(state: LedgerState, token: str, exit_price: float, reason: str = None):
-    pos = state.open_positions.pop(token, None)
+    pos = state.open_positions.get(token)
     if not pos:
         return
+    _mirror_real_sell(pos, token, pos["size_sol"], reason)
+    state.open_positions.pop(token, None)
     pnl = (exit_price - pos["entry_price"]) / pos["entry_price"] * pos["size_sol"]
     state.balance_sol += pos["size_sol"] + pnl
     state.realized_pnl_sol += pnl
@@ -2456,6 +2535,12 @@ def buy_the_dip(state: LedgerState, token: str, current_price: float):
     pos["entry_price"] = new_entry
     pos["size_sol"] = new_size
     pos["dip_buys"] = pos.get("dip_buys", 0) + 1
+
+    if pos.get("real_trading"):
+        real_symbol = pos.get("symbol") or token[:6]
+        real_result = execute_real_trade(token, add_size, "buy")
+        _report_real_result(real_result, real_symbol, token, "buy", reason="dip_buy")
+
     state.save()
     print(f"[DIP BUY] {token}: added {add_size:.4f} SOL at {current_price:.10g}, new avg entry {new_entry:.10g}")
 
@@ -2663,21 +2748,14 @@ def check_sniper_positions(state: LedgerState):
                 state.save()
 
 
-# ── Real execution (disabled — future step, not wired up yet) ───────
-
-REAL_TRADING_ENABLED = False  # flip only after paper track record + your own review
-
-def execute_real_trade(*args, **kwargs):
-    if not REAL_TRADING_ENABLED:
-        raise RuntimeError(
-            "Real trading is disabled. This is intentional — flip "
-            "REAL_TRADING_ENABLED only after you've reviewed a paper "
-            "trading track record and wired up wallet signing (e.g. "
-            "via solders + Jupiter swap API) yourself, with the same "
-            "risk limits enforced on the real path too."
-        )
-    # Real implementation would go here: build swap tx via Jupiter API,
-    # sign with the bot's dedicated wallet keypair, send via RPC.
+# ── Real execution — see real_trading.py ─────────────────────────────
+#
+# execute_real_trade() is imported from real_trading.py (top of file) —
+# that module owns all real-money config (REAL_TRADING_ENABLED,
+# MAX_REAL_POSITION_SOL, MAX_REAL_DAILY_SOL, ...) and is the only place
+# SOLANA_PRIVATE_KEY is ever read. REAL_TRADING_ENABLED is controlled
+# purely by a Railway env var — no code change or deploy needed to
+# flip it.
 
 
 # ── Performance analysis — "learning from losses" ────────────────────
@@ -3039,7 +3117,7 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
     creator_address = candidate.get("creator", "")
     open_paper_position(
         state, mint, entry_price, size_sol, opened_by=creator_address, strength="weak",
-        thesis=snipe_opinion, entry_market_cap_usd=market_cap_usd,
+        thesis=snipe_opinion, entry_market_cap_usd=market_cap_usd, mirror_real=True,
     )
     if mint in state.open_positions:
         state.open_positions[mint]["risk_level"] = "🎯 Sniper Play"

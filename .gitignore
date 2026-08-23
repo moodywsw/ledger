@@ -1,0 +1,15 @@
+# Secrets — never commit these. Real credentials live only in Railway env vars.
+.env
+.env.*
+*.pem
+*.key
+solana-keypair.json
+id.json
+
+__pycache__/
+*.pyc
+
+# Local dev/paper-trading state — not meant to be shared across machines.
+ledger_state.json
+real_positions.json
+journal.jsonl

@@ -1,11 +1,15 @@
 # Ledger
 
-Ledger is a Solana memecoin trading agent, currently running in **paper
-trading mode only** — no real funds ever move. It watches a list of trader
+Ledger is a Solana memecoin trading agent. It watches a list of trader
 wallets, turns their buys into a thesis in its own voice, simulates trades
 against a paper balance, and (optionally) speaks live to a Discord channel
 and answers questions from a Discord bot grounded in its own trade history
 and market research.
+
+Real on-chain execution exists as an opt-in layer on top of paper trading
+(see [`real_trading.py`](#components) and [Status](#status)) — it is
+**disabled by default** and stays that way until `REAL_TRADING_ENABLED` is
+set explicitly.
 
 ## Components
 
@@ -30,6 +34,12 @@ and market research.
 - **`test_wallet_feed.py`** — Standalone CLI to fetch and print raw Helius
   transaction data for one or more wallets. Useful for inspecting the real
   response shape before writing/adjusting transaction-parsing logic.
+- **`real_trading.py`** — Optional real on-chain execution layer, isolated
+  from the paper-trading logic in `ledger_bot.py` on purpose (it's the only
+  module that ever touches a private key). Mirrors Sniper Mode and
+  priority-copy entries/exits into real Jupiter Ultra API swaps when
+  `REAL_TRADING_ENABLED=true`; otherwise every decision still runs and
+  journals normally, just unsigned. See [Status](#status).
 
 ## Data & config files
 
@@ -46,7 +56,7 @@ and market research.
 - **`ledger_background.log`** — Log output from running the bot(s) in the
   background.
 - **`requirements.txt`** — Python dependencies (`requests`, `discord.py`,
-  `websockets`, `flask`, `base58`).
+  `websockets`, `flask`, `base58`, `solders`).
 - **`Procfile`** — Process declaration for deployment (`web: python3
   ledger_bot.py`).
 
@@ -60,6 +70,13 @@ and market research.
 | `LEDGER_AVATAR_URL` | `ledger_bot.py` (optional) | Avatar for the Discord webhook posts |
 | `DISCORD_BOT_TOKEN` | `ledger_discord_bot.py` | Needs the "Message Content" privileged intent enabled |
 | `ANTHROPIC_API_KEY` | `ledger_discord_bot.py`, `market_intel.py` | Powers conversational replies and market research |
+| `REAL_TRADING_ENABLED` | `real_trading.py` (optional) | `"true"` to arm real execution. Defaults to unarmed (`false`) — paper trading is unaffected either way. |
+| `SOLANA_PRIVATE_KEY` | `real_trading.py`, only if armed | Base58 secret key of a dedicated trading wallet. Never written to a file, logged, or committed — env var only. |
+| `SOLANA_WALLET_ADDRESS` | `real_trading.py` (optional) | Pins the expected public key; if `SOLANA_PRIVATE_KEY` derives a different address, loading fails loudly instead of trading from an unexpected wallet. |
+| `JUPITER_API_KEY` | `real_trading.py`, only if armed | From https://developers.jup.ag/portal — required by Jupiter's Ultra Swap API (`x-api-key`). |
+| `MAX_REAL_POSITION_SOL` | `real_trading.py` (optional) | Hard per-position ceiling for real trades, independent of paper-trading sizing. Default `0.02`. |
+| `MAX_REAL_DAILY_SOL` | `real_trading.py` (optional) | Hard ceiling on total real SOL spent per rolling UTC day, across all positions. Default `0.06`. |
+| `MIN_REAL_TICKET_SOL` | `real_trading.py` (optional) | Real buys below this size are skipped (mostly fees at that point). Default `0.002`. |
 
 ## Run it
 
@@ -107,6 +124,25 @@ also saves the filtered data to `wallet_feed_output.json` (override with
 
 ## Status
 
-Real trade execution is **not** wired up. `ledger_bot.py` contains an
-`execute_real_trade()` stub that raises unless explicitly enabled, pending a
-reviewed paper-trading track record and real wallet-signing logic.
+Real trade execution exists, wired to Sniper Mode and priority-copy
+entries/exits via `real_trading.py`, and is **disabled by default**
+(`REAL_TRADING_ENABLED` unset/`false`). Unarmed is a normal, reported state —
+every decision still runs and journals on paper exactly as before; only the
+signing step is gated. Arming it needs no code change or deploy, just setting
+`REAL_TRADING_ENABLED=true` alongside `SOLANA_PRIVATE_KEY` and
+`JUPITER_API_KEY`. Real position sizing is capped independently of paper
+trading by `MAX_REAL_POSITION_SOL` and `MAX_REAL_DAILY_SOL`, and every real
+sell re-derives the actual on-chain token balance before selling a single
+unit more than genuinely exists in the wallet.
+
+Use `real_trading.dry_run_quote()` to sanity-check a quote against Jupiter
+before ever arming — it only reads a quote, never signs or sends anything.
+
+## Acknowledgements
+
+Some of `real_trading.py`'s real-execution logic — most notably treating an
+unarmed/no-key state as a normal, clearly-reported condition rather than a
+failure, and re-deriving wallet balances from the chain immediately before
+each order instead of trusting local state alone — was adapted from
+[omo](https://github.com/omotrades/omo) (MIT license), an open-source
+autonomous memecoin trader.
