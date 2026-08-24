@@ -291,11 +291,31 @@ def load_wallets():
 WATCHED_WALLETS, WALLET_HANDLES, PRIORITY_WALLETS = load_wallets()
 
 # Poll interval — how often to check each wallet for new buys. Each
-# check is now 1 + (a few) Alchemy RPC calls (getSignaturesForAddress
-# + one getTransaction per new signature), paced by
-# ALCHEMY_MIN_REQUEST_INTERVAL_SECONDS — kept conservative (2 min)
-# with 30+ wallets tracked so this stays well inside any Alchemy plan.
-POLL_SECONDS = 120
+# check is 1 getSignaturesForAddress call (40 CU) plus one getTransaction
+# call (40 CU) per signature genuinely new since that wallet's last
+# check — see get_wallet_transactions' `until` param, which is what
+# makes a short interval affordable at all: without it, every poll
+# re-fetches full detail for ~10 signatures per wallet regardless of
+# whether anything actually happened, live-measured (2026-08-24) across
+# the 12 tracked wallets at ~114M CU/month at the OLD 120s interval —
+# already ~3.8x over Alchemy's free-tier 30M CU/month budget on its own.
+#
+# Even with `until` eliminating that waste, the getSignaturesForAddress
+# "did anything happen" check still costs 40 CU per wallet on every
+# single poll, which is what actually sets the floor on how low this
+# can safely go — not the getTransaction cost, which is small (well
+# under 1M CU/month at these wallets' observed trading frequency).
+# With 12 wallets: 12 wallets * 40 CU * (86400/POLL_SECONDS polls/day)
+# * 30 days must leave real headroom under 30M CU/month for everything
+# else Alchemy is used for (real-trading balance checks, sniper holder-
+# concentration lookups, etc.) — 60s keeps that base cost at ~21M
+# CU/month (~70% of budget), a comfortable margin. Lower than ~45s
+# starts eating that margin fast; 15-20s alone would need ~62-83M
+# CU/month just from this polling loop, well past the free tier even
+# with the fetch fixed — that gap is exactly why Alchemy's
+# Address-Activity webhooks (push-based, no polling cost at all) are
+# worth evaluating for real speed beyond this, separately.
+POLL_SECONDS = 60
 
 # ── Risk limits (hard-coded, not suggestions) ───────────────────────────
 
@@ -518,6 +538,7 @@ class LedgerState:
     trade_log: list = field(default_factory=list)
     trades_this_hour: list = field(default_factory=list)  # timestamps
     seen_signatures: list = field(default_factory=list)   # avoid re-processing the same tx
+    wallet_last_signature: dict = field(default_factory=dict)  # {wallet_address: newest signature already fetched} — see get_wallet_transactions' `until` param
     total_resets: int = 0             # how many times the bankroll has been wiped out and restarted
     run_start_balance: float = STARTING_PAPER_BALANCE_SOL  # baseline for the daily loss pause, reset each run
     run_start_time: str = None         # ISO timestamp — baseline for the 72h goal deadline, reset each run
@@ -1052,7 +1073,7 @@ def check_is_narrative_token(name: str, symbol: str) -> bool:
 
 # ── Wallet watching ──────────────────────────────────────────────────
 
-def get_wallet_transactions(wallet_address: str, limit: int = 10) -> list:
+def get_wallet_transactions(wallet_address: str, limit: int = 10, until: str = None) -> tuple:
     """
     Pull recent transactions for a wallet via standard Solana RPC:
     getSignaturesForAddress for the recent signature list, then
@@ -1062,18 +1083,41 @@ def get_wallet_transactions(wallet_address: str, limit: int = 10) -> list:
     already parsed into a swap-friendly shape. Skips any signature
     getSignaturesForAddress already shows as failed on-chain (err is
     set) — a failed transaction was never a real buy, no need to fetch
-    its full detail. Returns a list of raw getTransaction results for
-    extract_new_buys() to parse.
+    its full detail.
+
+    `until`, when given, is the newest signature already fetched on a
+    previous call — passed straight through to getSignaturesForAddress,
+    which then returns only signatures newer than it. Without this, a
+    poll interval short enough to be useful (see POLL_SECONDS) re-fetches
+    full getTransaction detail for nearly the same 10 signatures on every
+    single cycle: live-checked against all 12 tracked wallets, the last
+    10 signatures typically span well over an hour, so at a sub-2-minute
+    poll interval almost none of that window is actually new from one
+    cycle to the next. That was fine at the old 120s interval (barely),
+    but multiplies straight into the monthly compute-unit budget at a
+    much shorter one — this is what makes a fast interval affordable.
+
+    Returns (transactions, newest_signature) — transactions is a list of
+    raw getTransaction results for extract_new_buys() to parse;
+    newest_signature is the signature to pass as `until` on the NEXT
+    call for this wallet (None if nothing came back). The caller decides
+    when it's safe to actually store that as the new cursor — see the
+    main loop, which only does so after every buy in this batch has been
+    successfully handled.
     """
     if not ALCHEMY_RPC_URL:
         raise RuntimeError("Set ALCHEMY_RPC_URL env var first.")
 
+    sigs_options = {"limit": limit}
+    if until:
+        sigs_options["until"] = until
     sigs_payload = {
         "jsonrpc": "2.0", "id": 1, "method": "getSignaturesForAddress",
-        "params": [wallet_address, {"limit": limit}],
+        "params": [wallet_address, sigs_options],
     }
     sigs_resp = request_with_backoff("POST", ALCHEMY_RPC_URL, json=sigs_payload, timeout=15)
     signatures = sigs_resp.json().get("result") or []
+    newest_signature = signatures[0]["signature"] if signatures else None
 
     transactions = []
     for sig_entry in signatures:
@@ -1091,7 +1135,7 @@ def get_wallet_transactions(wallet_address: str, limit: int = 10) -> list:
         except Exception as e:
             print(f"[WARN] getTransaction failed for {sig_entry.get('signature')}: {e}")
 
-    return transactions
+    return transactions, newest_signature
 
 
 def _token_balance_deltas(meta: dict, wallet_address: str) -> dict:
@@ -3527,7 +3571,7 @@ def main():
 
         for wallet in watched_wallets:
             try:
-                txs = get_wallet_transactions(wallet)
+                txs, newest_sig = get_wallet_transactions(wallet, until=state.wallet_last_signature.get(wallet))
                 buys = extract_new_buys(txs, wallet)
                 for buy in buys:
                     if buy["signature"] in state.seen_signatures:
@@ -3645,6 +3689,15 @@ def main():
                         thesis=analysis["thesis"], risk_score=risk_score, target_size_sol=target_size_sol,
                         entry_condition=analysis.get("entry_condition"), invalidation=analysis.get("invalidation"),
                     )
+
+                # Only advance the cursor once every buy in this batch has
+                # been handled without raising — an exception partway
+                # through must leave it where it was, so next cycle's
+                # `until` re-fetches (and gets another chance at) whatever
+                # this cycle failed to finish, instead of silently
+                # skipping past it forever.
+                if newest_sig:
+                    state.wallet_last_signature[wallet] = newest_sig
             except Exception as e:
                 print(f"[ERROR] wallet {wallet}: {e}")
             time.sleep(0.3)  # spread requests out across the cycle
