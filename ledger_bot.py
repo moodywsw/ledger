@@ -1483,11 +1483,7 @@ def copy_priority_wallet_entry(
     sol_price = get_sol_price_usd()
     speak(
         title=f"🟦 ⭐ TRADE OPENED — {display_symbol}",
-        description=(
-            f"Entry: `{mc_display}` · Size: `{format_usd(size_sol, sol_price)}` (confidence {confidence_multiplier:.1f}x)\n"
-            f"Copying **{trader_name}** on {platform_name}\n"
-            f"**{entry_opinion}**"
-        ),
+        description=f"Entry: `{mc_display}` · Size: `{format_usd(size_sol, sol_price)}`",
         color=COLOR_BUY,
         fields=[{"name": "CA:", "value": token, "inline": False}],
         journal_kind="did", token_ticker=display_symbol,
@@ -1966,10 +1962,7 @@ def _report_real_result(real_result: dict, symbol: str, token: str, side: str, r
             amount_line = f"Received `${real_result['usdc_received']:.2f}` USDC ({real_result.get('fraction_sold', 1.0):.0%} of real position){pnl_line}"
         speak(
             title=f"{square} REAL {verb} — {symbol}" + (f" ({reason})" if reason else ""),
-            description=(
-                f"{amount_line} — signature `{real_result['signature']}`\n"
-                f"https://solscan.io/tx/{real_result['signature']}"
-            ),
+            description=amount_line,
             color=COLOR_REAL,
             journal_kind="did_real", token_ticker=symbol,
             journal_meta={"side": side, "token": token, "reason": reason, **real_result},
@@ -3172,7 +3165,7 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
     speak(
         title=f"🟦 🎯 TRADE OPENED — {symbol}",
         description=(
-            f"Entry: `{mc_display}` · Size: `{format_usd(size_sol, sol_price)}` (confidence {confidence_multiplier:.1f}x)\n"
+            f"Entry: `{mc_display}` · Size: `{format_usd(size_sol, sol_price)}`\n"
             f"**{snipe_opinion}**"
         ),
         color=COLOR_BUY,
