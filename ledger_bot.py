@@ -1526,7 +1526,7 @@ def copy_priority_wallet_entry(
     mc_display = format_market_cap(entry_mc)
     sol_price = get_sol_price_usd()
     speak(
-        title=f"🟦 ⭐ TRADE OPENED — {display_symbol}",
+        title=f"🟦 TRADE OPENED — {display_symbol}",
         description=f"Entry: `{mc_display}` · Size: `{format_usd(size_sol, sol_price)}`",
         color=COLOR_BUY,
         fields=[{"name": "CA:", "value": token, "inline": False}],
@@ -2097,10 +2097,9 @@ def partial_close_paper_position(state: LedgerState, token: str, exit_price: flo
         lines.append(f"**{exit_opinion}**")
 
     speak(
-        title=f"{'🟢' if is_win else '🔴'} 💰 TRADE CLOSED — {display_name} ({reason})",
+        title=f"💰 TRADE CLOSED — {display_name} ({reason})",
         description="\n".join(lines),
         color=COLOR_PROFIT if is_win else COLOR_LOSS,
-        fields=[{"name": "CA:", "value": token, "inline": False}],
         journal_kind="did", token_ticker=display_name,
         journal_meta={"reason": reason, "pnl_sol": pnl, "fraction_sold": fraction, "change_pct": change_pct},
     )
@@ -2160,10 +2159,9 @@ def close_paper_position(state: LedgerState, token: str, exit_price: float, reas
         lines.append(f"**{exit_opinion}**")
 
     speak(
-        title=f"{'🟢' if is_win else '🔴'} 💰 TRADE CLOSED — {display_name}",
+        title=f"💰 TRADE CLOSED — {display_name}",
         description="\n".join(lines),
         color=COLOR_PROFIT if is_win else COLOR_LOSS,
-        fields=[{"name": "CA:", "value": token, "inline": False}],
         journal_kind="did", token_ticker=display_name,
         journal_meta={"reason": reason, "pnl_sol": pnl, "change_pct": change_pct},
     )
