@@ -148,6 +148,25 @@ function classifyEntry(e) {
   return { isReal, isTrade };
 }
 
+// Trade color scheme (Trades panel only) — light blue for a position
+// opened or added to, green/red for a close by realized pnl sign. Same
+// palette as ledger_bot.py's COLOR_BUY/PROFIT/LOSS and Discord's leading
+// 🟦/🟢/🔴 title emoji. Driven by the pnl fields already present in
+// journal_meta (pnl_sol for a paper close, realized_pnl_usdc for a real
+// sell) rather than parsing message text, so it doesn't depend on title
+// wording. An open/topup/real-buy entry carries neither field and falls
+// through to "trade-open".
+function tradeClass(e) {
+  const meta = e.meta || {};
+  if (typeof meta.pnl_sol === "number") {
+    return meta.pnl_sol >= 0 ? "trade-profit" : "trade-loss";
+  }
+  if (typeof meta.realized_pnl_usdc === "number") {
+    return meta.realized_pnl_usdc >= 0 ? "trade-profit" : "trade-loss";
+  }
+  return "trade-open";
+}
+
 let lastJournalEntries = [];
 let activityFilter = "real"; // "real" | "paper" — starts on "real" now that REAL_TRADING_ENABLED is armed
 
@@ -158,13 +177,16 @@ function renderJournalEntries(containerId, entries, emptyText) {
     return;
   }
 
-  body.innerHTML = entries.map(e => `
-    <div class="journal-entry">
+  body.innerHTML = entries.map(e => {
+    const tradeCls = classifyEntry(e).isTrade ? ` ${tradeClass(e)}` : "";
+    return `
+    <div class="journal-entry${tradeCls}">
       <span class="journal-time">${fmtTime(e.timestamp)}</span>
       <span class="journal-kind kind-${escapeHtml(e.kind)}">${escapeHtml(e.kind)}</span>
       <span class="journal-text">${e.token_ticker ? `<strong>${escapeHtml(e.token_ticker)}</strong> — ` : ""}${escapeHtml(e.text)}</span>
     </div>
-  `).join("");
+  `;
+  }).join("");
 }
 
 function renderJournal(entries) {

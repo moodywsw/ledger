@@ -174,13 +174,18 @@ def get_source_display_name(source_code: str) -> str:
 WALLETS_CONFIG_FILE = Path("wallets.json")
 
 
-# Consistent color palette for Ledger's Discord embeds
-COLOR_BUY = 0x3b82f6       # blue — new position opened
-COLOR_PROFIT = 0x22c55e    # green — profit taken/locked in
-COLOR_LOSS = 0xef4444      # red — stop-loss / losing close
-COLOR_NEUTRAL = 0x64748b   # slate — informational
-COLOR_STRONG_SIGNAL = 0xf59e0b  # amber — whale-backed thesis
-COLOR_REAL = 0xec4899      # magenta — real on-chain trade, deliberately distinct from every paper-trading color above so it never blends in
+# Consistent color palette — kept for callers even though speak() sends
+# plain-text Discord messages, not colored embeds, so these have no
+# visible effect there (see the note in speak()). Discord's visible
+# equivalent is the leading square emoji (🟦/🟢/🔴) on OPENED/CLOSED
+# titles, added directly at each call site — these hex values exist so
+# the site/ dashboard and this file agree on what "open/profit/loss"
+# means, and so nothing has to change here if embeds ever come back.
+COLOR_BUY = 0x60a5fa      # light blue — new position opened
+COLOR_PROFIT = 0x34d399   # light green — profit taken/locked in
+COLOR_LOSS = 0xf87171     # light red — stop-loss / losing close
+COLOR_NEUTRAL = 0x64748b  # slate — informational
+COLOR_REAL = 0xec4899     # magenta — real on-chain trade, deliberately distinct from every paper-trading color above so it never blends in
 
 
 
@@ -1477,13 +1482,13 @@ def copy_priority_wallet_entry(
     mc_display = format_market_cap(entry_mc)
     sol_price = get_sol_price_usd()
     speak(
-        title=f"⭐ TRADE OPENED — {display_symbol}",
+        title=f"🟦 ⭐ TRADE OPENED — {display_symbol}",
         description=(
             f"Entry: `{mc_display}` · Size: `{format_usd(size_sol, sol_price)}` (confidence {confidence_multiplier:.1f}x)\n"
             f"Copying **{trader_name}** on {platform_name}\n"
             f"**{entry_opinion}**"
         ),
-        color=COLOR_STRONG_SIGNAL,
+        color=COLOR_BUY,
         fields=[{"name": "CA:", "value": token, "inline": False}],
         journal_kind="did", token_ticker=display_symbol,
         journal_meta={"wallet": trader_name, "platform": platform_name, "size_sol": size_sol, "confidence_multiplier": confidence_multiplier, "prior_encounters": len(prior_entries)},
@@ -1952,11 +1957,15 @@ def _report_real_result(real_result: dict, symbol: str, token: str, side: str, r
     if status == "success":
         verb = "BUY" if side == "buy" else "SELL"
         if side == "buy":
+            square = "🟦"
             amount_line = f"Spent `${real_result['usdc_spent']:.2f}` USDC"
         else:
-            amount_line = f"Received `${real_result['usdc_received']:.2f}` USDC ({real_result.get('fraction_sold', 1.0):.0%} of real position)"
+            realized_pnl = real_result.get("realized_pnl_usdc")
+            square = "🔴" if (realized_pnl is not None and realized_pnl < 0) else "🟢"
+            pnl_line = f" — {'+' if realized_pnl >= 0 else '-'}${abs(realized_pnl):.2f} realized" if realized_pnl is not None else ""
+            amount_line = f"Received `${real_result['usdc_received']:.2f}` USDC ({real_result.get('fraction_sold', 1.0):.0%} of real position){pnl_line}"
         speak(
-            title=f"🔴 REAL {verb} — {symbol}" + (f" ({reason})" if reason else ""),
+            title=f"{square} REAL {verb} — {symbol}" + (f" ({reason})" if reason else ""),
             description=(
                 f"{amount_line} — signature `{real_result['signature']}`\n"
                 f"https://solscan.io/tx/{real_result['signature']}"
@@ -2051,7 +2060,7 @@ def partial_close_paper_position(state: LedgerState, token: str, exit_price: flo
         lines.append(f"**{exit_opinion}**")
 
     speak(
-        title=f"💰 TRADE CLOSED — {display_name} ({reason})",
+        title=f"{'🟢' if is_win else '🔴'} 💰 TRADE CLOSED — {display_name} ({reason})",
         description="\n".join(lines),
         color=COLOR_PROFIT if is_win else COLOR_LOSS,
         fields=[{"name": "CA:", "value": token, "inline": False}],
@@ -2114,7 +2123,7 @@ def close_paper_position(state: LedgerState, token: str, exit_price: float, reas
         lines.append(f"**{exit_opinion}**")
 
     speak(
-        title=f"💰 TRADE CLOSED — {display_name}",
+        title=f"{'🟢' if is_win else '🔴'} 💰 TRADE CLOSED — {display_name}",
         description="\n".join(lines),
         color=COLOR_PROFIT if is_win else COLOR_LOSS,
         fields=[{"name": "CA:", "value": token, "inline": False}],
@@ -3161,7 +3170,7 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
     mc_display = format_market_cap(market_cap_usd)
     sol_price = get_sol_price_usd()
     speak(
-        title=f"🎯 TRADE OPENED — {symbol}",
+        title=f"🟦 🎯 TRADE OPENED — {symbol}",
         description=(
             f"Entry: `{mc_display}` · Size: `{format_usd(size_sol, sol_price)}` (confidence {confidence_multiplier:.1f}x)\n"
             f"**{snipe_opinion}**"
@@ -3626,9 +3635,9 @@ def main():
                     additional_message = "\n".join(notes_lines)
 
                     speak(
-                        title=f"📊 {display_symbol}",
+                        title=f"🟦 📊 {display_symbol}",
                         description="",
-                        color=COLOR_NEUTRAL,
+                        color=COLOR_BUY,
                         fields=[
                             {"name": "CA:", "value": token, "inline": False},
                             {"name": "🧠 Thesis", "value": analysis["thesis"], "inline": False},

@@ -642,7 +642,8 @@ def _execute_sell(token: str, amount_usdc: float) -> dict:
     # slice — proceeds minus that is this sell's realized gain/loss,
     # accumulated into positions["_meta"]["realized_pnl_usdc"] so the
     # dashboard has real, not paper, P&L to show.
-    _record_realized_pnl(positions, usdc_received - cost_basis * fraction)
+    realized_pnl_usdc = usdc_received - cost_basis * fraction
+    _record_realized_pnl(positions, realized_pnl_usdc)
     existing["raw_amount"] -= raw_to_sell
     existing["cost_basis_usdc"] = max(0.0, existing["cost_basis_usdc"] * (1 - fraction))
     existing["sell_signatures"].append(exec_result["signature"])
@@ -655,7 +656,7 @@ def _execute_sell(token: str, amount_usdc: float) -> dict:
     return _result(
         "success", signature=exec_result["signature"], tokens_sold=raw_to_sell,
         usdc_received=usdc_received, price_impact_pct=price_impact,
-        fraction_sold=fraction,
+        fraction_sold=fraction, realized_pnl_usdc=realized_pnl_usdc,
     )
 
 

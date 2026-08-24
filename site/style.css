@@ -5,11 +5,18 @@
   --text: #d6dee5;
   --text-dim: #6b7885;
   --accent: #3b82f6;
-  --green: #22c55e;
-  --red: #ef4444;
+  --green: #34d399;
+  --red: #f87171;
   --amber: #f59e0b;
-  /* Same magenta as COLOR_REAL in ledger_bot.py's Discord embeds — one
-     color means "real money" everywhere in the system, not just here. */
+  /* Trade-state palette — shared with ledger_bot.py's COLOR_BUY/PROFIT/LOSS
+     and the leading square emoji (🟦/🟢/🔴) on Discord OPENED/CLOSED
+     titles, so "open/profit/loss" reads the same color everywhere. --open
+     is dedicated to this (not reusing --accent) so it doesn't also shift
+     the brand/ticker/paper-filter accent color. --green/--red above serve
+     double duty as the same trade-profit/trade-loss colors. */
+  --open: #60a5fa;
+  /* Same magenta as COLOR_REAL in ledger_bot.py — one color means "real
+     money" everywhere in the system, not just here. */
   --real: #ec4899;
   --mono: "SF Mono", "Cascadia Code", "Consolas", "Menlo", monospace;
 }
@@ -250,11 +257,24 @@ body {
 .journal-entry {
   display: flex;
   gap: 10px;
-  padding: 6px 0;
+  padding: 6px 0 6px 8px;
   border-bottom: 1px solid var(--border);
+  border-left: 3px solid transparent;
 }
 
 .journal-entry:last-child { border-bottom: none; }
+
+/* Trades panel only (see classifyEntry/tradeClass in app.js) — position
+   opened (or added to: TOPPED UP, a real buy) vs. a close's realized
+   pnl sign. Same palette as ledger_bot.py's COLOR_BUY/PROFIT/LOSS and
+   Discord's leading 🟦/🟢/🔴 title emoji. */
+.journal-entry.trade-open { border-left-color: var(--open); }
+.journal-entry.trade-profit { border-left-color: var(--green); }
+.journal-entry.trade-loss { border-left-color: var(--red); }
+
+.journal-entry.trade-open .journal-text strong { color: var(--open); }
+.journal-entry.trade-profit .journal-text strong { color: var(--green); }
+.journal-entry.trade-loss .journal-text strong { color: var(--red); }
 
 .journal-time {
   color: var(--text-dim);
