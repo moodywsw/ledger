@@ -1455,8 +1455,12 @@ def copy_priority_wallet_entry(
     """
     display_symbol = metadata.get("symbol") or token[:6] + "..."
 
-    if token in state.open_positions:
-        print(f"  [SKIP] {display_symbol}: already holding a position, not copying this buy.")
+    if PAPER_TRADING_ENABLED:
+        if token in state.open_positions:
+            print(f"  [SKIP] {display_symbol}: already holding a position, not copying this buy.")
+            return
+    elif token in real_only_positions.load_real_only_positions():
+        print(f"  [SKIP] {display_symbol}: already holding a real-only position, not copying this buy.")
         return
 
     if is_known_stablecoin(token, metadata.get("symbol", "")):
@@ -1516,17 +1520,30 @@ def copy_priority_wallet_entry(
     entry_opinion = judgment["opinion"]
     confidence_multiplier = judgment["confidence_multiplier"]
 
-    ultra_conservative_multiplier = ULTRA_CONSERVATIVE_SIZE_MULTIPLIER if state.ultra_conservative_mode else 1.0
-    size_sol = max(
-        SNIPER_MIN_POSITION_SOL,
-        state.balance_sol * SNIPER_POSITION_SIZE_PCT * confidence_multiplier * ultra_conservative_multiplier,
-    )
-    size_sol = min(size_sol, MAX_POSITION_SOL)
+    if PAPER_TRADING_ENABLED:
+        ultra_conservative_multiplier = ULTRA_CONSERVATIVE_SIZE_MULTIPLIER if state.ultra_conservative_mode else 1.0
+        size_sol = max(
+            SNIPER_MIN_POSITION_SOL,
+            state.balance_sol * SNIPER_POSITION_SIZE_PCT * confidence_multiplier * ultra_conservative_multiplier,
+        )
+        size_sol = min(size_sol, MAX_POSITION_SOL)
 
-    ok, block_reason = can_open_position(state, size_sol)
-    if not ok:
-        print(f"  [BLOCKED] {display_symbol}: {block_reason}")
-        return
+        ok, block_reason = can_open_position(state, size_sol)
+        if not ok:
+            print(f"  [BLOCKED] {display_symbol}: {block_reason}")
+            return
+    else:
+        # No ultra-conservative-mode multiplier, no MAX_POSITION_SOL cap,
+        # no can_open_position gate — those are paper-state-driven
+        # circuit breakers with no real-only equivalent (see
+        # PAPER_TRADING_ENABLED's docstring). real_trading.py's own
+        # MAX_REAL_POSITION_PCT/MAX_TOTAL_EXPOSURE_PCT/MIN_REAL_TICKET_USDC
+        # are what actually bound the size below.
+        try:
+            amount_usdc = _real_usdc_position_size(SNIPER_POSITION_SIZE_PCT, confidence_multiplier)
+        except Exception as e:
+            print(f"  [SKIP] {display_symbol}: couldn't read the real USDC balance to size this buy: {e}")
+            return
 
     # Re-fetched fresh here — right before the trade is actually
     # announced/opened, after every check above (including the
@@ -1539,29 +1556,38 @@ def copy_priority_wallet_entry(
         print(f"  [SKIP] {display_symbol}: price data disappeared before entry.")
         return
 
-    mc_display = format_market_cap(entry_mc)
-    sol_price = get_sol_price_usd()
-    speak(
-        title=f"🟦 TRADE OPENED — {display_symbol}",
-        description=f"Entry: `{mc_display}` · Size: `{format_usd(size_sol, sol_price)}`",
-        color=COLOR_BUY,
-        fields=[{"name": "CA:", "value": token, "inline": False}],
-        journal_kind="did", token_ticker=display_symbol,
-        journal_meta={"wallet": trader_name, "platform": platform_name, "size_sol": size_sol, "confidence_multiplier": confidence_multiplier, "prior_encounters": len(prior_entries)},
-    )
+    if PAPER_TRADING_ENABLED:
+        mc_display = format_market_cap(entry_mc)
+        sol_price = get_sol_price_usd()
+        speak(
+            title=f"🟦 TRADE OPENED — {display_symbol}",
+            description=f"Entry: `{mc_display}` · Size: `{format_usd(size_sol, sol_price)}`",
+            color=COLOR_BUY,
+            fields=[{"name": "CA:", "value": token, "inline": False}],
+            journal_kind="did", token_ticker=display_symbol,
+            journal_meta={"wallet": trader_name, "platform": platform_name, "size_sol": size_sol, "confidence_multiplier": confidence_multiplier, "prior_encounters": len(prior_entries)},
+        )
 
-    open_paper_position(
-        state, token, entry_price, size_sol, opened_by=wallet, strength="strong",
-        thesis=entry_opinion, entry_market_cap_usd=entry_mc, mirror_real=True,
-    )
-    if token in state.open_positions:
-        # Tagged to contain "Sniper" so it correctly routes through
-        # check_sniper_positions (the Cupsey ladder), not the main
-        # trailing-stop logic — see the substring check in both.
-        state.open_positions[token]["risk_level"] = "⭐ Priority Copy (Sniper)"
-        state.open_positions[token]["original_size_sol"] = size_sol
-        state.open_positions[token]["entry_dev_holding_pct"] = dev_pct
-        state.save()
+        open_paper_position(
+            state, token, entry_price, size_sol, opened_by=wallet, strength="strong",
+            thesis=entry_opinion, entry_market_cap_usd=entry_mc, mirror_real=True,
+        )
+        if token in state.open_positions:
+            # Tagged to contain "Sniper" so it correctly routes through
+            # check_sniper_positions (the Cupsey ladder), not the main
+            # trailing-stop logic — see the substring check in both.
+            state.open_positions[token]["risk_level"] = "⭐ Priority Copy (Sniper)"
+            state.open_positions[token]["original_size_sol"] = size_sol
+            state.open_positions[token]["entry_dev_holding_pct"] = dev_pct
+            state.save()
+    else:
+        # Same "Sniper" substring tag as the paper path, for the same
+        # reason — check_sniper_positions (real-only branch) uses it to
+        # find this position.
+        open_real_only_position(
+            token, entry_price, amount_usdc, opened_by=wallet, symbol=display_symbol,
+            risk_level="⭐ Priority Copy (Sniper)", entry_dev_holding_pct=dev_pct,
+        )
 
 
 def analyze_conviction(
@@ -2775,6 +2801,52 @@ def buy_the_dip(state: LedgerState, token: str, current_price: float):
     print(f"[DIP BUY] {token}: added {add_size:.4f} SOL at {current_price:.10g}, new avg entry {new_entry:.10g}")
 
 
+def buy_the_dip_real_only(token: str, current_price: float):
+    """
+    PAPER_TRADING_ENABLED=false's counterpart to buy_the_dip. Adds
+    DIP_BUY_ADD_FRACTION of the position's ORIGINAL cost basis (same
+    fraction, applied to USDC instead of SOL — original_cost_basis_usdc
+    is never updated by a dip buy, exactly like buy_the_dip never
+    updates original_size_sol, so repeated dip buys all size off the
+    same original amount rather than compounding). The weighted-average
+    entry_price blend uses the CURRENT live cost basis (read fresh from
+    real_trading.py), not the original — matching how buy_the_dip blends
+    against pos["size_sol"] (current), not original_size_sol.
+    """
+    positions = real_only_positions.load_real_only_positions()
+    pos = positions.get(token)
+    if not pos:
+        return
+
+    real_pos = next((p for p in get_open_real_positions_summary() if p["mint"] == token), None)
+    current_cost_basis = real_pos["cost_basis_usdc"] if real_pos else 0.0
+    if current_cost_basis <= 0:
+        print(f"[DIP BUY BLOCKED] {token}: no real position left to average into")
+        return
+
+    add_amount_usdc = pos["original_cost_basis_usdc"] * DIP_BUY_ADD_FRACTION
+
+    real_symbol = pos.get("symbol") or token[:6]
+    real_result = execute_real_trade(token, add_amount_usdc, "buy")
+    _report_real_result(real_result, real_symbol, token, "buy", reason="dip_buy")
+
+    if real_result["status"] != "success":
+        print(f"[DIP BUY] {token}: real buy did not fill ({real_result['status']}) — ladder entry_price left unchanged")
+        return
+
+    actually_spent = real_result["usdc_spent"]
+    old_entry = pos["entry_price"]
+    new_entry = (old_entry * current_cost_basis + current_price * actually_spent) / (current_cost_basis + actually_spent)
+
+    positions = real_only_positions.load_real_only_positions()
+    if token not in positions:
+        return  # closed by something else while this buy was in flight
+    positions[token]["entry_price"] = new_entry
+    positions[token]["dip_buys"] = positions[token].get("dip_buys", 0) + 1
+    real_only_positions.save_real_only_positions(positions)
+    print(f"[DIP BUY] {token}: added ${actually_spent:.2f} USDC at {current_price:.10g}, new avg entry {new_entry:.10g}")
+
+
 def get_sniper_exit_price(mint: str) -> float:
     """
     Live exit price for Sniper Mode / priority-copy positions via
@@ -2854,6 +2926,109 @@ def get_sniper_entry_price(mint: str) -> float:
     return get_sniper_exit_price(mint)
 
 
+def check_real_only_sniper_positions():
+    """
+    PAPER_TRADING_ENABLED=false's counterpart to check_sniper_positions
+    — the exact same Cupsey trigger thresholds (CUPSEY_STOP_LOSS_PCT,
+    CUPSEY_MAX_HOLD_SECONDS, CUPSEY_TP1_MULTIPLE, CUPSEY_TP2_MULTIPLE,
+    CUPSEY_DEV_SELL_EXIT_THRESHOLD_PCT — the same module-level
+    constants, never duplicated), reading/writing
+    real_only_positions.json instead of state.open_positions, and
+    calling close_real_only_position/partial_close_real_only_position/
+    buy_the_dip_real_only instead of the paper versions.
+
+    One deliberate behavior difference, confirmed up front: TP2 closes
+    the position FULLY here instead of trimming-and-handing-off to
+    check_open_positions' trailing-stop logic — that system only exists
+    for paper state, and a real-only equivalent was out of scope for
+    this pass (see the plan this was built from).
+    """
+    positions = real_only_positions.load_real_only_positions()
+    sniper_mints = [m for m, pos in positions.items() if "Sniper" in pos.get("risk_level", "")]
+    if not sniper_mints:
+        return
+
+    now = datetime.now(timezone.utc)
+    EPSILON = 1e-9
+
+    for mint in sniper_mints:
+        # Re-read every iteration — a prior mint's close in this same
+        # pass doesn't touch this one, but staying fresh is cheap and
+        # avoids acting on a stale in-memory copy.
+        positions = real_only_positions.load_real_only_positions()
+        pos = positions.get(mint)
+        if not pos:
+            continue
+
+        opened_at = datetime.fromisoformat(pos["opened_at"])
+        held_seconds = (now - opened_at).total_seconds()
+        current_price = get_sniper_exit_price(mint)
+
+        if pos.get("entry_dev_holding_pct"):
+            current_dev_pct = get_dev_holding_pct(mint, pos.get("opened_by", ""))
+            if current_dev_pct is not None:
+                if current_dev_pct <= pos["entry_dev_holding_pct"] * CUPSEY_DEV_SELL_EXIT_THRESHOLD_PCT:
+                    if current_price is not None:
+                        close_real_only_position(mint, current_price, reason="🚨 Dev Sell Detected — Exiting")
+                    continue
+
+        if held_seconds >= CUPSEY_MAX_HOLD_SECONDS:
+            if current_price is not None:
+                close_real_only_position(mint, current_price, reason="⏱️ Sniper Time Exit")
+            continue
+
+        if current_price is None:
+            continue
+
+        change_pct = (current_price - pos["entry_price"]) / pos["entry_price"]
+
+        if change_pct <= CUPSEY_STOP_LOSS_PCT + EPSILON:
+            judgment = get_live_trade_judgment(
+                pos, current_price, change_pct, held_seconds,
+                situation=f"Down {change_pct:.1%} from entry — decide whether this specific setup is worth averaging into, or whether to cut it now.",
+            )
+            if judgment["comment"]:
+                speak(
+                    title=f"💬 {pos.get('symbol') or mint[:6]}", description=judgment["comment"], color=COLOR_NEUTRAL,
+                    journal_kind="commentary", token_ticker=pos.get("symbol") or mint[:6],
+                )
+            if judgment["action"] == "buy_dip":
+                buy_the_dip_real_only(mint, current_price)
+            else:
+                close_real_only_position(mint, current_price, reason="🎯 Sniper Stop Loss")
+            continue
+
+        current_multiple = 1 + change_pct
+
+        if not pos["tp1_hit"] and current_multiple >= CUPSEY_TP1_MULTIPLE - EPSILON:
+            partial_close_real_only_position(mint, current_price, CUPSEY_TP1_FRACTION, reason=f"🎯 Sniper TP1 (+{(CUPSEY_TP1_MULTIPLE-1)*100:.0f}%)")
+            positions = real_only_positions.load_real_only_positions()
+            if mint in positions:
+                positions[mint]["tp1_hit"] = True
+                real_only_positions.save_real_only_positions(positions)
+            continue
+
+        if pos["tp1_hit"] and not pos["tp2_hit"] and current_multiple >= CUPSEY_TP2_MULTIPLE - EPSILON:
+            close_real_only_position(mint, current_price, reason="🎯 Sniper TP2 (4x)")
+            continue
+
+        halfway_point = CUPSEY_MAX_HOLD_SECONDS / 2
+        if not pos.get("commented_at_checkpoint") and held_seconds >= halfway_point:
+            judgment = get_live_trade_judgment(
+                pos, current_price, change_pct, held_seconds,
+                situation="Routine mid-hold check-in — no target or stop has been hit yet, just give a brief live read on how it's going.",
+            )
+            if judgment["comment"]:
+                speak(
+                    title=f"💬 {pos.get('symbol') or mint[:6]}", description=judgment["comment"], color=COLOR_NEUTRAL,
+                    journal_kind="commentary", token_ticker=pos.get("symbol") or mint[:6],
+                )
+            positions = real_only_positions.load_real_only_positions()
+            if mint in positions:
+                positions[mint]["commented_at_checkpoint"] = True
+                real_only_positions.save_real_only_positions(positions)
+
+
 def check_sniper_positions(state: LedgerState):
     """
     Cupsey-style exit for Sniper Mode positions — capped at a hard
@@ -2866,7 +3041,16 @@ def check_sniper_positions(state: LedgerState):
     the dip or cut losses, and posts a short comment either way. Also
     posts one brief live comment mid-hold on positions that haven't
     hit any trigger yet, so it's not silent between open and close.
+
+    When PAPER_TRADING_ENABLED is off, delegates entirely to
+    check_real_only_sniper_positions() instead — same trigger
+    thresholds, real_only_positions.json instead of
+    state.open_positions.
     """
+    if not PAPER_TRADING_ENABLED:
+        check_real_only_sniper_positions()
+        return
+
     sniper_mints = [
         m for m, pos in state.open_positions.items()
         if "Sniper" in pos.get("risk_level", "")
@@ -3253,8 +3437,12 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
     symbol = candidate.get("symbol", "?")
     name = candidate.get("name", "")
 
-    if mint in state.open_positions:
-        print(f"[SNIPE SKIP] {symbol}: already holding a position in this token.")
+    if PAPER_TRADING_ENABLED:
+        if mint in state.open_positions:
+            print(f"[SNIPE SKIP] {symbol}: already holding a position in this token.")
+            return
+    elif mint in real_only_positions.load_real_only_positions():
+        print(f"[SNIPE SKIP] {symbol}: already holding a real-only position in this token.")
         return
 
     if candidate.get("initial_buy_sol", 0) < SNIPER_MIN_DEV_BUY_SOL:
@@ -3338,16 +3526,25 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
     # Size as a % of CURRENT bankroll, scaled by confidence — this
     # scales automatically as the balance grows toward the 10 SOL
     # target or resets to 1 SOL after a wipeout.
-    ultra_conservative_multiplier = ULTRA_CONSERVATIVE_SIZE_MULTIPLIER if state.ultra_conservative_mode else 1.0
-    size_sol = max(
-        SNIPER_MIN_POSITION_SOL,
-        state.balance_sol * SNIPER_POSITION_SIZE_PCT * confidence_multiplier * ultra_conservative_multiplier,
-    )
+    if PAPER_TRADING_ENABLED:
+        ultra_conservative_multiplier = ULTRA_CONSERVATIVE_SIZE_MULTIPLIER if state.ultra_conservative_mode else 1.0
+        size_sol = max(
+            SNIPER_MIN_POSITION_SOL,
+            state.balance_sol * SNIPER_POSITION_SIZE_PCT * confidence_multiplier * ultra_conservative_multiplier,
+        )
 
-    ok, block_reason = can_open_position(state, size_sol)
-    if not ok:
-        print(f"[SNIPE BLOCKED] {symbol}: {block_reason}")
-        return
+        ok, block_reason = can_open_position(state, size_sol)
+        if not ok:
+            print(f"[SNIPE BLOCKED] {symbol}: {block_reason}")
+            return
+    else:
+        # No ultra-conservative-mode multiplier, no can_open_position
+        # gate — see the matching comment in copy_priority_wallet_entry().
+        try:
+            amount_usdc = _real_usdc_position_size(SNIPER_POSITION_SIZE_PCT, confidence_multiplier)
+        except Exception as e:
+            print(f"[SNIPE SKIP] {symbol}: couldn't read the real USDC balance to size this buy: {e}")
+            return
 
     # Re-fetched fresh here — see the matching comment in
     # copy_priority_wallet_entry(). Kept just before speak() rather
@@ -3359,33 +3556,40 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
         print(f"[SNIPE SKIP] {symbol}: price data disappeared before entry.")
         return
 
-    mc_display = format_market_cap(market_cap_usd)
-    sol_price = get_sol_price_usd()
-    speak(
-        title=f"🟦 🎯 TRADE OPENED — {symbol}",
-        description=(
-            f"Entry: `{mc_display}` · Size: `{format_usd(size_sol, sol_price)}`\n"
-            f"**{snipe_opinion}**"
-        ),
-        color=COLOR_BUY,
-        fields=[{"name": "CA:", "value": mint, "inline": False}],
-        journal_kind="did", token_ticker=symbol,
-        journal_meta={"preset": SNIPER_ACTIVE_PRESET, "size_sol": size_sol, "confidence_multiplier": confidence_multiplier, "prior_encounters": len(prior_entries)},
-    )
-
     # opened_by stores the actual creator address (not a placeholder
     # string) — check_sniper_positions needs this to re-check the dev's
     # holding later and detect a sell-off.
     creator_address = candidate.get("creator", "")
-    open_paper_position(
-        state, mint, entry_price, size_sol, opened_by=creator_address, strength="weak",
-        thesis=snipe_opinion, entry_market_cap_usd=market_cap_usd, mirror_real=True,
-    )
-    if mint in state.open_positions:
-        state.open_positions[mint]["risk_level"] = "🎯 Sniper Play"
-        state.open_positions[mint]["original_size_sol"] = size_sol
-        state.open_positions[mint]["entry_dev_holding_pct"] = dev_pct
-        state.save()
+
+    if PAPER_TRADING_ENABLED:
+        mc_display = format_market_cap(market_cap_usd)
+        sol_price = get_sol_price_usd()
+        speak(
+            title=f"🟦 🎯 TRADE OPENED — {symbol}",
+            description=(
+                f"Entry: `{mc_display}` · Size: `{format_usd(size_sol, sol_price)}`\n"
+                f"**{snipe_opinion}**"
+            ),
+            color=COLOR_BUY,
+            fields=[{"name": "CA:", "value": mint, "inline": False}],
+            journal_kind="did", token_ticker=symbol,
+            journal_meta={"preset": SNIPER_ACTIVE_PRESET, "size_sol": size_sol, "confidence_multiplier": confidence_multiplier, "prior_encounters": len(prior_entries)},
+        )
+
+        open_paper_position(
+            state, mint, entry_price, size_sol, opened_by=creator_address, strength="weak",
+            thesis=snipe_opinion, entry_market_cap_usd=market_cap_usd, mirror_real=True,
+        )
+        if mint in state.open_positions:
+            state.open_positions[mint]["risk_level"] = "🎯 Sniper Play"
+            state.open_positions[mint]["original_size_sol"] = size_sol
+            state.open_positions[mint]["entry_dev_holding_pct"] = dev_pct
+            state.save()
+    else:
+        open_real_only_position(
+            mint, entry_price, amount_usdc, opened_by=creator_address, symbol=symbol,
+            risk_level="🎯 Sniper Play", entry_dev_holding_pct=dev_pct,
+        )
 
 
 def format_market_cap(usd_value: float) -> str:

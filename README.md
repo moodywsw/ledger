@@ -71,6 +71,7 @@ set explicitly.
 | `DISCORD_BOT_TOKEN` | `ledger_discord_bot.py` | Needs the "Message Content" privileged intent enabled |
 | `ANTHROPIC_API_KEY` | `ledger_discord_bot.py`, `market_intel.py` | Powers conversational replies and market research |
 | `REAL_TRADING_ENABLED` | `real_trading.py` (optional) | `"true"` to arm real execution. Defaults to unarmed (`false`) — paper trading is unaffected either way. |
+| `PAPER_TRADING_ENABLED` | `ledger_bot.py` (optional) | `"false"` decouples real trading from paper trading — the sniper/priority-copy entry points and the Cupsey exit ladder call `real_trading.py` directly instead of going through `open_paper_position`/`close_paper_position`, with no `ledger_state.json` writes and no paper Discord messages (see `real_only_positions.py`). Defaults to `"true"` (today's behavior — real trades only ever happen as a mirror of a paper trade) so an unset var never silently switches to real-only. |
 | `SOLANA_PRIVATE_KEY` | `real_trading.py`, only if armed | Base58 secret key of a dedicated trading wallet. Never written to a file, logged, or committed — env var only. |
 | `SOLANA_WALLET_ADDRESS` | `real_trading.py` (optional) | Pins the expected public key; if `SOLANA_PRIVATE_KEY` derives a different address, loading fails loudly instead of trading from an unexpected wallet. |
 | `JUPITER_API_KEY` | `real_trading.py`, only if armed | From https://developers.jup.ag/portal — required by Jupiter's Ultra Swap API (`x-api-key`). |
