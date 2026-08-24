@@ -49,10 +49,20 @@ Safety contract (non-negotiable, per the person running this bot):
     succession, and the per-position cap alone doesn't stop that sequence
     from eventually committing nearly the whole wallet. A minimum reserve
     (100% - MAX_TOTAL_EXPOSURE_PCT) always stays liquid.
-  - MAX_REAL_DAILY_USDC is a third, independent ceiling on total real
-    USDC spent across ALL positions in a rolling UTC day — a fixed dollar
-    figure (not a percentage), since resetting daily doesn't scale with
-    balance the way per-position/total-exposure sizing should.
+  - MAX_REAL_DAILY_PCT (default 70%) is a third, independent ceiling on
+    total real USDC spent across ALL positions in a rolling UTC day —
+    a percentage of the wallet's balance at the START of that UTC day
+    (snapshotted once, in _meta, the first time a real buy lands that
+    day), not a fixed dollar figure. A fixed figure needs manual
+    upkeep as the wallet grows or shrinks — too tight and it throttles
+    a healthy day to one trade; too loose and it stops meaning
+    anything once the wallet is 10x bigger. Pinning it to the DAY'S
+    START balance (rather than recomputing off the live balance on
+    every call, the way position/exposure sizing does) matters here
+    specifically: the point of a daily cap is a fixed risk budget for
+    the day, so it must not shrink as the day's own spending draws the
+    live balance down — that would silently erode the budget into
+    something much smaller than intended.
   - MIN_SOL_FOR_GAS is checked before every real order, buy or sell, and
     is unconditional — trading in USDC doesn't make SOL optional, since
     there is no such thing as a gas-free Solana transaction. Falling
@@ -102,7 +112,10 @@ MAX_REAL_POSITION_PCT = float(os.environ.get("MAX_REAL_POSITION_PCT", "0.30"))
 # Leaves a 15% floor always liquid: a buffer for exit slippage and so the
 # wallet is never fully committed to open positions at once.
 MAX_TOTAL_EXPOSURE_PCT = float(os.environ.get("MAX_TOTAL_EXPOSURE_PCT", "0.85"))
-MAX_REAL_DAILY_USDC = float(os.environ.get("MAX_REAL_DAILY_USDC", "6.00"))  # fixed $, independent of the % caps above
+# 70% of the wallet's balance at the START of the current UTC day (not the
+# live balance — see get_max_real_daily_usdc() and the module docstring's
+# safety contract section for why that distinction matters here).
+MAX_REAL_DAILY_PCT = float(os.environ.get("MAX_REAL_DAILY_PCT", "0.70"))
 # $1 minimum rather than a strict pro-rata conversion of the old SOL
 # minimum — Jupiter's platform fee plus network fee eats a large
 # fraction of anything much smaller than this, so a sub-$1 "real" fill
@@ -368,13 +381,39 @@ def _spent_today_usdc(positions: dict) -> float:
     return meta.get("spent_usdc", 0.0)
 
 
-def _record_spend(positions: dict, usdc_spent: float):
+def _record_spend(positions: dict, usdc_spent: float, live_usdc_balance_before_spend: float):
+    """
+    `live_usdc_balance_before_spend` is only used the first time today's
+    date rolls over — it becomes the day's frozen "balance_at_day_start_usdc"
+    snapshot that get_max_real_daily_usdc() bases the whole day's budget
+    on, so it must be the balance seen BEFORE this spend (which callers
+    already have on hand, having fetched it for the position-size cap).
+    """
     today = _today_utc()
     meta = positions.get("_meta", {})
     if meta.get("date") != today:
-        meta = {"date": today, "spent_usdc": 0.0}
+        meta = {"date": today, "spent_usdc": 0.0, "balance_at_day_start_usdc": live_usdc_balance_before_spend}
     meta["spent_usdc"] = meta.get("spent_usdc", 0.0) + usdc_spent
     positions["_meta"] = meta
+
+
+def get_max_real_daily_usdc(positions: dict, live_usdc_balance: float) -> float:
+    """
+    MAX_REAL_DAILY_PCT of the wallet's balance at the START of the
+    current UTC day — snapshotted once (in _meta, by _record_spend) the
+    first time a real buy actually lands today, and reused for every
+    check for the rest of the day so the day's risk budget doesn't
+    shrink as the day's own spending draws the live balance down. Until
+    that first snapshot exists (no real buy has landed yet today), this
+    falls back to the current live balance, which at that point is
+    still today's balance anyway.
+    """
+    meta = positions.get("_meta", {})
+    if meta.get("date") == _today_utc() and "balance_at_day_start_usdc" in meta:
+        day_start_balance = meta["balance_at_day_start_usdc"]
+    else:
+        day_start_balance = live_usdc_balance
+    return day_start_balance * MAX_REAL_DAILY_PCT
 
 
 def _record_realized_pnl(positions: dict, delta_usdc: float):
@@ -530,9 +569,10 @@ def _execute_buy(token: str, amount_usdc: float) -> dict:
         return _result("blocked", reason=f"MAX_REAL_POSITION_PCT ({MAX_REAL_POSITION_PCT:.0%} of current ${live_usdc_balance:.2f} balance = ${max_position_usdc:.2f}) already committed to {token}")
 
     spent_today = _spent_today_usdc(positions)
-    remaining_daily_budget = MAX_REAL_DAILY_USDC - spent_today
+    max_daily_usdc = get_max_real_daily_usdc(positions, live_usdc_balance)
+    remaining_daily_budget = max_daily_usdc - spent_today
     if remaining_daily_budget <= 0:
-        return _result("blocked", reason=f"MAX_REAL_DAILY_USDC (${MAX_REAL_DAILY_USDC:.2f}) already spent today (${spent_today:.2f})")
+        return _result("blocked", reason=f"MAX_REAL_DAILY_PCT ({MAX_REAL_DAILY_PCT:.0%} of today's starting ${max_daily_usdc / MAX_REAL_DAILY_PCT:.2f} balance = ${max_daily_usdc:.2f}) already spent today (${spent_today:.2f})")
 
     # Sniper Mode can open several positions in quick succession — the
     # per-position cap alone doesn't stop that sequence from eventually
@@ -580,7 +620,7 @@ def _execute_buy(token: str, amount_usdc: float) -> dict:
     existing["cost_basis_usdc"] += clamped_amount_usdc
     existing["buy_signatures"].append(exec_result["signature"])
     positions[token] = existing
-    _record_spend(positions, clamped_amount_usdc)
+    _record_spend(positions, clamped_amount_usdc, live_usdc_balance)
     _save_real_positions(positions)
 
     return _result(
