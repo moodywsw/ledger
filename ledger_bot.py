@@ -2970,19 +2970,44 @@ def post_performance_recap(state: LedgerState):
 SNIPER_LAUNCH_QUEUE = queue.Queue()
 
 
+SNIPER_RECONNECT_BASE_SECONDS = 10
+SNIPER_RECONNECT_MAX_SECONDS = 300  # 5 min ceiling
+
+
 def _sniper_listener_thread():
     """
     Runs in a background thread so the WebSocket connection doesn't
     block the main polling loop. Connects to the free Pump.fun launch
     feed and pushes every new-token event into a thread-safe queue for
     the main loop to evaluate. Reconnects automatically on drops.
+
+    Backoff is exponential (10s, 20s, 40s, ... capped at
+    SNIPER_RECONNECT_MAX_SECONDS), with jitter added so repeated
+    redeploys don't all retry in lockstep. A fixed 10s retry was found
+    hammering pumpdev.io fast enough to trip its per-IP connection
+    limit ("1013 Too many connections from this IP") before it had a
+    chance to reset, turning one transient rate limit into a permanent
+    reconnect loop.
+
+    The backoff only resets once a session has stayed up for at least
+    SNIPER_STABLE_CONNECTION_SECONDS — pumpdev.io was observed
+    completing the WebSocket handshake (this prints "Connected") and
+    then immediately closing with the same 1013 a moment later, which
+    would otherwise reset backoff back to the base on every single
+    attempt and defeat the whole point of backing off.
     """
+    import random
     import websockets
 
+    SNIPER_STABLE_CONNECTION_SECONDS = 30
+
     async def listen():
+        backoff = SNIPER_RECONNECT_BASE_SECONDS
         while True:
+            connected_at = None
             try:
                 async with websockets.connect(SNIPER_WS_URL) as ws:
+                    connected_at = time.monotonic()
                     await ws.send(json.dumps({"method": "subscribeNewToken"}))
                     print("[SNIPER] Connected to launch feed.")
                     async for raw_msg in ws:
@@ -2992,8 +3017,14 @@ def _sniper_listener_thread():
                         except json.JSONDecodeError:
                             continue
             except Exception as e:
-                print(f"[SNIPER] Listener connection error, retrying in 10s: {e}")
-                time.sleep(10)
+                was_stable = connected_at is not None and (time.monotonic() - connected_at) >= SNIPER_STABLE_CONNECTION_SECONDS
+                if was_stable:
+                    backoff = SNIPER_RECONNECT_BASE_SECONDS
+                sleep_for = backoff + random.uniform(0, backoff * 0.3)
+                print(f"[SNIPER] Listener connection error, retrying in {sleep_for:.1f}s (backoff={backoff}s): {e}")
+                await asyncio.sleep(sleep_for)
+                if not was_stable:
+                    backoff = min(backoff * 2, SNIPER_RECONNECT_MAX_SECONDS)
 
     asyncio.run(listen())
 
