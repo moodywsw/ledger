@@ -71,7 +71,8 @@ from pathlib import Path
 from journal_store import log_journal, get_token_history
 from theses_store import upsert_thesis
 from api_server import start_api_server
-from real_trading import execute_real_trade
+from real_trading import execute_real_trade, get_wallet_balances, get_open_real_positions_summary
+import real_only_positions
 
 # ── Config ────────────────────────────────────────────────────────────
 
@@ -504,6 +505,21 @@ STATE_FILE = Path(os.environ.get("DATA_DIR", ".")) / "ledger_state.json"
 # access to the container. Remember to unset it afterward, or it'll
 # wipe progress on every future restart too.
 RESET_STATE_ON_BOOT = os.environ.get("RESET_STATE_ON_BOOT", "false").lower() == "true"
+
+# Defaults to "true" (opposite of REAL_TRADING_ENABLED's default-off) —
+# paper trading is the safe, always-on-by-default mode, so an unset env
+# var never silently switches the bot into real-only. When "false", the
+# sniper/priority-copy entry points and the Cupsey exit ladder call
+# real_trading.py directly instead of going through open_paper_position/
+# close_paper_position/partial_close_paper_position — no ledger_state.json
+# writes, no paper Discord messages. See real_only_positions.py for the
+# lightweight position tracking that replaces state.open_positions for
+# the exit ladder in that mode. The real-money safety limits in
+# real_trading.py (MAX_REAL_POSITION_PCT, MAX_TOTAL_EXPOSURE_PCT,
+# MIN_SOL_FOR_GAS, ...) apply identically either way — this toggle only
+# ever changes the paper bookkeeping around a real trade, never the real
+# trade's own limits.
+PAPER_TRADING_ENABLED = os.environ.get("PAPER_TRADING_ENABLED", "true").strip().lower() == "true"
 
 
 @dataclass
@@ -1964,6 +1980,46 @@ def open_paper_position(
     state.save()
 
 
+def open_real_only_position(
+    token: str, entry_price: float, amount_usdc: float, opened_by: str, symbol: str,
+    risk_level: str, entry_dev_holding_pct: float = None,
+):
+    """
+    PAPER_TRADING_ENABLED=false's counterpart to open_paper_position's
+    mirror_real=True path — calls execute_real_trade directly and
+    reports via the existing _report_real_result (same "REAL BUY"
+    Discord/journal message as today), but never touches
+    state.open_positions / state.balance_sol / ledger_state.json. On a
+    successful fill, writes just enough into real_only_positions.json
+    for check_sniper_positions' Cupsey ladder to make the same
+    hold-time/price-trigger decisions it makes for a paper position.
+
+    `entry_price` is the market price used for the ladder's change_pct
+    math (same units get_sniper_exit_price returns) — not the same
+    thing as amount_usdc, which is how much was actually requested to
+    spend (the ACTUAL fill amount, possibly clamped smaller by
+    real_trading.py's own caps, is read back from real_result below).
+    """
+    real_symbol = symbol or token[:6]
+    real_result = execute_real_trade(token, amount_usdc, "buy")
+    _report_real_result(real_result, real_symbol, token, "buy")
+
+    if real_result["status"] != "success":
+        return  # nothing to track for the ladder — no position actually opened
+
+    positions = real_only_positions.load_real_only_positions()
+    positions[token] = {
+        "token": token, "symbol": real_symbol, "entry_price": entry_price,
+        "opened_at": datetime.now(timezone.utc).isoformat(), "opened_by": opened_by,
+        "risk_level": risk_level,
+        "original_cost_basis_usdc": real_result["usdc_spent"],
+        "entry_dev_holding_pct": entry_dev_holding_pct,
+        "tp1_hit": False, "tp2_hit": False,
+        "commented_at_checkpoint": False, "dip_buys": 0,
+    }
+    real_only_positions.save_real_only_positions(positions)
+
+
 def _sol_to_usdc(sol_amount: float):
     """
     Paper-trading positions are sized in SOL (size_sol); real_trading.py
@@ -1978,6 +2034,31 @@ def _sol_to_usdc(sol_amount: float):
     if not sol_price:
         return None
     return sol_amount * sol_price
+
+
+def _real_usdc_position_size(pct_of_balance: float, confidence_multiplier: float) -> float:
+    """
+    PAPER_TRADING_ENABLED=false's equivalent of the paper sizing formula
+    (pct of bankroll * confidence, e.g. SNIPER_POSITION_SIZE_PCT in
+    evaluate_snipe_candidate/copy_priority_wallet_entry) — same shape,
+    anchored to the live REAL USDC balance instead of state.balance_sol,
+    since the paper balance is never updated (and so never meaningful)
+    when paper trading isn't running.
+
+    Deliberately no ultra-conservative-mode multiplier, no
+    MAX_POSITION_SOL-equivalent cap, no SNIPER_MIN_POSITION_SOL-equivalent
+    floor applied here — those are paper-side throttles with no real-only
+    counterpart (see PAPER_TRADING_ENABLED's docstring). real_trading.py's
+    own MAX_REAL_POSITION_PCT/MAX_TOTAL_EXPOSURE_PCT/MIN_REAL_TICKET_USDC
+    are what actually bound the final size regardless of what's requested
+    here — this only has to be a reasonable, confidence-scaled request.
+
+    Raises if the real balance can't be read (missing SOLANA_PRIVATE_KEY/
+    ALCHEMY_RPC_URL, or an RPC error) — callers should catch that the same
+    way a missing SOL price already skips a paper entry.
+    """
+    real_usdc_balance = get_wallet_balances()["usdc"]
+    return real_usdc_balance * pct_of_balance * confidence_multiplier
 
 
 def _report_real_result(real_result: dict, symbol: str, token: str, side: str, reason: str = None):
@@ -2167,6 +2248,82 @@ def close_paper_position(state: LedgerState, token: str, exit_price: float, reas
     )
     upsert_thesis(ticker=display_name, status="closed")
     state.save()
+
+
+def _real_only_position_and_cost_basis(token: str):
+    """
+    Shared lookup for the two functions below: the ladder-tracking
+    entry (real_only_positions.json, timing/trigger state) plus the
+    matching real money position's live cost_basis_usdc
+    (real_trading.py's own real_positions.json, via
+    get_open_real_positions_summary — the actual source of truth for
+    how much is really held). Returns (positions_dict, pos, cost_basis)
+    — cost_basis is 0.0 if there's nothing real left to sell (already
+    closed elsewhere, or the original buy never actually filled).
+    """
+    positions = real_only_positions.load_real_only_positions()
+    pos = positions.get(token)
+    real_pos = next((p for p in get_open_real_positions_summary() if p["mint"] == token), None)
+    cost_basis = real_pos["cost_basis_usdc"] if real_pos else 0.0
+    return positions, pos, cost_basis
+
+
+def partial_close_real_only_position(token: str, exit_price: float, fraction: float, reason: str = "✂️ Scaled Out"):
+    """
+    PAPER_TRADING_ENABLED=false's counterpart to
+    partial_close_paper_position — sells a FRACTION of the current
+    remaining real position. Reads the mint's live cost_basis_usdc from
+    real_trading.py's own tracking rather than a locally-stored SOL
+    size, since real_only_positions.json only tracks the ladder's
+    timing/trigger state, not quantity held.
+
+    Does not itself mutate the ladder entry's tp1_hit/tp2_hit — same
+    pattern the paper path already uses: the caller
+    (check_sniper_positions) sets those after this returns, since it's
+    the one that knows which rung just fired.
+    """
+    positions, pos, cost_basis = _real_only_position_and_cost_basis(token)
+    if not pos:
+        return
+
+    if cost_basis <= 0:
+        # Nothing real left to sell (closed elsewhere, or the buy never
+        # actually filled) — drop the stale ladder entry instead of
+        # tripping this same check every future cycle.
+        positions.pop(token, None)
+        real_only_positions.save_real_only_positions(positions)
+        return
+
+    amount_usdc = fraction * cost_basis
+    real_symbol = pos.get("symbol") or token[:6]
+    real_result = execute_real_trade(token, amount_usdc, "sell")
+    _report_real_result(real_result, real_symbol, token, "sell", reason=reason)
+
+
+def close_real_only_position(token: str, exit_price: float, reason: str = None):
+    """
+    PAPER_TRADING_ENABLED=false's counterpart to close_paper_position —
+    sells the ENTIRE remaining real position and removes the
+    ladder-tracking entry regardless of whether the sell itself
+    succeeded, matching close_paper_position's existing behavior (a
+    real-sell failure is logged and the ladder still considers this
+    position closed, rather than retrying forever — real_trading.py's
+    own real_positions.json remains the actual source of truth for
+    what's still held either way, completely unaffected by this).
+    """
+    positions, pos, cost_basis = _real_only_position_and_cost_basis(token)
+    if not pos:
+        return
+
+    real_symbol = pos.get("symbol") or token[:6]
+    if cost_basis <= 0:
+        real_result = {"status": "blocked", "success": False, "reason": "no real position left to sell — local ladder entry was stale"}
+    else:
+        real_result = execute_real_trade(token, cost_basis, "sell")
+    _report_real_result(real_result, real_symbol, token, "sell", reason=reason)
+
+    positions.pop(token, None)
+    real_only_positions.save_real_only_positions(positions)
 
 
 # Exit rules — coherent with Ledger's "balanced" persona: cuts losers
