@@ -49,20 +49,12 @@ Safety contract (non-negotiable, per the person running this bot):
     succession, and the per-position cap alone doesn't stop that sequence
     from eventually committing nearly the whole wallet. A minimum reserve
     (100% - MAX_TOTAL_EXPOSURE_PCT) always stays liquid.
-  - MAX_REAL_DAILY_PCT (default 70%) is a third, independent ceiling on
-    total real USDC spent across ALL positions in a rolling UTC day —
-    a percentage of the wallet's balance at the START of that UTC day
-    (snapshotted once, in _meta, the first time a real buy lands that
-    day), not a fixed dollar figure. A fixed figure needs manual
-    upkeep as the wallet grows or shrinks — too tight and it throttles
-    a healthy day to one trade; too loose and it stops meaning
-    anything once the wallet is 10x bigger. Pinning it to the DAY'S
-    START balance (rather than recomputing off the live balance on
-    every call, the way position/exposure sizing does) matters here
-    specifically: the point of a daily cap is a fixed risk budget for
-    the day, so it must not shrink as the day's own spending draws the
-    live balance down — that would silently erode the budget into
-    something much smaller than intended.
+  - There is deliberately no daily spend cap. The wallet is also managed
+    manually by the person running this bot from time to time, so a
+    "total spent today" figure the bot tracks itself can't be trusted to
+    mean what it implies — it doesn't see manual transfers in or out.
+    MAX_REAL_POSITION_PCT and MAX_TOTAL_EXPOSURE_PCT above are the only
+    automatic ceilings on real spending.
   - MIN_SOL_FOR_GAS is checked before every real order, buy or sell, and
     is unconditional — trading in USDC doesn't make SOL optional, since
     there is no such thing as a gas-free Solana transaction. Falling
@@ -92,7 +84,6 @@ import base64
 import json
 import os
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
@@ -112,10 +103,6 @@ MAX_REAL_POSITION_PCT = float(os.environ.get("MAX_REAL_POSITION_PCT", "0.30"))
 # Leaves a 15% floor always liquid: a buffer for exit slippage and so the
 # wallet is never fully committed to open positions at once.
 MAX_TOTAL_EXPOSURE_PCT = float(os.environ.get("MAX_TOTAL_EXPOSURE_PCT", "0.85"))
-# 70% of the wallet's balance at the START of the current UTC day (not the
-# live balance — see get_max_real_daily_usdc() and the module docstring's
-# safety contract section for why that distinction matters here).
-MAX_REAL_DAILY_PCT = float(os.environ.get("MAX_REAL_DAILY_PCT", "0.70"))
 # $1 minimum rather than a strict pro-rata conversion of the old SOL
 # minimum — Jupiter's platform fee plus network fee eats a large
 # fraction of anything much smaller than this, so a sub-$1 "real" fill
@@ -237,6 +224,32 @@ def _check_gas_reserve() -> tuple:
     return True, sol_balance
 
 
+PUBLIC_FALLBACK_RPC_URL = "https://api.mainnet-beta.solana.com"
+
+
+def _query_token_balance_raw(rpc_url: str, wallet: str, mint: str) -> tuple:
+    """One getTokenAccountsByOwner round trip against `rpc_url`. Returns
+    (total_raw, raw_response_body) — the caller decides what to do with
+    a suspicious result; this just does the call and the parsing."""
+    payload = {
+        "jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner",
+        "params": [wallet, {"mint": mint}, {"encoding": "jsonParsed"}],
+    }
+    resp = _request_with_backoff("POST", rpc_url, json=payload, timeout=15)
+    resp.raise_for_status()
+    body = resp.json()
+    if "error" in body:
+        raise RuntimeError(f"RPC error from {rpc_url} for getTokenAccountsByOwner(mint={mint}): {body['error']}")
+    accounts = body.get("result", {}).get("value", [])
+    total_raw = 0
+    for acc in accounts:
+        info = acc.get("account", {}).get("data", {}).get("parsed", {}).get("info", {})
+        amount_str = info.get("tokenAmount", {}).get("amount")
+        if amount_str is not None:
+            total_raw += int(amount_str)
+    return total_raw, body
+
+
 def _check_onchain_token_balance_raw(mint: str, _zero_retries: int = 2) -> int:
     """
     The real, on-chain source of truth for how much of `mint` this
@@ -269,38 +282,43 @@ def _check_onchain_token_balance_raw(mint: str, _zero_retries: int = 2) -> int:
     $0 is re-queried (fresh HTTP requests, not a retried connection —
     the same staleness was observed to persist across several distinct
     connections in a row) up to `_zero_retries` more times, with a
-    growing delay between attempts, before being accepted as true; a
-    wallet that legitimately holds zero just pays a couple of extra RPC
-    round trips.
+    growing delay between attempts, before being accepted as true.
+
+    Reproduced live again on 2026-08-24 (blocking a real AIRDROP buy):
+    Alchemy read $0 across the initial attempt AND both retries — the
+    staleness window can outlast that ~6s budget. Confirmed via
+    on-chain history that no transaction touched the wallet anywhere
+    near that window, so the balance could not have genuinely changed.
+    Once Alchemy's own retries are exhausted and it's still reading
+    zero, this cross-checks once against PUBLIC_FALLBACK_RPC_URL (a
+    different provider, so it can't share Alchemy's staleness) before
+    finally accepting zero — and trusts the fallback's nonzero reading
+    over Alchemy's zero if the two disagree.
     """
     if not ALCHEMY_RPC_URL:
         raise RuntimeError("Set ALCHEMY_RPC_URL env var first.")
     wallet = _wallet_pubkey_str()
-    payload = {
-        "jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner",
-        "params": [wallet, {"mint": mint}, {"encoding": "jsonParsed"}],
-    }
-    resp = _request_with_backoff("POST", ALCHEMY_RPC_URL, json=payload, timeout=15)
-    resp.raise_for_status()
-    body = resp.json()
-    if "error" in body:
-        raise RuntimeError(f"Alchemy RPC error for getTokenAccountsByOwner(mint={mint}): {body['error']}")
-    accounts = body.get("result", {}).get("value", [])
-    total_raw = 0
-    for acc in accounts:
-        info = acc.get("account", {}).get("data", {}).get("parsed", {}).get("info", {})
-        amount_str = info.get("tokenAmount", {}).get("amount")
-        if amount_str is not None:
-            total_raw += int(amount_str)
+    total_raw, body = _query_token_balance_raw(ALCHEMY_RPC_URL, wallet, mint)
 
     if total_raw == 0 and _zero_retries > 0:
         delay = 2.0 * (3 - _zero_retries)  # 2.0s on the first retry, 4.0s on the second
         print(f"[real_trading] suspicious $0 balance from Alchemy for mint={mint} "
-              f"wallet={wallet} ({len(accounts)} token account(s) in response) — "
-              f"re-confirming ({_zero_retries} attempt(s) left) before trusting it. "
+              f"wallet={wallet} — re-confirming ({_zero_retries} attempt(s) left) before trusting it. "
               f"Raw response: {body}")
         time.sleep(delay)
         return _check_onchain_token_balance_raw(mint, _zero_retries=_zero_retries - 1)
+
+    if total_raw == 0:
+        try:
+            fallback_raw, fallback_body = _query_token_balance_raw(PUBLIC_FALLBACK_RPC_URL, wallet, mint)
+        except Exception as e:
+            print(f"[real_trading] public RPC cross-check failed for mint={mint}: {e} — accepting Alchemy's $0 reading")
+            return 0
+        if fallback_raw != 0:
+            print(f"[real_trading] Alchemy's $0 reading for mint={mint} contradicted by public Solana RPC "
+                  f"(reads {fallback_raw} raw) — trusting the public RPC instead. Alchemy response: {body}")
+            return fallback_raw
+        print(f"[real_trading] public Solana RPC also reads $0 for mint={mint} — accepting as true.")
 
     return total_raw
 
@@ -370,58 +388,7 @@ def _save_real_positions(positions: dict):
         print(f"[WARN] real_positions.json write failed: {e}")
 
 
-def _today_utc() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-
-def _spent_today_usdc(positions: dict) -> float:
-    meta = positions.get("_meta", {})
-    if meta.get("date") != _today_utc():
-        return 0.0
-    return meta.get("spent_usdc", 0.0)
-
-
-def _record_spend(positions: dict, usdc_spent: float, live_usdc_balance_before_spend: float):
-    """
-    `live_usdc_balance_before_spend` is only used the first time today's
-    date rolls over — it becomes the day's frozen "balance_at_day_start_usdc"
-    snapshot that get_max_real_daily_usdc() bases the whole day's budget
-    on, so it must be the balance seen BEFORE this spend (which callers
-    already have on hand, having fetched it for the position-size cap).
-    """
-    today = _today_utc()
-    meta = positions.get("_meta", {})
-    if meta.get("date") != today:
-        meta = {"date": today, "spent_usdc": 0.0, "balance_at_day_start_usdc": live_usdc_balance_before_spend}
-    meta["spent_usdc"] = meta.get("spent_usdc", 0.0) + usdc_spent
-    positions["_meta"] = meta
-
-
-def get_max_real_daily_usdc(positions: dict, live_usdc_balance: float) -> float:
-    """
-    MAX_REAL_DAILY_PCT of the wallet's balance at the START of the
-    current UTC day — snapshotted once (in _meta, by _record_spend) the
-    first time a real buy actually lands today, and reused for every
-    check for the rest of the day so the day's risk budget doesn't
-    shrink as the day's own spending draws the live balance down. Until
-    that first snapshot exists (no real buy has landed yet today), this
-    falls back to the current live balance, which at that point is
-    still today's balance anyway.
-    """
-    meta = positions.get("_meta", {})
-    if meta.get("date") == _today_utc() and "balance_at_day_start_usdc" in meta:
-        day_start_balance = meta["balance_at_day_start_usdc"]
-    else:
-        day_start_balance = live_usdc_balance
-    return day_start_balance * MAX_REAL_DAILY_PCT
-
-
 def _record_realized_pnl(positions: dict, delta_usdc: float):
-    """
-    All-time running total, unlike _record_spend's daily reset — a
-    realized gain/loss doesn't expire at UTC midnight the way a daily
-    spend cap does.
-    """
     meta = positions.get("_meta", {})
     meta["realized_pnl_usdc"] = meta.get("realized_pnl_usdc", 0.0) + delta_usdc
     positions["_meta"] = meta
@@ -568,12 +535,6 @@ def _execute_buy(token: str, amount_usdc: float) -> dict:
     if remaining_position_budget <= 0:
         return _result("blocked", reason=f"MAX_REAL_POSITION_PCT ({MAX_REAL_POSITION_PCT:.0%} of current ${live_usdc_balance:.2f} balance = ${max_position_usdc:.2f}) already committed to {token}")
 
-    spent_today = _spent_today_usdc(positions)
-    max_daily_usdc = get_max_real_daily_usdc(positions, live_usdc_balance)
-    remaining_daily_budget = max_daily_usdc - spent_today
-    if remaining_daily_budget <= 0:
-        return _result("blocked", reason=f"MAX_REAL_DAILY_PCT ({MAX_REAL_DAILY_PCT:.0%} of today's starting ${max_daily_usdc / MAX_REAL_DAILY_PCT:.2f} balance = ${max_daily_usdc:.2f}) already spent today (${spent_today:.2f})")
-
     # Sniper Mode can open several positions in quick succession — the
     # per-position cap alone doesn't stop that sequence from eventually
     # committing nearly the whole wallet, so this is an independent,
@@ -587,7 +548,7 @@ def _execute_buy(token: str, amount_usdc: float) -> dict:
     if remaining_exposure_headroom <= 0:
         return _result("blocked", reason=f"MAX_TOTAL_EXPOSURE_PCT ({MAX_TOTAL_EXPOSURE_PCT:.0%} of ${total_balance:.2f} total = ${max_total_exposure:.2f}) already committed across open real positions")
 
-    clamped_amount_usdc = min(amount_usdc, remaining_position_budget, remaining_daily_budget, remaining_exposure_headroom)
+    clamped_amount_usdc = min(amount_usdc, remaining_position_budget, remaining_exposure_headroom)
     if clamped_amount_usdc < MIN_REAL_TICKET_USDC:
         return _result("blocked", reason=f"clamped size ${clamped_amount_usdc:.2f} is below MIN_REAL_TICKET_USDC (${MIN_REAL_TICKET_USDC:.2f})")
 
@@ -620,7 +581,6 @@ def _execute_buy(token: str, amount_usdc: float) -> dict:
     existing["cost_basis_usdc"] += clamped_amount_usdc
     existing["buy_signatures"].append(exec_result["signature"])
     positions[token] = existing
-    _record_spend(positions, clamped_amount_usdc, live_usdc_balance)
     _save_real_positions(positions)
 
     return _result(

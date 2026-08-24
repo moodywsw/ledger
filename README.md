@@ -76,7 +76,6 @@ set explicitly.
 | `JUPITER_API_KEY` | `real_trading.py`, only if armed | From https://developers.jup.ag/portal — required by Jupiter's Ultra Swap API (`x-api-key`). |
 | `MAX_REAL_POSITION_PCT` | `real_trading.py` (optional) | Per-position ceiling as a fraction of the CURRENT live on-chain USDC balance, recomputed on every buy — not a fixed dollar figure. Default `0.30` (30%). |
 | `MAX_TOTAL_EXPOSURE_PCT` | `real_trading.py` (optional) | Ceiling on total USDC value across every open real position combined (existing + new), as a fraction of total balance (liquid + committed), confirmed against the chain. Stops Sniper Mode's rapid-fire entries from committing the whole wallet even though each individual buy respects `MAX_REAL_POSITION_PCT`. Default `0.85` (85%, leaving a 15% floor always liquid). |
-| `MAX_REAL_DAILY_PCT` | `real_trading.py` (optional) | Ceiling on total real USDC spent per rolling UTC day, across all positions, as a fraction of the wallet's balance at the START of that UTC day (snapshotted once, not recomputed live like the caps above — see the module docstring). Default `0.70` (70%). |
 | `MIN_REAL_TICKET_USDC` | `real_trading.py` (optional) | Real buys below this size are skipped (mostly fees at that point). Default `1.00`. |
 | `MIN_SOL_FOR_GAS` | `real_trading.py` (optional) | Trades are in USDC, but every Solana transaction still costs SOL for network fees — below this SOL balance, a real trade is refused outright instead of failing mid-transaction. Default `0.01`. |
 
@@ -147,11 +146,10 @@ call — never a stored number. A second, independent ceiling,
 across every open real position at once, confirmed against the chain — this
 exists because Sniper Mode can open several positions in quick succession,
 and the per-position cap alone wouldn't stop that sequence from eventually
-committing nearly the whole wallet. `MAX_REAL_DAILY_PCT` is a third ceiling
-on top of both — 70% of the wallet's balance at the START of the current
-UTC day (a fixed snapshot for the day, not the live balance, so the
-budget doesn't shrink as the day's own spending draws the live balance
-down). Every real sell re-derives the actual
+committing nearly the whole wallet. There is deliberately no daily spend
+cap — the wallet is also managed manually from time to time, so a
+bot-tracked "spent today" figure can't be trusted to mean what it implies.
+Every real sell re-derives the actual
 on-chain token balance before selling a single unit more than genuinely
 exists in the wallet.
 
