@@ -349,9 +349,9 @@ CONVICTION_TOPUP_STAGE2_TARGET_FRACTION = 1.00
 #
 # A separate, faster, more mechanical strategy from the main wallet-
 # tracking one: enters new Pump.fun launches directly, before there's
-# any wallet signal or chart history — pure speed. Off by default —
-# set SNIPER_MODE_ENABLED=true to turn it on.
-SNIPER_MODE_ENABLED = os.environ.get("SNIPER_MODE_ENABLED", "true").lower() == "true"  # on by default now
+# any wallet signal or chart history — pure speed. On by default —
+# set SNIPER_MODE_ENABLED=false to turn it off.
+SNIPER_MODE_ENABLED = os.environ.get("SNIPER_MODE_ENABLED", "true").lower() == "true"
 SNIPER_WS_URL = "wss://pumpdev.io/ws"  # same free, unofficial feed as pumpfun_listener.py
 SNIPER_ACTIVE_PRESET = os.environ.get("SNIPER_PRESET", "hyper_early_scalp")
 
