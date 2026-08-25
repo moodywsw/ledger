@@ -544,6 +544,7 @@ class PaperPosition:
     entry_market_cap_usd: float = None  # market cap at entry — powers the clean "Entry MC -> Exit MC" close format
     target_size_sol: float = 0.0  # conviction-mode only: the FULL size calculated from risk_score — 0 for non-conviction positions (priority-copy, sniper), which never scale in
     topup_stage: int = 0  # conviction-mode pacing: 0 = only the initial fractional entry, 1 = first top-up done, 2 = fully topped up to target_size_sol
+    peeled_multiples: list = field(default_factory=list)  # priority-copy paper positions only — which 2x multiples since entry (2, 4, 8, ...) have already had their 20%-of-what-remains peel taken; prevents re-peeling the same rung
 
 
 @dataclass
@@ -1573,17 +1574,22 @@ def copy_priority_wallet_entry(
             thesis=entry_opinion, entry_market_cap_usd=entry_mc, mirror_real=True,
         )
         if token in state.open_positions:
-            # Tagged to contain "Sniper" so it correctly routes through
-            # check_sniper_positions (the Cupsey ladder), not the main
-            # trailing-stop logic — see the substring check in both.
-            state.open_positions[token]["risk_level"] = "⭐ Priority Copy (Sniper)"
+            # Deliberately does NOT contain "Sniper" — that substring is
+            # what routes a position to check_sniper_positions (the fast
+            # Cupsey ladder, gated on SNIPER_MODE_ENABLED). Priority-copy
+            # paper positions instead flow through the always-on
+            # check_open_positions ladder (stop-loss/trailing-stop, plus
+            # the 2x-peel logic gated on "Priority Copy" in risk_level),
+            # so they stay protected even with the sniper toggled off.
+            state.open_positions[token]["risk_level"] = "⭐ Priority Copy"
             state.open_positions[token]["original_size_sol"] = size_sol
             state.open_positions[token]["entry_dev_holding_pct"] = dev_pct
             state.save()
     else:
-        # Same "Sniper" substring tag as the paper path, for the same
-        # reason — check_sniper_positions (real-only branch) uses it to
-        # find this position.
+        # Real-only trading is untouched by the paper-side re-routing
+        # above — this keeps the "Sniper" substring tag so
+        # check_sniper_positions' real-only branch still finds and
+        # manages this position on the Cupsey ladder, exactly as before.
         open_real_only_position(
             token, entry_price, amount_usdc, opened_by=wallet, symbol=display_symbol,
             risk_level="⭐ Priority Copy (Sniper)", entry_dev_holding_pct=dev_pct,
@@ -2364,6 +2370,16 @@ STOP_LOSS_PCT = -0.25            # close everything if down 25% from entry
 INITIAL_RECOVERY_PCT = 0.40      # at +40%, sell enough to recoup the original capital
 TRAILING_STOP_PCT = 0.20         # after that, close if price pulls back 20% from its peak
 
+# Paper-trading priority-copy positions only (risk_level contains
+# "Priority Copy" — see copy_priority_wallet_entry). With the sniper
+# ladder off, this is a standing phased take-profit layered on top of
+# the stop-loss/trailing-stop above: every new 2x multiple since entry
+# (2x, 4x, 8x, 16x, ...) sells this fraction of whatever remains at
+# that moment — not of the original size — so each cut is smaller in
+# absolute terms than the last. Independent of the capital-recovery/
+# trailing-stop logic below; both can fire on the same position.
+PRIORITY_COPY_PEEL_FRACTION = 0.20
+
 
 def check_open_positions(state: LedgerState):
     """
@@ -2378,11 +2394,19 @@ def check_open_positions(state: LedgerState):
          to 10x as long as it doesn't give back 20% off its high; it
          only exits when momentum actually breaks.
 
-    Skips positions tagged "🎯 Sniper Play" — those use the separate,
-    much faster Cupsey-style exit logic in check_sniper_positions()
-    instead, since sniped positions are a different strategy entirely
-    (fast scalp, never held long) from the patient trailing-stop
-    approach here.
+    Priority-copy paper positions (risk_level contains "Priority Copy")
+    get one extra layer on top, checked right after the stop-loss:
+    PRIORITY_COPY_PEEL_FRACTION (20%) of whatever remains is sold at
+    every new 2x multiple since entry (2x, 4x, 8x, ...), tracked in
+    peeled_multiples so the same rung never fires twice. This can still
+    be cut short by the stop-loss above it, and runs independently of
+    the capital-recovery/trailing-stop steps below.
+
+    Skips positions tagged "🎯 Sniper Play" (Sniper Mode) — those use
+    the separate, much faster Cupsey-style exit logic in
+    check_sniper_positions() instead, since sniped positions are a
+    different strategy entirely (fast scalp, never held long) from the
+    patient trailing-stop approach here.
 
     Run this every cycle so positions aren't left unmonitored.
     """
@@ -2423,6 +2447,29 @@ def check_open_positions(state: LedgerState):
         if change_pct <= STOP_LOSS_PCT + EPSILON:
             close_paper_position(state, mint, current_price, reason="🛑 Stop Loss")
             continue
+
+        if "Priority Copy" in pos.get("risk_level", ""):
+            current_multiple = 1 + change_pct
+            peeled_multiples = pos.get("peeled_multiples", [])
+            next_target = 2 ** (len(peeled_multiples) + 1)
+            # A while loop (not a single check) so a price that jumps
+            # past several rungs in one cycle — common on fast-moving
+            # memecoins — still peels each one in order instead of
+            # silently skipping straight to the highest.
+            while current_multiple >= next_target - EPSILON:
+                partial_close_paper_position(
+                    state, mint, current_price, PRIORITY_COPY_PEEL_FRACTION,
+                    reason=f"🎯 {next_target}x Peel (20%)",
+                )
+                pos = state.open_positions.get(mint)
+                if not pos:
+                    break  # fully drained by this peel
+                peeled_multiples = peeled_multiples + [next_target]
+                pos["peeled_multiples"] = peeled_multiples
+                state.save()
+                next_target *= 2
+            if not pos:
+                continue
 
         if not pos["initial_recovered"]:
             if change_pct >= INITIAL_RECOVERY_PCT - EPSILON:
