@@ -110,6 +110,16 @@ MAX_TOTAL_EXPOSURE_PCT = float(os.environ.get("MAX_TOTAL_EXPOSURE_PCT", "0.85"))
 MIN_REAL_TICKET_USDC = float(os.environ.get("MIN_REAL_TICKET_USDC", "1.00"))
 MAX_ACCEPTABLE_PRICE_IMPACT_PCT = 5.0  # skip the trade if Jupiter's quote implies more slippage than this
 
+# A sell blocked by MAX_ACCEPTABLE_PRICE_IMPACT_PCT above isn't retried by
+# anything on its own — see retry_stuck_real_sell() below. These four
+# constants govern that retry: how often, how many tries before eating
+# extra slippage, how much extra slippage is acceptable for exactly that
+# emergency exit, and how far to back off if even that isn't enough.
+STUCK_POSITION_RETRY_COOLDOWN_SECONDS = 45          # min gap between retries while still under the attempt threshold
+STUCK_POSITION_FORCE_EXIT_ATTEMPTS = 5              # after this many blocked attempts, switch to the elevated ceiling
+STUCK_POSITION_FORCED_MAX_PRICE_IMPACT_PCT = 15.0   # temporary, exit-only ceiling once forced — extra slippage beats staying stuck, but still bounded
+STUCK_POSITION_FORCED_RETRY_COOLDOWN_SECONDS = 1800 # once forced AND still blocked, back off to every 30 min instead of 45s — avoids flooding the journal on a genuinely dead-liquidity token, still self-heals if liquidity comes back
+
 # Every Solana transaction costs SOL for network fees, full stop — moving
 # the trading currency to USDC does not change that. Checked before every
 # real order; falling below this refuses the trade outright rather than
@@ -461,7 +471,7 @@ def _result(status: str, **fields) -> dict:
     return {"status": status, "success": status == "success", **fields}
 
 
-def execute_real_trade(token: str, amount_usdc: float, side: str) -> dict:
+def execute_real_trade(token: str, amount_usdc: float, side: str, max_price_impact_pct_override: float = None) -> dict:
     """
     Real execution, with a typed outcome instead of a bare pass/fail —
     adapted from omo's OrderResult (execute.server.ts), which
@@ -508,7 +518,7 @@ def execute_real_trade(token: str, amount_usdc: float, side: str) -> dict:
 
         if side == "buy":
             return _execute_buy(token, amount_usdc)
-        return _execute_sell(token, amount_usdc)
+        return _execute_sell(token, amount_usdc, max_price_impact_pct_override=max_price_impact_pct_override)
     except RuntimeError as e:
         # Configuration problems (missing key, wallet mismatch, missing
         # RPC/API key) — the guard-rail-style outcome, not a crash.
@@ -589,7 +599,7 @@ def _execute_buy(token: str, amount_usdc: float) -> dict:
     )
 
 
-def _execute_sell(token: str, amount_usdc: float) -> dict:
+def _execute_sell(token: str, amount_usdc: float, max_price_impact_pct_override: float = None) -> dict:
     positions = _load_real_positions()
     existing = positions.get(token)
     if not existing or existing.get("raw_amount", 0) <= 0:
@@ -622,8 +632,31 @@ def _execute_sell(token: str, amount_usdc: float) -> dict:
     order = _get_order(token, USDC_MINT, raw_to_sell, taker=taker)
 
     price_impact = float(order.get("priceImpact") or 0)
-    if price_impact > MAX_ACCEPTABLE_PRICE_IMPACT_PCT:
-        return _result("blocked", reason=f"price impact {price_impact:.2f}% exceeds MAX_ACCEPTABLE_PRICE_IMPACT_PCT ({MAX_ACCEPTABLE_PRICE_IMPACT_PCT}%)")
+    effective_max_impact = (
+        max_price_impact_pct_override if max_price_impact_pct_override is not None else MAX_ACCEPTABLE_PRICE_IMPACT_PCT
+    )
+    if price_impact > effective_max_impact:
+        # Nothing retries this on its own — see retry_stuck_real_sell()
+        # and STUCK_POSITION_* above. Track the block on the position
+        # itself (persisted here, not just returned) so a periodic sweep
+        # elsewhere can find it, respect a cooldown between attempts, and
+        # know when to switch to the elevated emergency ceiling — instead
+        # of this position sitting silently forgotten forever, which is
+        # exactly what happened live before this existed.
+        now_ts = time.time()
+        existing.setdefault("stuck_since", now_ts)
+        existing["stuck_attempts"] = existing.get("stuck_attempts", 0) + 1
+        existing["stuck_last_attempt_ts"] = now_ts
+        existing["stuck_last_price_impact_pct"] = price_impact
+        positions[token] = existing
+        _save_real_positions(positions)
+        ceiling_kind = "elevated" if max_price_impact_pct_override is not None else "normal"
+        return _result(
+            "blocked",
+            reason=f"price impact {price_impact:.2f}% exceeds {ceiling_kind} ceiling ({effective_max_impact}%) — attempt #{existing['stuck_attempts']} for this position",
+            price_impact_pct=price_impact, stuck_attempts=existing["stuck_attempts"],
+            forced_ceiling_used=max_price_impact_pct_override is not None,
+        )
 
     tx_b64 = order.get("transaction")
     if not tx_b64:
@@ -644,6 +677,14 @@ def _execute_sell(token: str, amount_usdc: float) -> dict:
     # dashboard has real, not paper, P&L to show.
     realized_pnl_usdc = usdc_received - cost_basis * fraction
     _record_realized_pnl(positions, realized_pnl_usdc)
+    # A prior blocked attempt may have left stuck_* markers on this
+    # position (see the price-impact gate above) — this sell just
+    # succeeded, so they no longer apply. Captured before clearing so the
+    # caller can still tell whether this particular sell was a stuck-
+    # position recovery, and if so, how many attempts it took.
+    was_stuck_attempts = existing.get("stuck_attempts", 0)
+    for k in ("stuck_since", "stuck_attempts", "stuck_last_attempt_ts", "stuck_last_price_impact_pct"):
+        existing.pop(k, None)
     existing["raw_amount"] -= raw_to_sell
     existing["cost_basis_usdc"] = max(0.0, existing["cost_basis_usdc"] * (1 - fraction))
     existing["sell_signatures"].append(exec_result["signature"])
@@ -657,6 +698,7 @@ def _execute_sell(token: str, amount_usdc: float) -> dict:
         "success", signature=exec_result["signature"], tokens_sold=raw_to_sell,
         usdc_received=usdc_received, price_impact_pct=price_impact,
         fraction_sold=fraction, realized_pnl_usdc=realized_pnl_usdc,
+        stuck_attempts=was_stuck_attempts, forced_ceiling_used=max_price_impact_pct_override is not None,
     )
 
 
@@ -697,10 +739,43 @@ def get_open_real_positions_summary() -> list:
     """
     positions = _load_real_positions()
     return [
-        {"mint": mint, "cost_basis_usdc": pos.get("cost_basis_usdc", 0.0), "raw_amount": pos.get("raw_amount", 0)}
+        {
+            "mint": mint, "cost_basis_usdc": pos.get("cost_basis_usdc", 0.0), "raw_amount": pos.get("raw_amount", 0),
+            "stuck_attempts": pos.get("stuck_attempts", 0),
+            "stuck_since": pos.get("stuck_since"),
+            "stuck_last_attempt_ts": pos.get("stuck_last_attempt_ts"),
+        }
         for mint, pos in positions.items()
         if mint != "_meta" and pos.get("raw_amount", 0) > 0
     ]
+
+
+def retry_stuck_real_sell(token: str) -> dict:
+    """
+    One retry attempt for a real position that a price-impact block left
+    orphaned — always sells the ENTIRE remaining position (its own
+    cost_basis_usdc fed back in as amount_usdc, which _execute_sell's
+    fraction math resolves to 1.0), since by the time anything calls this
+    there's no paper/ladder position left driving a partial fraction.
+
+    Auto-escalates to STUCK_POSITION_FORCED_MAX_PRICE_IMPACT_PCT once this
+    position's own stuck_attempts counter (written by _execute_sell's
+    price-impact gate) has reached STUCK_POSITION_FORCE_EXIT_ATTEMPTS —
+    eating extra slippage on the way out beats staying stuck indefinitely.
+
+    Eligibility (which mints, how often) is entirely the caller's job —
+    this executes unconditionally once called, same as execute_real_trade
+    never second-guessing why it was invoked.
+    """
+    positions = _load_real_positions()
+    pos = positions.get(token)
+    if not pos or pos.get("raw_amount", 0) <= 0:
+        return _result("blocked", reason=f"no tracked real position for {token} to retry")
+    forced = (pos.get("stuck_attempts", 0) + 1) >= STUCK_POSITION_FORCE_EXIT_ATTEMPTS
+    override = STUCK_POSITION_FORCED_MAX_PRICE_IMPACT_PCT if forced else None
+    result = execute_real_trade(token, pos.get("cost_basis_usdc", 0.0), "sell", max_price_impact_pct_override=override)
+    result["forced_ceiling_used"] = forced
+    return result
 
 
 def get_wallet_balances() -> dict:

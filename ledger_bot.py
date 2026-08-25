@@ -71,7 +71,13 @@ from pathlib import Path
 from journal_store import log_journal, get_token_history
 from theses_store import upsert_thesis
 from api_server import start_api_server
-from real_trading import execute_real_trade, get_wallet_balances, get_open_real_positions_summary
+from real_trading import (
+    execute_real_trade, get_wallet_balances, get_open_real_positions_summary,
+    retry_stuck_real_sell, REAL_TRADING_ENABLED,
+    MAX_ACCEPTABLE_PRICE_IMPACT_PCT, STUCK_POSITION_FORCE_EXIT_ATTEMPTS,
+    STUCK_POSITION_FORCED_MAX_PRICE_IMPACT_PCT, STUCK_POSITION_RETRY_COOLDOWN_SECONDS,
+    STUCK_POSITION_FORCED_RETRY_COOLDOWN_SECONDS,
+)
 import real_only_positions
 
 # ── Config ────────────────────────────────────────────────────────────
@@ -2158,6 +2164,75 @@ def _mirror_real_sell(pos: dict, token: str, amount_sol_equivalent: float, reaso
     _report_real_result(real_result, real_symbol, token, "sell", reason=reason)
 
 
+def sweep_stuck_real_positions(state: "LedgerState"):
+    """
+    Catches real positions _execute_sell's price-impact guard rail left
+    open with nothing left driving them — no active paper position
+    (state.open_positions) and no active real-only ladder entry
+    (real_only_positions.json) for that mint, regardless of which mode
+    originally opened it or which caller's blocked sell orphaned it.
+    Confirmed live: a paper/ladder position closes on schedule even when
+    its real mirror sell is blocked, and nothing else ever calls back
+    into real_trading.py for that mint again — this is what used to leave
+    a position like that open and unmanaged forever.
+
+    Runs every outer main-loop cycle, unconditionally — not gated on
+    SNIPER_MODE_ENABLED, which is being turned off — so this keeps
+    working regardless of which entry path opened the orphaned position.
+    """
+    if not REAL_TRADING_ENABLED:
+        return
+
+    active_ladder_mints = set(real_only_positions.load_real_only_positions().keys())
+    now = time.time()
+
+    for entry in get_open_real_positions_summary():
+        token = entry["mint"]
+        if token in state.open_positions or token in active_ladder_mints:
+            continue  # still actively managed elsewhere — leave it to that exit logic
+
+        attempts = entry.get("stuck_attempts", 0)
+        cooldown = (
+            STUCK_POSITION_FORCED_RETRY_COOLDOWN_SECONDS
+            if attempts >= STUCK_POSITION_FORCE_EXIT_ATTEMPTS
+            else STUCK_POSITION_RETRY_COOLDOWN_SECONDS
+        )
+        last_attempt = entry.get("stuck_last_attempt_ts")
+        if last_attempt and (now - last_attempt) < cooldown:
+            continue  # cooling down
+
+        result = retry_stuck_real_sell(token)
+        meta = get_token_metadata(token)
+        real_symbol = meta.get("symbol") or f"{token[:6]}..."
+        forced = result.get("forced_ceiling_used")
+        attempts_after = result.get("stuck_attempts")
+
+        if result["status"] == "success":
+            reason = "🎯 Forced Exit — Stuck Position" if forced else "🔁 Stuck Position — Retry Recovered"
+            _report_real_result(result, real_symbol, token, "sell", reason=reason)
+        elif forced and attempts_after == STUCK_POSITION_FORCE_EXIT_ATTEMPTS:
+            # First attempt at the elevated ceiling and still blocked —
+            # the one moment on an indefinitely-stuck timeline that must
+            # not go unreported. From here the cooldown backs off to
+            # STUCK_POSITION_FORCED_RETRY_COOLDOWN_SECONDS, so this fires
+            # only once per position (attempts_after only equals the
+            # threshold exactly on the attempt that just crossed it).
+            speak(
+                title=f"🚨 Forced Exit — Still Blocked — {real_symbol}",
+                description=(
+                    f"{STUCK_POSITION_FORCE_EXIT_ATTEMPTS} attempts at the normal "
+                    f"{MAX_ACCEPTABLE_PRICE_IMPACT_PCT}% ceiling failed; retried at the elevated "
+                    f"{STUCK_POSITION_FORCED_MAX_PRICE_IMPACT_PCT}% ceiling and STILL blocked "
+                    f"(quote impact {result.get('price_impact_pct', 0):.2f}%). Will keep retrying "
+                    f"every {STUCK_POSITION_FORCED_RETRY_COOLDOWN_SECONDS // 60} min — check manually if this doesn't clear."
+                ),
+                color=COLOR_REAL, journal_kind="did_real", token_ticker=real_symbol,
+                journal_meta={"token": token, "status": result["status"], "detail": result.get("reason"), "stuck_attempts": attempts_after},
+            )
+        else:
+            _report_real_result(result, real_symbol, token, "sell", reason="🔁 Stuck Position Retry — Still Blocked")
+
+
 def partial_close_paper_position(state: LedgerState, token: str, exit_price: float, fraction: float, reason: str = "✂️ Scaled Out"):
     """
     Sells a FRACTION of the current remaining position, not the whole
@@ -4109,6 +4184,7 @@ def main():
             time.sleep(0.3)  # spread requests out across the cycle
 
         check_open_positions(state)
+        sweep_stuck_real_positions(state)
         if SNIPER_MODE_ENABLED:
             check_sniper_positions(state)
         check_for_daily_target_hit(state)
