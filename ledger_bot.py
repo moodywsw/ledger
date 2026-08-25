@@ -4187,6 +4187,19 @@ def main():
         sweep_stuck_real_positions(state)
         if SNIPER_MODE_ENABLED:
             check_sniper_positions(state)
+        elif not PAPER_TRADING_ENABLED:
+            # check_sniper_positions() — and the check_real_only_sniper_positions()
+            # branch it delegates to when PAPER_TRADING_ENABLED is off — is
+            # what actually exits real-only-mode positions (stop-loss, TP
+            # ladder, time exit). It's normally reached through the
+            # SNIPER_MODE_ENABLED gate above, which silently meant that
+            # with Sniper Mode OFF, a real-only position got zero exit
+            # monitoring ever again after its opening buy — confirmed live:
+            # several priority-copy real-only positions sat open for hours
+            # with no stop-loss/time-exit coverage once SNIPER_MODE_ENABLED
+            # was turned off. This keeps real-only exits running at the
+            # normal cycle cadence independent of that toggle.
+            check_real_only_sniper_positions()
         check_for_daily_target_hit(state)
         check_for_blowup_reset(state)
         check_daily_loss_pause(state)
