@@ -2115,9 +2115,17 @@ def _report_real_result(real_result: dict, symbol: str, token: str, side: str, r
     status = real_result["status"]
     if status == "success":
         verb = "BUY" if side == "buy" else "SELL"
+        fields = None
         if side == "buy":
             square = "🟦"
             amount_line = f"Spent `${real_result['usdc_spent']:.2f}` USDC"
+            # With PAPER_TRADING_ENABLED=false now the normal mode, the
+            # paper-only "TRADE OPENED" message (which always carried this
+            # CA field) no longer gets posted — this was the only place
+            # the contract address showed up in Discord at all. Added only
+            # on the buy side; a REAL SELL never needs it, the preceding
+            # REAL BUY for the same token already announced it.
+            fields = [{"name": "CA:", "value": token, "inline": False}]
         else:
             realized_pnl = real_result.get("realized_pnl_usdc")
             square = "🔴" if (realized_pnl is not None and realized_pnl < 0) else "🟢"
@@ -2127,6 +2135,7 @@ def _report_real_result(real_result: dict, symbol: str, token: str, side: str, r
             title=f"{square} REAL {verb} — {symbol}" + (f" ({reason})" if reason else ""),
             description=amount_line,
             color=COLOR_REAL,
+            fields=fields,
             journal_kind="did_real", token_ticker=symbol,
             journal_meta={"side": side, "token": token, "reason": reason, **real_result},
         )
