@@ -4046,8 +4046,14 @@ def main():
             time.sleep(POLL_SECONDS)
             continue
 
-        # Performance recap — the "learning from losses" surfacing step
-        if cycle_count % PERFORMANCE_RECAP_EVERY_N_CYCLES == 0:
+        # Performance recap — the "learning from losses" surfacing step.
+        # Reads only paper state (state.trade_log/balance_sol), which
+        # stays frozen once PAPER_TRADING_ENABLED is off — posting it
+        # anyway just puts stale "paper trading, not real funds yet"
+        # numbers in Discord that read as if they were current real
+        # activity. Skipped entirely in that mode; resumes on its own
+        # if paper trading is ever turned back on.
+        if PAPER_TRADING_ENABLED and cycle_count % PERFORMANCE_RECAP_EVERY_N_CYCLES == 0:
             try:
                 post_performance_recap(state)
             except Exception as e:
