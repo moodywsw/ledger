@@ -97,18 +97,29 @@ REAL_TRADING_ENABLED = os.environ.get("REAL_TRADING_ENABLED", "false").strip().l
 # 30% means a sequence of buys tapers geometrically (each is 30% of
 # whatever's left), which alone approaches full exposure only in the
 # limit; MAX_TOTAL_EXPOSURE_PCT below is the explicit hard backstop.
-MAX_REAL_POSITION_PCT = float(os.environ.get("MAX_REAL_POSITION_PCT", "0.30"))
+# Default lowered 0.30 -> 0.10 (audit-hardening): this is now only the
+# backstop — normal sizing comes from risk_engine (≈3% of equity per trade).
+# An explicit Railway env var still overrides this.
+MAX_REAL_POSITION_PCT = float(os.environ.get("MAX_REAL_POSITION_PCT", "0.10"))
 # 85% of total USDC value (live liquid balance + already-committed real
 # positions, confirmed against the chain) — see _compute_real_exposure_usdc().
 # Leaves a 15% floor always liquid: a buffer for exit slippage and so the
 # wallet is never fully committed to open positions at once.
-MAX_TOTAL_EXPOSURE_PCT = float(os.environ.get("MAX_TOTAL_EXPOSURE_PCT", "0.85"))
+# Default lowered 0.85 -> 0.40 (audit-hardening); env var still overrides.
+MAX_TOTAL_EXPOSURE_PCT = float(os.environ.get("MAX_TOTAL_EXPOSURE_PCT", "0.40"))
 # $1 minimum rather than a strict pro-rata conversion of the old SOL
 # minimum — Jupiter's platform fee plus network fee eats a large
 # fraction of anything much smaller than this, so a sub-$1 "real" fill
 # would mostly just be fees.
 MIN_REAL_TICKET_USDC = float(os.environ.get("MIN_REAL_TICKET_USDC", "1.00"))
-MAX_ACCEPTABLE_PRICE_IMPACT_PCT = 5.0  # skip the trade if Jupiter's quote implies more slippage than this
+# Jupiter Ultra reports `priceImpact` as a SIGNED percent — adverse impact
+# is NEGATIVE (verified live 2026-10-09: a large USDC->BONK order quoted
+# priceImpact=-30.9). The old `price_impact > 5.0` check therefore never
+# fired on a bad fill. Every comparison below now uses abs().
+# Entries get a tight ceiling (we can always skip); exits a looser one
+# (being stuck in a dying memecoin usually costs more than slippage).
+MAX_ACCEPTABLE_PRICE_IMPACT_PCT = float(os.environ.get("MAX_ENTRY_PRICE_IMPACT_PCT", "3.0"))
+MAX_EXIT_PRICE_IMPACT_PCT = float(os.environ.get("MAX_EXIT_PRICE_IMPACT_PCT", "8.0"))
 
 # A sell blocked by MAX_ACCEPTABLE_PRICE_IMPACT_PCT above isn't retried by
 # anything on its own — see retry_stuck_real_sell() below. These four
@@ -117,7 +128,7 @@ MAX_ACCEPTABLE_PRICE_IMPACT_PCT = 5.0  # skip the trade if Jupiter's quote impli
 # emergency exit, and how far to back off if even that isn't enough.
 STUCK_POSITION_RETRY_COOLDOWN_SECONDS = 45          # min gap between retries while still under the attempt threshold
 STUCK_POSITION_FORCE_EXIT_ATTEMPTS = 5              # after this many blocked attempts, switch to the elevated ceiling
-STUCK_POSITION_FORCED_MAX_PRICE_IMPACT_PCT = 15.0   # temporary, exit-only ceiling once forced — extra slippage beats staying stuck, but still bounded
+STUCK_POSITION_FORCED_MAX_PRICE_IMPACT_PCT = float(os.environ.get("STUCK_POSITION_FORCED_MAX_PRICE_IMPACT_PCT", "20.0"))   # temporary, exit-only ceiling once forced — extra slippage beats staying stuck, but still bounded
 STUCK_POSITION_FORCED_RETRY_COOLDOWN_SECONDS = 1800 # once forced AND still blocked, back off to every 30 min instead of 45s — avoids flooding the journal on a genuinely dead-liquidity token, still self-heals if liquidity comes back
 
 # Every Solana transaction costs SOL for network fees, full stop — moving
@@ -392,16 +403,32 @@ def _load_real_positions() -> dict:
 def _save_real_positions(positions: dict):
     try:
         REAL_POSITIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with REAL_POSITIONS_FILE.open("w", encoding="utf-8") as f:
+        tmp = REAL_POSITIONS_FILE.with_suffix(".json.tmp")
+        with tmp.open("w", encoding="utf-8") as f:
             json.dump(positions, f, indent=2)
+        os.replace(tmp, REAL_POSITIONS_FILE)  # atomic: never a half-written real-money ledger
     except Exception as e:
         print(f"[WARN] real_positions.json write failed: {e}")
+
+
+def _utc_day() -> str:
+    return time.strftime("%Y-%m-%d", time.gmtime())
 
 
 def _record_realized_pnl(positions: dict, delta_usdc: float):
     meta = positions.get("_meta", {})
     meta["realized_pnl_usdc"] = meta.get("realized_pnl_usdc", 0.0) + delta_usdc
+    # Per-UTC-day realized PnL, so the risk desk can enforce a daily loss
+    # limit on real-only trading (there was no real-money circuit breaker).
+    by_day = meta.get("realized_by_day", {})
+    day = _utc_day()
+    by_day[day] = by_day.get(day, 0.0) + delta_usdc
+    meta["realized_by_day"] = dict(sorted(by_day.items())[-60:])
     positions["_meta"] = meta
+
+
+def get_realized_pnl_today_usdc() -> float:
+    return _load_real_positions().get("_meta", {}).get("realized_by_day", {}).get(_utc_day(), 0.0)
 
 
 def _get_order(input_mint: str, output_mint: str, amount_raw: int, taker: str = None) -> dict:
@@ -569,7 +596,7 @@ def _execute_buy(token: str, amount_usdc: float) -> dict:
     amount_raw = round(clamped_amount_usdc * USDC_UNITS_PER_USDC)
     order = _get_order(USDC_MINT, token, amount_raw, taker=taker)
 
-    price_impact = float(order.get("priceImpact") or 0)
+    price_impact = abs(float(order.get("priceImpact") or 0))
     if price_impact > MAX_ACCEPTABLE_PRICE_IMPACT_PCT:
         return _result("blocked", reason=f"price impact {price_impact:.2f}% exceeds MAX_ACCEPTABLE_PRICE_IMPACT_PCT ({MAX_ACCEPTABLE_PRICE_IMPACT_PCT}%)")
 
@@ -586,7 +613,9 @@ def _execute_buy(token: str, amount_usdc: float) -> dict:
     if exec_result.get("status") != "Success":
         return _result("failed", reason=f"execute returned status={exec_result.get('status')!r}", raw_result=exec_result)
 
-    tokens_received = int(order.get("outAmount") or 0)
+    # Prefer the actual landed amount over the quote (Ultra/Swap v2 report
+    # totalOutputAmount on /execute); fall back to the quoted outAmount.
+    tokens_received = int(exec_result.get("totalOutputAmount") or exec_result.get("outputAmountResult") or order.get("outAmount") or 0)
     existing["raw_amount"] += tokens_received
     existing["cost_basis_usdc"] += clamped_amount_usdc
     existing["buy_signatures"].append(exec_result["signature"])
@@ -631,9 +660,9 @@ def _execute_sell(token: str, amount_usdc: float, max_price_impact_pct_override:
     taker = _wallet_pubkey_str()
     order = _get_order(token, USDC_MINT, raw_to_sell, taker=taker)
 
-    price_impact = float(order.get("priceImpact") or 0)
+    price_impact = abs(float(order.get("priceImpact") or 0))
     effective_max_impact = (
-        max_price_impact_pct_override if max_price_impact_pct_override is not None else MAX_ACCEPTABLE_PRICE_IMPACT_PCT
+        max_price_impact_pct_override if max_price_impact_pct_override is not None else MAX_EXIT_PRICE_IMPACT_PCT
     )
     if price_impact > effective_max_impact:
         # Nothing retries this on its own — see retry_stuck_real_sell()
@@ -668,7 +697,7 @@ def _execute_sell(token: str, amount_usdc: float, max_price_impact_pct_override:
     if exec_result.get("status") != "Success":
         return _result("failed", reason=f"execute returned status={exec_result.get('status')!r}", raw_result=exec_result)
 
-    usdc_received_raw = int(order.get("outAmount") or 0)
+    usdc_received_raw = int(exec_result.get("totalOutputAmount") or exec_result.get("outputAmountResult") or order.get("outAmount") or 0)
     usdc_received = usdc_received_raw / USDC_UNITS_PER_USDC
     # cost_basis (captured above, before the reduction below) times the
     # fraction just sold is what was originally paid for exactly this

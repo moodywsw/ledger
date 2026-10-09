@@ -79,6 +79,26 @@ from real_trading import (
     STUCK_POSITION_FORCED_RETRY_COOLDOWN_SECONDS,
 )
 import real_only_positions
+import trade_cards
+from risk_engine import (
+    RiskConfig, PortfolioSnapshot, TokenSafetyInfo, UNKNOWN as SAFETY_UNKNOWN,
+    position_size as risk_position_size, check_portfolio_limits, check_token_safety,
+    evaluate_exit, score_wallets, consecutive_losses, utc_day,
+)
+from real_trading import get_realized_pnl_today_usdc
+
+# ── Risk desk (see risk_engine.py) ───────────────────────────────────
+# Every threshold is env-driven with conservative defaults; RISK.as_dict()
+# is printed on boot so the live config is always visible in Railway logs.
+RISK = RiskConfig.from_env()
+# "v2" = risk_engine exit engine (hard stop, TP ladder, breakeven, trailing,
+# time stop) for every position type. "legacy" = the old per-strategy exits
+# (Cupsey 60s ladder / capital-recovery trailing stop) — kept as a rollback.
+EXIT_ENGINE = os.environ.get("EXIT_ENGINE", "v2").strip().lower()
+# How often open positions are re-priced and checked, independent of the
+# wallet-poll cadence (old code only checked priority copies once per full
+# wallet-poll cycle, i.e. 60s + however long polling 12 wallets took).
+POSITION_CHECK_SECONDS = int(os.environ.get("POSITION_CHECK_SECONDS", "15"))
 
 # ── Config ────────────────────────────────────────────────────────────
 
@@ -141,6 +161,9 @@ DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
 # to post every message to all of them.
 DISCORD_WEBHOOK_URLS = [u.strip() for u in DISCORD_WEBHOOK_URL.split(",") if u.strip()]
 LEDGER_DISCORD_NAME = "Ledger"
+# "embed" (default): every ENTRY / SCALE / TRIM / EXIT is a compact Discord
+# embed card (trade_cards.py). "text": the same card flattened to markdown.
+DISCORD_TRADE_FORMAT = os.environ.get("DISCORD_TRADE_FORMAT", "embed").strip().lower()
 LEDGER_DISCORD_AVATAR_URL = os.environ.get("LEDGER_AVATAR_URL", "")  # optional
 
 # Wallets with a TOTAL portfolio value (SOL + all tokens, in USD) at
@@ -199,6 +222,7 @@ COLOR_REAL = 0xec4899     # magenta — real on-chain trade, deliberately distin
 def speak(
     title: str, description: str, color: int = COLOR_NEUTRAL, fields: list = None,
     journal_kind: str = None, token_ticker: str = None, journal_meta: dict = None,
+    embed: dict = None, post_discord: bool = True,
 ):
     """
     Ledger's public voice. Always prints a plain-text line to the
@@ -216,6 +240,13 @@ def speak(
     durable, without generating any new text or duplicating the
     decision logic that produced title/description in the first place.
     """
+    if embed is not None:
+        # Trade cards (trade_cards.py): the card itself is the message.
+        # The console/journal line is a flattened copy of the card so logs
+        # and the journal stay greppable.
+        title = embed.get("title", title)
+        flat = trade_cards.card_to_text(embed).split("\n", 1)
+        description = flat[1].replace("\n", " | ") if len(flat) > 1 else ""
     console_line = f"{title} — {description}"
     print(console_line)
 
@@ -245,7 +276,7 @@ def speak(
                 lines.append(f"**{f['name']}** {f['value']}")
     text = "\n\n".join(lines)
 
-    if not DISCORD_WEBHOOK_URLS:
+    if not DISCORD_WEBHOOK_URLS or not post_discord:
         return
 
     # Discord's message content cap is 2000 chars — trim defensively
@@ -257,6 +288,12 @@ def speak(
         "username": LEDGER_DISCORD_NAME,
         "content": text,
     }
+    if embed is not None:
+        if DISCORD_TRADE_FORMAT == "embed":
+            payload = {"username": LEDGER_DISCORD_NAME, "embeds": [embed]}
+        else:
+            text = trade_cards.card_to_text(embed)
+            payload["content"] = text[:1987] + "..." if len(text) > 1990 else text
     if LEDGER_DISCORD_AVATAR_URL:
         payload["avatar_url"] = LEDGER_DISCORD_AVATAR_URL
 
@@ -323,6 +360,7 @@ WATCHED_WALLETS, WALLET_HANDLES, PRIORITY_WALLETS = load_wallets()
 # Address-Activity webhooks (push-based, no polling cost at all) are
 # worth evaluating for real speed beyond this, separately.
 POLL_SECONDS = 60
+WALLET_MAX_PAGES = int(os.environ.get("WALLET_MAX_PAGES", "3"))
 
 # ── Risk limits (hard-coded, not suggestions) ───────────────────────────
 
@@ -570,19 +608,39 @@ class LedgerState:
     goal_deadline_announced: bool = False  # so the 72h pass/fail announcement only fires once per run
     trading_paused_until: str = None  # ISO timestamp — no new buys accepted while set and in the future
     daily_target_hit_this_run: bool = False  # so the 10-SOL milestone only announces once per run
+    # ── risk desk bookkeeping (audit-hardening) ──
+    closed_positions: list = field(default_factory=list)   # one record per fully-closed position: wallet, source, pnl_pct, reason...
+    token_last_exit_ts: dict = field(default_factory=dict) # mint -> unix ts of last full exit (re-entry cooldown)
+    day_key: str = None                                    # UTC day the day_start_equity belongs to
+    day_start_equity: float = 0.0
 
     def save(self):
         # Cap seen_signatures so this doesn't grow forever
-        self.seen_signatures = self.seen_signatures[-2000:]
+        self.seen_signatures = self.seen_signatures[-4000:]
+        self.closed_positions = self.closed_positions[-3000:]
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        STATE_FILE.write_text(json.dumps(self.__dict__, indent=2, default=str))
+        # Atomic write: a crash/redeploy mid-write used to be able to leave a
+        # truncated ledger_state.json, which then crashed every boot.
+        tmp = STATE_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(self.__dict__, indent=2, default=str))
+        os.replace(tmp, STATE_FILE)
 
     @classmethod
     def load(cls):
+        state = None
         if STATE_FILE.exists():
-            data = json.loads(STATE_FILE.read_text())
-            state = cls(**data)
-        else:
+            try:
+                data = json.loads(STATE_FILE.read_text())
+                known = set(cls.__dataclass_fields__)
+                dropped = sorted(k for k in data if k not in known)
+                if dropped:
+                    print(f"[STATE] ignoring unknown keys in {STATE_FILE}: {dropped}")
+                state = cls(**{k: v for k, v in data.items() if k in known})
+            except (json.JSONDecodeError, TypeError) as e:
+                backup = STATE_FILE.with_suffix(f".corrupt-{int(time.time())}.json")
+                STATE_FILE.rename(backup)
+                print(f"[STATE] {STATE_FILE} unreadable ({e}) — moved to {backup}, starting fresh")
+        if state is None:
             state = cls()
         if not state.run_start_time:
             state.run_start_time = datetime.now(timezone.utc).isoformat()
@@ -1131,16 +1189,32 @@ def get_wallet_transactions(wallet_address: str, limit: int = 10, until: str = N
     if not ALCHEMY_RPC_URL:
         raise RuntimeError("Set ALCHEMY_RPC_URL env var first.")
 
-    sigs_options = {"limit": limit}
-    if until:
-        sigs_options["until"] = until
-    sigs_payload = {
-        "jsonrpc": "2.0", "id": 1, "method": "getSignaturesForAddress",
-        "params": [wallet_address, sigs_options],
-    }
-    sigs_resp = request_with_backoff("POST", ALCHEMY_RPC_URL, json=sigs_payload, timeout=15)
-    signatures = sigs_resp.json().get("result") or []
+    # Paginate back to the cursor: with a single limit=10 page, a burst of
+    # >10 txs between polls (common — some tracked wallets get spammed with
+    # dust txs by third parties) pushed real buys off the page, and the
+    # cursor then jumped past them forever. Bounded to WALLET_MAX_PAGES.
+    signatures, before = [], None
+    for _ in range(WALLET_MAX_PAGES if until else 1):
+        sigs_options = {"limit": limit}
+        if until:
+            sigs_options["until"] = until
+        if before:
+            sigs_options["before"] = before
+        sigs_payload = {
+            "jsonrpc": "2.0", "id": 1, "method": "getSignaturesForAddress",
+            "params": [wallet_address, sigs_options],
+        }
+        sigs_resp = request_with_backoff("POST", ALCHEMY_RPC_URL, json=sigs_payload, timeout=15)
+        page = sigs_resp.json().get("result") or []
+        signatures.extend(page)
+        if len(page) < limit:
+            break
+        before = page[-1]["signature"]
     newest_signature = signatures[0]["signature"] if signatures else None
+    # Never act on anything older than the risk desk would copy anyway —
+    # saves getTransaction calls (and CU budget) on stale history.
+    min_block_time = time.time() - max(RISK.max_signal_age_seconds * 3, 600)
+    signatures = [sg for sg in signatures if not sg.get("blockTime") or sg["blockTime"] >= min_block_time]
 
     transactions = []
     for sig_entry in signatures:
@@ -1148,7 +1222,10 @@ def get_wallet_transactions(wallet_address: str, limit: int = 10, until: str = N
             continue
         tx_payload = {
             "jsonrpc": "2.0", "id": 1, "method": "getTransaction",
-            "params": [sig_entry["signature"], {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}],
+            # 1, not 0: Solana v1 transactions exist now (Jupiter's Swap v2 can
+            # emit them) and maxSupportedTransactionVersion=0 makes the RPC
+            # return an error for them — those buys were silently dropped.
+            "params": [sig_entry["signature"], {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 1}],
         }
         try:
             tx_resp = request_with_backoff("POST", ALCHEMY_RPC_URL, json=tx_payload, timeout=15)
@@ -1216,6 +1293,23 @@ def _wallet_paid_native_sol(tx: dict, wallet_address: str) -> bool:
         if info.get("source") == wallet_address and (info.get("lamports") or 0) > 0:
             return True
     return False
+
+
+def _native_sol_spent(tx: dict, wallet_address: str) -> float:
+    """Net native SOL that left the wallet in this tx, minus the network fee (best-effort, 0 if not found)."""
+    try:
+        keys = ((tx.get("transaction") or {}).get("message") or {}).get("accountKeys") or []
+        meta = tx.get("meta") or {}
+        for i, k in enumerate(keys):
+            pubkey = k.get("pubkey") if isinstance(k, dict) else k
+            if pubkey == wallet_address:
+                spent = (meta["preBalances"][i] - meta["postBalances"][i])
+                if i == 0:
+                    spent -= meta.get("fee", 0)
+                return max(0.0, spent / 1e9)
+    except (KeyError, IndexError, TypeError):
+        pass
+    return 0.0
 
 
 def _detect_dex_source(tx: dict) -> str:
@@ -1286,12 +1380,20 @@ def extract_new_buys(transactions: list, wallet_address: str) -> list:
 
         signature = (((tx.get("transaction") or {}).get("signatures")) or [None])[0]
         source_code = _detect_dex_source(tx)
+        # What the wallet actually paid — lets the risk desk measure how far
+        # price has already run past the copied wallet's own fill ("chasing").
+        usd_spent = -sum(d for m, d in token_deltas.items() if m in ("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB") and d < 0)
+        sol_spent = _native_sol_spent(tx, wallet_address) - sum(d for m, d in token_deltas.items() if m == SOL_MINT and d < 0)
         for mint, amount in received.items():
             buys.append({
                 "signature": signature,
                 "mint": mint,
                 "amount": amount,
                 "source": source_code,
+                "block_time": tx.get("blockTime"),
+                # Split evenly if one tx bought several tokens (rare).
+                "sol_spent": (sol_spent / len(received)) if sol_spent > 0 else None,
+                "usd_spent": (usd_spent / len(received)) if usd_spent > 0 else None,
             })
 
     return buys
@@ -1436,7 +1538,8 @@ def detect_market_structure(candles: list) -> dict:
 
 
 def copy_priority_wallet_entry(
-    token: str, wallet: str, trader_name: str, platform_name: str, metadata: dict, state: "LedgerState"
+    token: str, wallet: str, trader_name: str, platform_name: str, metadata: dict, state: "LedgerState",
+    signal_block_time: float = None, wallet_fill_price_usd: float = None,
 ):
     """
     Directly mirrors a trusted wallet's buy — no independent-conviction
@@ -1514,8 +1617,22 @@ def copy_priority_wallet_entry(
         )
         return
 
+    # Risk desk gate BEFORE the LLM call: wallet score, daily loss limit,
+    # loss-streak cooldown, concurrency/exposure, liquidity, holder
+    # concentration, mint/freeze authority, stale signal, chasing.
+    gate = risk_gate_entry(
+        state, token, display_symbol, "priority_copy", wallet=wallet,
+        signal_block_time=signal_block_time, wallet_fill_price_usd=wallet_fill_price_usd,
+    )
+    if not gate["ok"]:
+        _log_risk_refusal(display_symbol, token, "priority_copy", gate["reason"], trader_name)
+        return
+
+    # NOTE: this is the COPIED TRADER's own holding, not the token dev's —
+    # a drop later means the trader is selling, which the legacy ladder
+    # treats as an exit signal ("Dev Sell Detected" label is historical).
     dev_pct = get_dev_holding_pct(token, wallet)
-    top10_pct = get_top10_holder_pct(token)
+    top10_pct = gate["info"].top10_pct if gate["info"] else get_top10_holder_pct(token)
     # entry_mc already fetched above for the market-cap ceiling check — reused here, not re-fetched
 
     prior_entries = get_token_history(display_symbol, limit=5)
@@ -1527,30 +1644,18 @@ def copy_priority_wallet_entry(
     entry_opinion = judgment["opinion"]
     confidence_multiplier = judgment["confidence_multiplier"]
 
+    # Size comes from the risk desk (fixed-fractional risk on equity), not
+    # from the LLM confidence multiplier — confidence is kept only for the
+    # journal. Old: 8% of balance x up to 5.0 confidence = up to 40% per
+    # memecoin (real-only, capped at 30% by real_trading.py).
     if PAPER_TRADING_ENABLED:
-        ultra_conservative_multiplier = ULTRA_CONSERVATIVE_SIZE_MULTIPLIER if state.ultra_conservative_mode else 1.0
-        size_sol = max(
-            SNIPER_MIN_POSITION_SOL,
-            state.balance_sol * SNIPER_POSITION_SIZE_PCT * confidence_multiplier * ultra_conservative_multiplier,
-        )
-        size_sol = min(size_sol, MAX_POSITION_SOL)
-
+        size_sol = min(gate["size"], MAX_POSITION_SOL)
         ok, block_reason = can_open_position(state, size_sol)
         if not ok:
             print(f"  [BLOCKED] {display_symbol}: {block_reason}")
             return
     else:
-        # No ultra-conservative-mode multiplier, no MAX_POSITION_SOL cap,
-        # no can_open_position gate — those are paper-state-driven
-        # circuit breakers with no real-only equivalent (see
-        # PAPER_TRADING_ENABLED's docstring). real_trading.py's own
-        # MAX_REAL_POSITION_PCT/MAX_TOTAL_EXPOSURE_PCT/MIN_REAL_TICKET_USDC
-        # are what actually bound the size below.
-        try:
-            amount_usdc = _real_usdc_position_size(SNIPER_POSITION_SIZE_PCT, confidence_multiplier)
-        except Exception as e:
-            print(f"  [SKIP] {display_symbol}: couldn't read the real USDC balance to size this buy: {e}")
-            return
+        amount_usdc = gate["size"]
 
     # Re-fetched fresh here — right before the trade is actually
     # announced/opened, after every check above (including the
@@ -1573,11 +1678,17 @@ def copy_priority_wallet_entry(
             fields=[{"name": "CA:", "value": token, "inline": False}],
             journal_kind="did", token_ticker=display_symbol,
             journal_meta={"wallet": trader_name, "platform": platform_name, "size_sol": size_sol, "confidence_multiplier": confidence_multiplier, "prior_encounters": len(prior_entries)},
+            embed=trade_cards.entry_card(
+                mint=token, symbol=display_symbol, name=metadata.get("name"),
+                price_usd=entry_price, mcap_usd=entry_mc, size_sol=size_sol,
+                size_usd=size_sol * sol_price if sol_price else None, thesis=entry_opinion,
+            ),
         )
 
         open_paper_position(
             state, token, entry_price, size_sol, opened_by=wallet, strength="strong",
             thesis=entry_opinion, entry_market_cap_usd=entry_mc, mirror_real=True,
+            source="priority_copy", price_source="dexscreener",
         )
         if token in state.open_positions:
             # Deliberately does NOT contain "Sniper" — that substring is
@@ -1598,7 +1709,8 @@ def copy_priority_wallet_entry(
         # manages this position on the Cupsey ladder, exactly as before.
         open_real_only_position(
             token, entry_price, amount_usdc, opened_by=wallet, symbol=display_symbol,
-            risk_level="⭐ Priority Copy (Sniper)", entry_dev_holding_pct=dev_pct,
+            risk_level="⭐ Priority Copy (Sniper)", entry_dev_holding_pct=dev_pct, source="priority_copy",
+            thesis=entry_opinion, entry_mcap=entry_mc, name=metadata.get("name"),
         )
 
 
@@ -1761,15 +1873,271 @@ Respond with ONLY valid JSON, no other text, no markdown code fences:
 # ── Paper trading engine ─────────────────────────────────────────────
 
 def compute_total_equity(state: LedgerState) -> float:
-    """Liquid balance + capital currently committed to open positions (approximate, ignores unrealized P&L)."""
-    committed = sum(pos.get("size_sol", 0) for pos in state.open_positions.values())
-    return state.balance_sol + committed
+    """
+    Liquid balance + open positions marked to the last price the exit
+    engine saw (falls back to cost when no mark exists yet). The old
+    version ignored unrealized P&L entirely, so a book full of -60%
+    positions looked healthy and no circuit breaker fired until the
+    losses were finally realized.
+    """
+    total = state.balance_sol
+    for pos in state.open_positions.values():
+        size = pos.get("size_sol", 0)
+        last, entry = pos.get("last_price"), pos.get("entry_price")
+        if last is not None and entry:
+            total += size * (last / entry)
+        else:
+            total += size
+    return total
+
+
+def realized_pnl_today_sol(state: LedgerState, now_ts: float = None) -> float:
+    """Realized PnL on the current UTC day, from trade_log (close + partial_close)."""
+    today = utc_day(now_ts or time.time())
+    total = 0.0
+    for t in reversed(state.trade_log):
+        if t.get("action") not in ("close", "partial_close"):
+            continue
+        at = t.get("at", "")
+        if not at.startswith(today):
+            if at and at[:10] < today:
+                break
+            continue
+        total += t.get("pnl_sol", 0.0)
+    return total
+
+
+def _roll_day(state: LedgerState):
+    """Snapshot equity at the first check of each UTC day — the base for the daily loss limit."""
+    today = utc_day(time.time())
+    if state.day_key != today:
+        state.day_key = today
+        state.day_start_equity = compute_total_equity(state)
+
+
+# ── Market data helpers shared by the risk gate ──────────────────────
+
+_DEX_CACHE = {}
+DEX_CACHE_TTL_SECONDS = 8
+
+
+def _dexscreener_best_pair(mint: str):
+    """
+    One DexScreener call per mint per ~8s, shared by price, liquidity/MC
+    and wash-trading lookups (the old code fired 3-4 identical requests
+    per entry decision, which is how it kept hitting 429s). Returns the
+    deepest Solana pair dict, or None. Raises nothing.
+    """
+    now = time.time()
+    hit = _DEX_CACHE.get(mint)
+    if hit and now - hit[0] < DEX_CACHE_TTL_SECONDS:
+        return hit[1]
+    pair = None
+    try:
+        resp = requests.get("https://api.dexscreener.com/latest/dex/tokens/" + mint, timeout=15)
+        resp.raise_for_status()
+        pairs = resp.json().get("pairs") or []
+        solana_pairs = [p for p in pairs if p.get("chainId") == "solana"]
+        if solana_pairs:
+            pair = max(solana_pairs, key=lambda p: (p.get("liquidity") or {}).get("usd", 0) or 0)
+    except Exception as e:
+        print(f"[WARN] DexScreener lookup failed for {mint}: {e}")
+        return None  # don't cache failures
+    _DEX_CACHE[mint] = (now, pair)
+    if len(_DEX_CACHE) > 2000:
+        for k in list(_DEX_CACHE)[:1000]:
+            _DEX_CACHE.pop(k, None)
+    return pair
+
+
+def get_mint_safety(mint: str) -> dict:
+    """
+    Mint/freeze authority + Token-2022 extensions straight from the mint
+    account (jsonParsed). A live freeze authority means the deployer can
+    freeze OUR tokens (honeypot); a live mint authority means supply can be
+    inflated under us. Never checked anywhere before this. Returns
+    UNKNOWN markers when the RPC call fails, which the risk gate treats as
+    a rejection when fail-closed is on.
+    """
+    unknown = {"mint_authority": SAFETY_UNKNOWN, "freeze_authority": SAFETY_UNKNOWN, "extensions": []}
+    if not ALCHEMY_RPC_URL:
+        return unknown
+
+    def _fetch():
+        try:
+            payload = {"jsonrpc": "2.0", "id": 1, "method": "getAccountInfo", "params": [mint, {"encoding": "jsonParsed"}]}
+            resp = request_with_backoff("POST", ALCHEMY_RPC_URL, json=payload, timeout=15)
+            value = (resp.json().get("result") or {}).get("value") or {}
+            info = ((value.get("data") or {}).get("parsed") or {}).get("info") or {}
+            if not info:
+                return unknown
+            return {
+                "mint_authority": info.get("mintAuthority"),
+                "freeze_authority": info.get("freezeAuthority"),
+                "extensions": [e.get("extension") for e in info.get("extensions", []) if e.get("extension")],
+            }
+        except Exception as e:
+            print(f"[WARN] mint safety lookup failed for {mint}: {e}")
+            return unknown
+
+    return _rpc_cached(f"mintsafety:{mint}", _fetch)
+
+
+def build_token_safety_info(mint: str, symbol: str = "", signal_block_time: float = None,
+                            wallet_fill_price_usd: float = None, current_price_usd: float = None) -> TokenSafetyInfo:
+    pair = _dexscreener_best_pair(mint)
+    liquidity = market_cap = None
+    if pair:
+        liquidity = (pair.get("liquidity") or {}).get("usd")
+        market_cap = pair.get("fdv") or pair.get("marketCap")
+        if current_price_usd is None and pair.get("priceUsd") is not None:
+            try:
+                current_price_usd = float(pair["priceUsd"])
+            except (TypeError, ValueError):
+                pass
+    auth = get_mint_safety(mint)
+    chase = None
+    if wallet_fill_price_usd and current_price_usd:
+        chase = current_price_usd / wallet_fill_price_usd - 1.0
+    return TokenSafetyInfo(
+        liquidity_usd=liquidity, market_cap_usd=market_cap,
+        top10_pct=get_top10_holder_pct(mint),
+        mint_authority=auth["mint_authority"], freeze_authority=auth["freeze_authority"],
+        extensions=auth["extensions"],
+        signal_age_seconds=(time.time() - signal_block_time) if signal_block_time else None,
+        chase_pct=chase,
+        is_stablecoin=is_known_stablecoin(mint, symbol),
+    )
+
+
+def closed_trades_for_scoring(state: LedgerState) -> list:
+    """Paper round-trips plus real-only round-trips, chronological — feeds wallet scoring and loss streaks."""
+    trades = list(state.closed_positions) if PAPER_TRADING_ENABLED else list(real_only_positions.load_closed_positions())
+    trades.sort(key=lambda t: t.get("closed_ts") or 0)
+    return trades
+
+
+def wallet_scores(state: LedgerState) -> dict:
+    return score_wallets(closed_trades_for_scoring(state), time.time(), RISK)
+
+
+def paper_portfolio_snapshot(state: LedgerState) -> PortfolioSnapshot:
+    _roll_day(state)
+    now = time.time()
+    trades = closed_trades_for_scoring(state)
+    streak, last_loss = consecutive_losses(trades)
+    return PortfolioSnapshot(
+        equity=compute_total_equity(state),
+        cash=state.balance_sol,
+        exposure=sum(p.get("size_sol", 0) for p in state.open_positions.values()),
+        open_positions=len(state.open_positions),
+        day_start_equity=state.day_start_equity or compute_total_equity(state),
+        realized_pnl_today=realized_pnl_today_sol(state, now),
+        consecutive_losses=streak, last_loss_ts=last_loss,
+        trades_last_hour=len([t for t in state.trades_this_hour if now - t < 3600]),
+        token_last_exit_ts=dict(state.token_last_exit_ts),
+        held_tokens=set(state.open_positions),
+    )
+
+
+def real_portfolio_snapshot(state: LedgerState) -> PortfolioSnapshot:
+    """Same limits for PAPER_TRADING_ENABLED=false (real-only), built from live chain + real_trading's own books."""
+    now = time.time()
+    usdc = get_wallet_balances()["usdc"]
+    real_open = get_open_real_positions_summary()
+    exposure = sum(p["cost_basis_usdc"] for p in real_open)
+    ladder = real_only_positions.load_real_only_positions()
+    trades = closed_trades_for_scoring(state)
+    streak, last_loss = consecutive_losses(trades)
+    equity = usdc + exposure
+    realized_today = get_realized_pnl_today_usdc()
+    return PortfolioSnapshot(
+        equity=equity, cash=usdc, exposure=exposure,
+        open_positions=len(set(ladder) | {p["mint"] for p in real_open}),
+        # Approximation: today's start = now minus today's realized PnL
+        # (manual deposits/withdrawals mid-day shift this — documented).
+        day_start_equity=max(1e-9, equity - realized_today),
+        realized_pnl_today=realized_today,
+        consecutive_losses=streak, last_loss_ts=last_loss,
+        trades_last_hour=len([t for t in real_only_positions.load_recent_entries() if now - t < 3600]),
+        token_last_exit_ts={t["mint"]: t["closed_ts"] for t in trades if t.get("mint")},
+        held_tokens=set(ladder) | {p["mint"] for p in real_open},
+    )
+
+
+def risk_gate_entry(state: LedgerState, token: str, symbol: str, source: str, wallet: str = None,
+                    signal_block_time: float = None, wallet_fill_price_usd: float = None,
+                    apply_mcap_floor: bool = True) -> dict:
+    """
+    The single pre-trade gate every entry path goes through (priority
+    copy, sniper, conviction; paper and real-only). Order: wallet score
+    -> portfolio limits -> token safety. Returns
+    {"ok", "reason", "size" (SOL for paper / USDC for real-only), "info"}.
+    Sizing is risk-based (risk_engine.position_size) — the LLM's
+    confidence multiplier no longer scales size (it was uncalibrated and
+    could push a single memecoin to 30-40% of the wallet).
+    """
+    result = {"ok": False, "reason": "", "size": 0.0, "info": None}
+
+    if wallet:
+        score = wallet_scores(state).get(wallet)
+        if score and not score["enabled"]:
+            result["reason"] = (f"wallet benched by scoring: {score['n']} closed copies, "
+                                f"avg {score['expectancy_pct']:+.1%}, win rate {score['win_rate']:.0%}")
+            return result
+
+    sol_price = get_sol_price_usd()
+    try:
+        if PAPER_TRADING_ENABLED:
+            snap = paper_portfolio_snapshot(state)
+            scale = ULTRA_CONSERVATIVE_SIZE_MULTIPLIER if state.ultra_conservative_mode else 1.0
+            size = risk_position_size(snap.equity, RISK, scale=scale)
+            size_usd = size * sol_price if sol_price else None
+        else:
+            snap = real_portfolio_snapshot(state)
+            import dataclasses as _dc
+            size = risk_position_size(snap.equity, _dc.replace(RISK, min_position_sol=0.0))
+            size_usd = size
+    except Exception as e:
+        result["reason"] = f"couldn't build portfolio snapshot: {e}"
+        return result
+
+    ok, reason = check_portfolio_limits(snap, token, size, time.time(), RISK)
+    if not ok:
+        result["reason"] = reason
+        return result
+
+    info = build_token_safety_info(token, symbol, signal_block_time, wallet_fill_price_usd)
+    result["info"] = info
+    if size_usd is None:
+        result["reason"] = "no SOL/USD price to size the trade"
+        return result
+    ok, reason = check_token_safety(info, size_usd, RISK, apply_mcap_floor=apply_mcap_floor)
+    if not ok:
+        result["reason"] = reason
+        return result
+
+    result.update(ok=True, reason="ok", size=size)
+    return result
+
+
+def _log_risk_refusal(symbol: str, token: str, source: str, reason: str, wallet_name: str = None):
+    print(f"  [RISK BLOCK] {symbol} ({source}): {reason}")
+    log_journal(
+        kind="refused",
+        text=f"Risk desk refused {symbol} ({source}) — {reason}",
+        token_ticker=symbol,
+        meta={"mint": token, "source": source, "wallet": wallet_name, "reason": reason},
+    )
 
 
 def can_open_position(state: LedgerState, size_sol: float) -> tuple[bool, str]:
     if size_sol > MAX_POSITION_SOL:
         return False, f"size {size_sol} exceeds MAX_POSITION_SOL ({MAX_POSITION_SOL})"
-    if state.realized_pnl_sol <= -MAX_DAILY_LOSS_SOL:
+    # Was `state.realized_pnl_sol` — the ALL-TIME realized PnL, never reset —
+    # so after -2 SOL of lifetime losses the bot refused every paper trade
+    # forever. Now genuinely daily (UTC day).
+    if realized_pnl_today_sol(state) <= -MAX_DAILY_LOSS_SOL:
         return False, "daily loss limit hit, no new positions"
     if size_sol > state.balance_sol:
         return False, "insufficient paper balance"
@@ -1940,6 +2308,7 @@ def open_paper_position(
     state: LedgerState, token: str, price: float, size_sol: float, opened_by: str = "", strength: str = "weak",
     thesis: str = "", entry_market_cap_usd: float = None, risk_score: int = None, target_size_sol: float = 0.0,
     entry_condition: str = None, invalidation: str = None, mirror_real: bool = False,
+    source: str = "", price_source: str = "dexscreener",
 ):
     if token in state.open_positions:
         # Never silently overwrite an existing position — that would
@@ -1961,6 +2330,13 @@ def open_paper_position(
     risk_level = "🟢 Lower Risk (whale-backed)" if strength == "strong" else "🟡 High Risk (scout)"
     is_narrative = check_is_narrative_token(metadata.get("name", ""), metadata.get("symbol", ""))
 
+    # Paper realism: every fill pays fees + slippage. The old paper engine
+    # filled at the exact quoted mid, so paper PnL systematically overstated
+    # what the same trades would have made with real money.
+    mid_price = price
+    price = price * (1 + RISK.paper_cost_per_side_pct)
+    now_ts = time.time()
+
     state.balance_sol -= size_sol
     state.open_positions[token] = PaperPosition(
         token=token,
@@ -1975,6 +2351,11 @@ def open_paper_position(
         entry_market_cap_usd=entry_market_cap_usd,
         target_size_sol=target_size_sol,
     ).__dict__
+    state.open_positions[token].update({
+        "source": source, "price_source": price_source, "mid_entry_price": mid_price,
+        "invested_sol": size_sol, "realized_pnl_sol": 0.0, "original_size_sol": size_sol,
+        "opened_ts": now_ts, "peak_price": price, "tp_rungs_hit": [], "last_price_ts": now_ts,
+    })
     state.trades_this_hour.append(time.time())
     state.trade_log.append({
         "action": "open",
@@ -1983,6 +2364,7 @@ def open_paper_position(
         "price": price,
         "size_sol": size_sol,
         "opened_by": opened_by,
+        "source": source,
         "at": datetime.now(timezone.utc).isoformat(),
     })
     display_name = symbol if symbol else token
@@ -2013,14 +2395,17 @@ def open_paper_position(
         else:
             real_result = execute_real_trade(token, amount_usdc, "buy")
         state.open_positions[token]["real_trading"] = real_result["status"] == "success"
-        _report_real_result(real_result, real_symbol, token, "buy")
+        _report_real_result(real_result, real_symbol, token, "buy", ctx={
+            "price": price, "mcap": entry_market_cap_usd, "source": source, "opened_by": opened_by, "thesis": thesis,
+        }, post_discord=False)
 
     state.save()
 
 
 def open_real_only_position(
     token: str, entry_price: float, amount_usdc: float, opened_by: str, symbol: str,
-    risk_level: str, entry_dev_holding_pct: float = None,
+    risk_level: str, entry_dev_holding_pct: float = None, source: str = "",
+    thesis: str = None, entry_mcap: float = None, name: str = None,
 ):
     """
     PAPER_TRADING_ENABLED=false's counterpart to open_paper_position's
@@ -2040,7 +2425,10 @@ def open_real_only_position(
     """
     real_symbol = symbol or token[:6]
     real_result = execute_real_trade(token, amount_usdc, "buy")
-    _report_real_result(real_result, real_symbol, token, "buy")
+    _report_real_result(real_result, real_symbol, token, "buy", ctx={
+        "price": entry_price, "mcap": entry_mcap, "source": source, "opened_by": opened_by,
+        "thesis": thesis, "name": name,
+    })
 
     if real_result["status"] != "success":
         return  # nothing to track for the ladder — no position actually opened
@@ -2054,8 +2442,13 @@ def open_real_only_position(
         "entry_dev_holding_pct": entry_dev_holding_pct,
         "tp1_hit": False, "tp2_hit": False,
         "commented_at_checkpoint": False, "dip_buys": 0,
+        # exit-engine v2 + round-trip bookkeeping
+        "source": source, "opened_ts": time.time(), "peak_price": entry_price,
+        "tp_rungs_hit": [], "last_price_ts": time.time(), "realized_pnl_usdc": 0.0,
+        "entry_mcap": entry_mcap, "name": name,
     }
     real_only_positions.save_real_only_positions(positions)
+    real_only_positions.record_entry(time.time())
 
 
 def _sol_to_usdc(sol_amount: float):
@@ -2099,7 +2492,15 @@ def _real_usdc_position_size(pct_of_balance: float, confidence_multiplier: float
     return real_usdc_balance * pct_of_balance * confidence_multiplier
 
 
-def _report_real_result(real_result: dict, symbol: str, token: str, side: str, reason: str = None):
+def _current_mcap(token: str):
+    try:
+        return get_liquidity_and_market_cap(token)[1]
+    except Exception:
+        return None
+
+
+def _report_real_result(real_result: dict, symbol: str, token: str, side: str, reason: str = None, ctx: dict = None,
+                        post_discord: bool = True):
     """
     Shared reporting for every real-trading outcome, across all three
     mirror points (open_paper_position, _mirror_real_sell, buy_the_dip).
@@ -2115,6 +2516,33 @@ def _report_real_result(real_result: dict, symbol: str, token: str, side: str, r
     status = real_result["status"]
     if status == "success":
         verb = "BUY" if side == "buy" else "SELL"
+        # Context for the card: explicit ctx from the caller, else the
+        # real-only ladder entry for this mint (present for sells).
+        c = dict(real_only_positions.load_real_only_positions().get(token) or {})
+        c.update(ctx or {})
+        mcap_now = _current_mcap(token)
+        price_now = None
+        if side == "buy" and not c.get("price"):
+            try:
+                price_now = get_sniper_exit_price(token)
+            except Exception:
+                price_now = None
+        if side == "buy":
+            card = trade_cards.entry_card(
+                mint=token, symbol=symbol, name=c.get("name"),
+                price_usd=c.get("price") or c.get("entry_price") or price_now, mcap_usd=c.get("mcap") or mcap_now,
+                size_usd=real_result.get("usdc_spent"), thesis=c.get("thesis"),
+            )
+        else:
+            pnl = real_result.get("realized_pnl_usdc")
+            received = real_result.get("usdc_received") or 0.0
+            cost_slice = received - pnl if pnl is not None else None
+            card = trade_cards.exit_card(
+                mint=token, symbol=symbol, name=c.get("name"),
+                partial_fraction=real_result.get("fraction_sold"),
+                entry_mcap_usd=c.get("entry_mcap"), exit_mcap_usd=mcap_now,
+                pnl_usd=pnl, pnl_pct=(pnl / cost_slice) if (pnl is not None and cost_slice) else None,
+            )
         fields = None
         if side == "buy":
             square = "🟦"
@@ -2138,6 +2566,11 @@ def _report_real_result(real_result: dict, symbol: str, token: str, side: str, r
             fields=fields,
             journal_kind="did_real", token_ticker=symbol,
             journal_meta={"side": side, "token": token, "reason": reason, **real_result},
+            embed=card,
+            # One card per trade: scale-ins (dip buys) are never posted, and a
+            # paper trade's real mirror is journaled only (the paper card
+            # already announced that exact entry/exit).
+            post_discord=post_discord and reason != "dip_buy",
         )
     else:
         detail = real_result.get("reason", "no reason given")
@@ -2150,7 +2583,7 @@ def _report_real_result(real_result: dict, symbol: str, token: str, side: str, r
         )
 
 
-def _mirror_real_sell(pos: dict, token: str, amount_sol_equivalent: float, reason: str = None):
+def _mirror_real_sell(pos: dict, token: str, fraction: float, reason: str = None):
     """
     Shared by partial_close_paper_position, close_paper_position, and
     (indirectly, since it just checks the same flag) any future exit
@@ -2165,12 +2598,21 @@ def _mirror_real_sell(pos: dict, token: str, amount_sol_equivalent: float, reaso
     if not pos.get("real_trading"):
         return
     real_symbol = pos.get("symbol") or token[:6]
-    amount_usdc = _sol_to_usdc(amount_sol_equivalent)
-    if amount_usdc is None:
-        real_result = {"status": "failed", "success": False, "reason": "no SOL/USD price available to size the real USDC sell"}
+    # Sell the SAME FRACTION of the real position that paper just sold.
+    # The old code converted the paper SOL slice to USDC at today's SOL
+    # price and sold that dollar amount — but the real buy is often
+    # clamped smaller than the paper size (MAX_REAL_POSITION_PCT), so a
+    # 50% paper TP1 frequently mapped to >100% of the real cost basis and
+    # dumped the WHOLE real position on the first take-profit.
+    real_pos = next((p for p in get_open_real_positions_summary() if p["mint"] == token), None)
+    cost_basis = real_pos["cost_basis_usdc"] if real_pos else 0.0
+    if cost_basis <= 0:
+        real_result = {"status": "blocked", "success": False, "reason": "no real position left to sell"}
     else:
-        real_result = execute_real_trade(token, amount_usdc, "sell")
-    _report_real_result(real_result, real_symbol, token, "sell", reason=reason)
+        real_result = execute_real_trade(token, cost_basis * max(0.0, min(1.0, fraction)), "sell")
+    _report_real_result(real_result, real_symbol, token, "sell", reason=reason, ctx={
+        "entry_mcap": pos.get("entry_market_cap_usd"),
+    }, post_discord=False)
 
 
 def sweep_stuck_real_positions(state: "LedgerState"):
@@ -2253,8 +2695,10 @@ def partial_close_paper_position(state: LedgerState, token: str, exit_price: flo
         return
 
     sell_size = pos["size_sol"] * fraction
-    _mirror_real_sell(pos, token, sell_size, reason)
+    _mirror_real_sell(pos, token, fraction, reason)
+    exit_price = exit_price * (1 - RISK.paper_cost_per_side_pct)  # paper fill pays fees/slippage
     pnl = (exit_price - pos["entry_price"]) / pos["entry_price"] * sell_size
+    pos["realized_pnl_sol"] = pos.get("realized_pnl_sol", 0.0) + pnl
     state.balance_sol += sell_size + pnl
     state.realized_pnl_sol += pnl
     pos["size_sol"] -= sell_size
@@ -2265,6 +2709,9 @@ def partial_close_paper_position(state: LedgerState, token: str, exit_price: flo
         "exit_price": exit_price,
         "fraction_sold": fraction,
         "pnl_sol": pnl,
+        "reason": reason,
+        "source": pos.get("source", ""),
+        "opened_by": pos.get("opened_by", ""),
         "risk_level": pos.get("risk_level", ""),
         "at": datetime.now(timezone.utc).isoformat(),
     })
@@ -2298,11 +2745,17 @@ def partial_close_paper_position(state: LedgerState, token: str, exit_price: flo
         description="\n".join(lines),
         color=COLOR_PROFIT if is_win else COLOR_LOSS,
         journal_kind="did", token_ticker=display_name,
-        journal_meta={"reason": reason, "pnl_sol": pnl, "fraction_sold": fraction, "change_pct": change_pct},
+        journal_meta={"reason": reason, "pnl_sol": pnl, "fraction_sold": fraction, "change_pct": change_pct, "exit_opinion": exit_opinion},
+        embed=trade_cards.exit_card(
+            mint=token, symbol=display_name, partial_fraction=fraction if pos["size_sol"] >= 0.001 else 1.0,
+            entry_mcap_usd=entry_mc, exit_mcap_usd=exit_mc, pnl_sol=pnl, pnl_usd=pnl_usd, pnl_pct=change_pct,
+        ),
     )
 
     if pos["size_sol"] < 0.001:  # fully drained — close it out entirely
+        state.balance_sol += pos["size_sol"]  # return dust instead of silently losing it
         del state.open_positions[token]
+        _record_round_trip(state, token, pos, reason)
         # Position is genuinely gone now (not just trimmed) — this is
         # the point where the thesis should flip to "closed" too,
         # same as a full close_paper_position() would.
@@ -2316,16 +2769,22 @@ def close_paper_position(state: LedgerState, token: str, exit_price: float, reas
     pos = state.open_positions.get(token)
     if not pos:
         return
-    _mirror_real_sell(pos, token, pos["size_sol"], reason)
+    _mirror_real_sell(pos, token, 1.0, reason)
     state.open_positions.pop(token, None)
+    exit_price = exit_price * (1 - RISK.paper_cost_per_side_pct)  # paper fill pays fees/slippage
     pnl = (exit_price - pos["entry_price"]) / pos["entry_price"] * pos["size_sol"]
     state.balance_sol += pos["size_sol"] + pnl
     state.realized_pnl_sol += pnl
+    pos["realized_pnl_sol"] = pos.get("realized_pnl_sol", 0.0) + pnl
+    _record_round_trip(state, token, pos, reason)
     state.trade_log.append({
         "action": "close",
         "token": token,
         "exit_price": exit_price,
         "pnl_sol": pnl,
+        "reason": reason,
+        "source": pos.get("source", ""),
+        "opened_by": pos.get("opened_by", ""),
         "risk_level": pos.get("risk_level", ""),
         "at": datetime.now(timezone.utc).isoformat(),
     })
@@ -2355,15 +2814,46 @@ def close_paper_position(state: LedgerState, token: str, exit_price: float, reas
         lines.append("")
         lines.append(f"**{exit_opinion}**")
 
+    total_pnl = pos.get("realized_pnl_sol", pnl)  # includes earlier trims
+    invested = pos.get("invested_sol") or pos.get("original_size_sol") or pos["size_sol"]
     speak(
         title=f"💰 TRADE CLOSED — {display_name}",
         description="\n".join(lines),
         color=COLOR_PROFIT if is_win else COLOR_LOSS,
         journal_kind="did", token_ticker=display_name,
-        journal_meta={"reason": reason, "pnl_sol": pnl, "change_pct": change_pct},
+        journal_meta={"reason": reason, "pnl_sol": pnl, "change_pct": change_pct, "exit_opinion": exit_opinion},
+        embed=trade_cards.exit_card(
+            mint=token, symbol=display_name, entry_mcap_usd=entry_mc, exit_mcap_usd=exit_mc,
+            pnl_sol=total_pnl, pnl_usd=total_pnl * sol_price if sol_price else None,
+            pnl_pct=(total_pnl / invested) if invested else change_pct,
+        ),
     )
     upsert_thesis(ticker=display_name, status="closed")
     state.save()
+
+
+def _record_round_trip(state: LedgerState, token: str, pos: dict, reason: str):
+    """One record per fully-closed paper position — what wallet scoring, loss streaks and AUDIT metrics read."""
+    invested = pos.get("invested_sol") or pos.get("original_size_sol") or pos.get("size_sol") or 0.0
+    pnl = pos.get("realized_pnl_sol", 0.0)
+    opened_ts = pos.get("opened_ts")
+    if opened_ts is None:
+        try:
+            opened_ts = datetime.fromisoformat(pos["opened_at"]).timestamp()
+        except Exception:
+            opened_ts = None
+    now_ts = time.time()
+    source = pos.get("source") or ("sniper" if "Sniper" in pos.get("risk_level", "") else
+                                   "priority_copy" if "Priority" in pos.get("risk_level", "") else "conviction")
+    state.closed_positions.append({
+        "mint": token, "symbol": pos.get("symbol", ""),
+        "wallet": pos.get("opened_by", "") if source != "sniper" else "",
+        "source": source, "invested_sol": invested, "pnl_sol": pnl,
+        "pnl_pct": (pnl / invested) if invested else 0.0,
+        "reason": reason, "opened_ts": opened_ts, "closed_ts": now_ts,
+        "held_seconds": (now_ts - opened_ts) if opened_ts else None,
+    })
+    state.token_last_exit_ts[token] = now_ts
 
 
 def _real_only_position_and_cost_basis(token: str):
@@ -2413,7 +2903,13 @@ def partial_close_real_only_position(token: str, exit_price: float, fraction: fl
     amount_usdc = fraction * cost_basis
     real_symbol = pos.get("symbol") or token[:6]
     real_result = execute_real_trade(token, amount_usdc, "sell")
-    _report_real_result(real_result, real_symbol, token, "sell", reason=reason)
+    _report_real_result(real_result, real_symbol, token, "sell", reason=reason, ctx={"price": exit_price})
+    if real_result.get("status") == "success":
+        positions = real_only_positions.load_real_only_positions()
+        if token in positions:
+            positions[token]["realized_pnl_usdc"] = positions[token].get("realized_pnl_usdc", 0.0) + (real_result.get("realized_pnl_usdc") or 0.0)
+            real_only_positions.save_real_only_positions(positions)
+    return real_result
 
 
 def close_real_only_position(token: str, exit_price: float, reason: str = None):
@@ -2436,7 +2932,24 @@ def close_real_only_position(token: str, exit_price: float, reason: str = None):
         real_result = {"status": "blocked", "success": False, "reason": "no real position left to sell — local ladder entry was stale"}
     else:
         real_result = execute_real_trade(token, cost_basis, "sell")
-    _report_real_result(real_result, real_symbol, token, "sell", reason=reason)
+    _report_real_result(real_result, real_symbol, token, "sell", reason=reason, ctx={"price": exit_price})
+
+    # Re-read: a partial sell earlier in this same pass may have updated it.
+    positions = real_only_positions.load_real_only_positions()
+    pos = positions.get(token, pos)
+    realized = pos.get("realized_pnl_usdc", 0.0) + (real_result.get("realized_pnl_usdc") or 0.0)
+    invested = pos.get("original_cost_basis_usdc") or 0.0
+    now_ts = time.time()
+    real_only_positions.append_closed_position({
+        "mint": token, "symbol": real_symbol,
+        "wallet": pos.get("opened_by", "") if pos.get("source") != "sniper" else "",
+        "source": pos.get("source", ""), "pnl_usdc": realized,
+        "pnl_pct": (realized / invested) if invested else 0.0,
+        # if the final sell was blocked, the round-trip is incomplete — the
+        # stuck-position sweep keeps trying; flagged so scoring can tell.
+        "final_sell_status": real_result.get("status"),
+        "reason": reason, "opened_ts": pos.get("opened_ts"), "closed_ts": now_ts,
+    })
 
     positions.pop(token, None)
     real_only_positions.save_real_only_positions(positions)
@@ -2463,6 +2976,120 @@ TRAILING_STOP_PCT = 0.20         # after that, close if price pulls back 20% fro
 # absolute terms than the last. Independent of the capital-recovery/
 # trailing-stop logic below; both can fire on the same position.
 PRIORITY_COPY_PEEL_FRACTION = 0.20
+
+
+EXIT_REASON_LABELS = {
+    "stop_loss": "🛑 Stop Loss",
+    "breakeven_stop": "🛡️ Breakeven Stop",
+    "trailing_stop": "📉 Trailing Stop — Profit Locked",
+    "time_stop": "⏱️ Time Stop — Not Working",
+    "max_hold": "⏱️ Max Hold Reached",
+    "no_price_writeoff": "💀 No Price Feed — Written Off",
+}
+
+
+def _exit_label(reason: str) -> str:
+    if reason.startswith("take_profit_"):
+        return f"🎯 Take Profit {reason.rsplit('_', 1)[1]}"
+    return EXIT_REASON_LABELS.get(reason, reason)
+
+
+def _opened_ts(pos: dict) -> float:
+    if pos.get("opened_ts"):
+        return pos["opened_ts"]
+    try:
+        return datetime.fromisoformat(pos["opened_at"]).timestamp()
+    except Exception:
+        return time.time()
+
+
+def _position_price(mint: str, pos: dict):
+    # Price from the SAME provider the entry was priced with. Priority
+    # copies were entered at a DexScreener price but exited against
+    # Jupiter's (staler) price in check_open_positions — phantom PnL.
+    if pos.get("price_source") == "jupiter" or (not pos.get("price_source") and "Sniper" not in pos.get("risk_level", "") and "Priority" not in pos.get("risk_level", "")):
+        return get_token_prices_usd([mint]).get(mint)
+    return get_sniper_exit_price(mint)
+
+
+def manage_paper_positions_v2(state: LedgerState):
+    """Runs every open paper position through risk_engine.evaluate_exit and executes the result."""
+    now = time.time()
+    for mint in list(state.open_positions):
+        pos = state.open_positions.get(mint)
+        if not pos:
+            continue
+        try:
+            price = _position_price(mint, pos)
+        except Exception as e:
+            print(f"[WARN] price check failed for {mint}: {e}")
+            price = None
+        view = {
+            "entry_price": pos["entry_price"], "size": pos["size_sol"],
+            "original_size": pos.get("original_size_sol") or pos["size_sol"],
+            "opened_ts": _opened_ts(pos), "peak_price": pos.get("peak_price") or pos["entry_price"],
+            "tp_rungs_hit": pos.get("tp_rungs_hit") or [], "last_price_ts": pos.get("last_price_ts") or _opened_ts(pos),
+        }
+        actions, updates = evaluate_exit(view, price, now, RISK)
+        pos.update(updates)
+        if price is not None:
+            pos["last_price"] = price
+        for a in actions:
+            px = a.get("price_override", price)
+            label = _exit_label(a["reason"])
+            if a["fraction"] >= 0.999:
+                close_paper_position(state, mint, px, reason=label)
+                break
+            partial_close_paper_position(state, mint, px, a["fraction"], reason=label)
+            if mint not in state.open_positions:
+                break
+    state.save()
+
+
+def manage_real_only_positions_v2():
+    """PAPER_TRADING_ENABLED=false counterpart — same exit engine, real_trading.py does the selling."""
+    now = time.time()
+    real_by_mint = {p["mint"]: p for p in get_open_real_positions_summary()}
+    for mint in list(real_only_positions.load_real_only_positions()):
+        positions = real_only_positions.load_real_only_positions()
+        pos = positions.get(mint)
+        if not pos:
+            continue
+        real = real_by_mint.get(mint)
+        if not real or real["cost_basis_usdc"] <= 0:
+            close_real_only_position(mint, None, reason="Ladder entry stale — no real position")
+            continue
+        price = get_sniper_exit_price(mint)
+        view = {
+            "entry_price": pos["entry_price"], "size": real["cost_basis_usdc"],
+            "original_size": pos.get("original_cost_basis_usdc") or real["cost_basis_usdc"],
+            "opened_ts": _opened_ts(pos), "peak_price": pos.get("peak_price") or pos["entry_price"],
+            "tp_rungs_hit": pos.get("tp_rungs_hit") or [], "last_price_ts": pos.get("last_price_ts") or _opened_ts(pos),
+        }
+        actions, updates = evaluate_exit(view, price, now, RISK)
+        pos.update(updates)
+        positions[mint] = pos
+        real_only_positions.save_real_only_positions(positions)
+        for a in actions:
+            label = _exit_label(a["reason"])
+            if a["fraction"] >= 0.999:
+                close_real_only_position(mint, price, reason=label)
+                break
+            partial_close_real_only_position(mint, price, a["fraction"], reason=label)
+
+
+def manage_positions(state: LedgerState):
+    """Single entry point for exits, called every POSITION_CHECK_SECONDS."""
+    if EXIT_ENGINE == "legacy":
+        if PAPER_TRADING_ENABLED:
+            check_open_positions(state)
+        if SNIPER_MODE_ENABLED or not PAPER_TRADING_ENABLED:
+            check_sniper_positions(state)
+        return
+    if PAPER_TRADING_ENABLED:
+        manage_paper_positions_v2(state)
+    else:
+        manage_real_only_positions_v2()
 
 
 def check_open_positions(state: LedgerState):
@@ -2628,6 +3255,7 @@ def top_up_conviction_position(state: LedgerState, token: str, current_price: fl
     new_entry = (old_entry * old_size + current_price * add_size) / new_size
 
     state.balance_sol -= add_size
+    pos["invested_sol"] = pos.get("invested_sol", old_size) + add_size
     pos["entry_price"] = new_entry
     pos["size_sol"] = new_size
     pos["topup_stage"] = new_stage
@@ -2646,6 +3274,7 @@ def top_up_conviction_position(state: LedgerState, token: str, current_price: fl
         fields=[{"name": "CA:", "value": token, "inline": False}],
         journal_kind="did", token_ticker=display_name,
         journal_meta={"add_size_sol": add_size, "new_size_sol": new_size, "target_size_sol": target, "stage": new_stage},
+        post_discord=False,  # scale-ins are journaled, not posted to Discord
     )
 
 
@@ -2915,6 +3544,7 @@ def buy_the_dip(state: LedgerState, token: str, current_price: float):
     new_entry = (old_entry * old_size + current_price * add_size) / new_size
 
     state.balance_sol -= add_size
+    pos["invested_sol"] = pos.get("invested_sol", old_size) + add_size
     pos["entry_price"] = new_entry
     pos["size_sol"] = new_size
     pos["dip_buys"] = pos.get("dip_buys", 0) + 1
@@ -3016,20 +3646,13 @@ def get_sniper_exit_price(mint: str) -> float:
     the request fails — same "missing data is never a green light"
     convention as every other price/market-data helper in this file.
     """
+    pair = _dexscreener_best_pair(mint)
+    if not pair:
+        return None
     try:
-        resp = requests.get(
-            "https://api.dexscreener.com/latest/dex/tokens/" + mint, timeout=15
-        )
-        resp.raise_for_status()
-        pairs = resp.json().get("pairs") or []
-        solana_pairs = [p for p in pairs if p.get("chainId") == "solana"]
-        if not solana_pairs:
-            return None
-        pair = max(solana_pairs, key=lambda p: (p.get("liquidity") or {}).get("usd", 0) or 0)
         price_str = pair.get("priceUsd")
         return float(price_str) if price_str is not None else None
-    except Exception as e:
-        print(f"[WARN] sniper exit price fetch failed for {mint}: {e}")
+    except (TypeError, ValueError):
         return None
 
 
@@ -3123,7 +3746,10 @@ def check_real_only_sniper_positions():
                     title=f"💬 {pos.get('symbol') or mint[:6]}", description=judgment["comment"], color=COLOR_NEUTRAL,
                     journal_kind="commentary", token_ticker=pos.get("symbol") or mint[:6],
                 )
-            if judgment["action"] == "buy_dip":
+            # LLM "average down instead of stopping out" is OFF by default
+            # (ALLOW_LLM_DIP_BUYS) and capped at MAX_DIP_BUYS when on — it
+            # used to be unlimited and could re-fire every 30s check.
+            if judgment["action"] == "buy_dip" and RISK.allow_llm_dip_buys and pos.get("dip_buys", 0) < RISK.max_dip_buys:
                 buy_the_dip_real_only(mint, current_price)
             else:
                 close_real_only_position(mint, current_price, reason="🎯 Sniper Stop Loss")
@@ -3236,7 +3862,7 @@ def check_sniper_positions(state: LedgerState):
                     title=f"💬 {pos.get('symbol') or mint[:6]}", description=judgment["comment"], color=COLOR_NEUTRAL,
                     journal_kind="commentary", token_ticker=pos.get("symbol") or mint[:6],
                 )
-            if judgment["action"] == "buy_dip":
+            if judgment["action"] == "buy_dip" and RISK.allow_llm_dip_buys and pos.get("dip_buys", 0) < RISK.max_dip_buys:
                 buy_the_dip(state, mint, current_price)
             else:
                 close_paper_position(state, mint, current_price, reason="🎯 Sniper Stop Loss")
@@ -3606,7 +4232,10 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
 
     if preset.get("min_holders"):
         holder_count = get_approx_holder_count(mint)
-        if holder_count is not None and holder_count < preset["min_holders"]:
+        # getTokenLargestAccounts returns at most 20 accounts, so a count
+        # of 20 means "20 or more" — the old `< 50` check could therefore
+        # NEVER pass and silently rejected every hyper_early_scalp launch.
+        if holder_count is not None and holder_count < min(preset["min_holders"], 20):
             print(f"[SNIPE SKIP] {symbol}: too few holders ({holder_count} < {preset['min_holders']})")
             return
 
@@ -3627,6 +4256,11 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
     wash_flag = get_wash_trading_flag(mint)
     if wash_flag["suspicious"]:
         print(f"[SNIPE SKIP] {symbol}: wash-trading flag — {wash_flag['reason']}")
+        return
+
+    gate = risk_gate_entry(state, mint, symbol, "sniper", apply_mcap_floor=False)
+    if not gate["ok"]:
+        _log_risk_refusal(symbol, mint, "sniper", gate["reason"])
         return
 
     # Cheap existence check only — see the matching comment in
@@ -3657,25 +4291,18 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
     # Size as a % of CURRENT bankroll, scaled by confidence — this
     # scales automatically as the balance grows toward the 10 SOL
     # target or resets to 1 SOL after a wipeout.
+    # Old sizing was balance x 8% x confidence (≥2.0 required) and was
+    # NEVER clamped to MAX_POSITION_SOL before can_open_position — at a
+    # 10 SOL bankroll that's ≥1.6 SOL vs a 0.5 SOL cap, so every paper
+    # snipe was silently blocked. Sizing now comes from the risk desk.
     if PAPER_TRADING_ENABLED:
-        ultra_conservative_multiplier = ULTRA_CONSERVATIVE_SIZE_MULTIPLIER if state.ultra_conservative_mode else 1.0
-        size_sol = max(
-            SNIPER_MIN_POSITION_SOL,
-            state.balance_sol * SNIPER_POSITION_SIZE_PCT * confidence_multiplier * ultra_conservative_multiplier,
-        )
-
+        size_sol = min(gate["size"], MAX_POSITION_SOL)
         ok, block_reason = can_open_position(state, size_sol)
         if not ok:
             print(f"[SNIPE BLOCKED] {symbol}: {block_reason}")
             return
     else:
-        # No ultra-conservative-mode multiplier, no can_open_position
-        # gate — see the matching comment in copy_priority_wallet_entry().
-        try:
-            amount_usdc = _real_usdc_position_size(SNIPER_POSITION_SIZE_PCT, confidence_multiplier)
-        except Exception as e:
-            print(f"[SNIPE SKIP] {symbol}: couldn't read the real USDC balance to size this buy: {e}")
-            return
+        amount_usdc = gate["size"]
 
     # Re-fetched fresh here — see the matching comment in
     # copy_priority_wallet_entry(). Kept just before speak() rather
@@ -3705,11 +4332,17 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
             fields=[{"name": "CA:", "value": mint, "inline": False}],
             journal_kind="did", token_ticker=symbol,
             journal_meta={"preset": SNIPER_ACTIVE_PRESET, "size_sol": size_sol, "confidence_multiplier": confidence_multiplier, "prior_encounters": len(prior_entries)},
+            embed=trade_cards.entry_card(
+                mint=mint, symbol=symbol, name=candidate.get("name"),
+                price_usd=entry_price, mcap_usd=market_cap_usd, size_sol=size_sol,
+                size_usd=size_sol * sol_price if sol_price else None, thesis=snipe_opinion,
+            ),
         )
 
         open_paper_position(
             state, mint, entry_price, size_sol, opened_by=creator_address, strength="weak",
             thesis=snipe_opinion, entry_market_cap_usd=market_cap_usd, mirror_real=True,
+            source="sniper", price_source="dexscreener",
         )
         if mint in state.open_positions:
             state.open_positions[mint]["risk_level"] = "🎯 Sniper Play"
@@ -3719,7 +4352,7 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
     else:
         open_real_only_position(
             mint, entry_price, amount_usdc, opened_by=creator_address, symbol=symbol,
-            risk_level="🎯 Sniper Play", entry_dev_holding_pct=dev_pct,
+            risk_level="🎯 Sniper Play", entry_dev_holding_pct=dev_pct, source="sniper",
         )
 
 
@@ -3772,15 +4405,9 @@ def get_liquidity_and_market_cap(mint: str):
     unavailable (e.g. too new to be indexed yet).
     """
     try:
-        resp = requests.get(
-            "https://api.dexscreener.com/latest/dex/tokens/" + mint, timeout=15
-        )
-        resp.raise_for_status()
-        pairs = resp.json().get("pairs") or []
-        solana_pairs = [p for p in pairs if p.get("chainId") == "solana"]
-        if not solana_pairs:
+        pair = _dexscreener_best_pair(mint)
+        if not pair:
             return None, None
-        pair = max(solana_pairs, key=lambda p: (p.get("liquidity") or {}).get("usd", 0) or 0)
         liquidity_usd = (pair.get("liquidity") or {}).get("usd")
         market_cap_usd = pair.get("fdv") or pair.get("marketCap")
         return liquidity_usd, market_cap_usd
@@ -3827,16 +4454,9 @@ def get_wash_trading_flag(mint: str) -> dict:
     gap elsewhere in this file.
     """
     try:
-        resp = requests.get(
-            "https://api.dexscreener.com/latest/dex/tokens/" + mint, timeout=15
-        )
-        resp.raise_for_status()
-        pairs = resp.json().get("pairs") or []
-        solana_pairs = [p for p in pairs if p.get("chainId") == "solana"]
-        if not solana_pairs:
+        pair = _dexscreener_best_pair(mint)
+        if not pair:
             return {"suspicious": False, "h1_buys": None, "h1_sells": None, "h1_total_txns": None, "reason": None}
-
-        pair = max(solana_pairs, key=lambda p: (p.get("liquidity") or {}).get("usd", 0) or 0)
         txns_h1 = (pair.get("txns") or {}).get("h1") or {}
         buys, sells = txns_h1.get("buys"), txns_h1.get("sells")
         if buys is None or sells is None:
@@ -4016,6 +4636,8 @@ def main():
 
     state = LedgerState.load()
     print(f"Ledger booting up. Paper balance: {state.balance_sol} SOL")
+    print(f"[RISK] exit engine={EXIT_ENGINE} paper={PAPER_TRADING_ENABLED} real_armed={REAL_TRADING_ENABLED} "
+          f"position_check={POSITION_CHECK_SECONDS}s config={json.dumps(RISK.as_dict())}")
 
     start_api_server()
 
@@ -4034,8 +4656,8 @@ def main():
         cycle_count += 1
 
         if SNIPER_MODE_ENABLED:
-            drain_sniper_queue(state)
-            scan_sniper_pending(state)
+            _safe("drain_sniper_queue", drain_sniper_queue, state)
+            _safe("scan_sniper_pending", scan_sniper_pending, state)
 
         # Reload every cycle — edit wallets.json anytime, no restart needed
         watched_wallets, wallet_handles, priority_wallets = load_wallets()
@@ -4063,18 +4685,41 @@ def main():
         # Runs on cycle 1 too, so there's data available from the start
         # instead of waiting 4 hours for the first pass.
         if ANTHROPIC_API_KEY and (cycle_count == 1 or cycle_count % MARKET_RESEARCH_EVERY_N_CYCLES == 0):
-            do_market_research_pass()
+            _safe("market research", do_market_research_pass)
 
         for wallet in watched_wallets:
             try:
                 txs, newest_sig = get_wallet_transactions(wallet, until=state.wallet_last_signature.get(wallet))
                 buys = extract_new_buys(txs, wallet)
+                # Oldest first, so a burst is handled in the order it happened.
+                buys.sort(key=lambda b: b.get("block_time") or 0)
                 for buy in buys:
-                    if buy["signature"] in state.seen_signatures:
+                    # Keyed per (signature, mint): one tx can buy several
+                    # tokens, and the old signature-only key silently dropped
+                    # every token after the first.
+                    seen_key = f"{buy['signature']}:{buy['mint']}"
+                    if seen_key in state.seen_signatures or buy["signature"] in state.seen_signatures:
                         continue  # already processed this exact transaction
-                    state.seen_signatures.append(buy["signature"])
+                    # Marked seen up front on purpose (at-most-once): a buy
+                    # that raises halfway must NOT be re-copied minutes later
+                    # on the retry — by then it's a stale signal anyway.
+                    state.seen_signatures.append(seen_key)
 
                     token = buy["mint"]
+                    signal_age = (time.time() - buy["block_time"]) if buy.get("block_time") else None
+                    if signal_age is not None and signal_age > RISK.max_signal_age_seconds:
+                        # Old code copied whatever was in the last 10 sigs —
+                        # on boot, after downtime, or for a newly added
+                        # wallet that meant buying hours-old entries.
+                        print(f"  [STALE] {token[:6]}...: wallet bought {signal_age:.0f}s ago (> {RISK.max_signal_age_seconds:.0f}s) — not copying")
+                        continue
+                    wallet_fill_price_usd = None
+                    if buy.get("amount"):
+                        if buy.get("usd_spent"):
+                            wallet_fill_price_usd = buy["usd_spent"] / buy["amount"]
+                        elif buy.get("sol_spent"):
+                            sp = get_sol_price_usd()
+                            wallet_fill_price_usd = (buy["sol_spent"] * sp / buy["amount"]) if sp else None
                     is_priority = wallet in priority_wallets
                     trader_name = WALLET_HANDLES.get(wallet, wallet[:6] + "...")  # "..." kept for unknown handles
                     platform_name = get_source_display_name(buy["source"])
@@ -4089,11 +4734,25 @@ def main():
                         # exit ladder, not the main patient trailing stop,
                         # per your instruction to keep the sniper strategy
                         # for these copies.
-                        copy_priority_wallet_entry(token, wallet, trader_name, platform_name, metadata, state)
+                        copy_priority_wallet_entry(
+                            token, wallet, trader_name, platform_name, metadata, state,
+                            signal_block_time=buy.get("block_time"), wallet_fill_price_usd=wallet_fill_price_usd,
+                        )
                         continue
 
                     if token in state.open_positions:
                         print(f"  [SKIP] {display_symbol}: already holding a position, skipping analysis.")
+                        continue
+                    if not PAPER_TRADING_ENABLED:
+                        continue  # conviction entries are paper-only (unchanged behaviour)
+
+                    # Risk desk first — cheaper than the LLM call below.
+                    gate = risk_gate_entry(
+                        state, token, display_symbol, "conviction", wallet=wallet,
+                        signal_block_time=buy.get("block_time"), wallet_fill_price_usd=wallet_fill_price_usd,
+                    )
+                    if not gate["ok"]:
+                        _log_risk_refusal(display_symbol, token, "conviction", gate["reason"], trader_name)
                         continue
 
                     analysis = analyze_conviction(token, metadata, trader_name, platform_name)
@@ -4146,7 +4805,7 @@ def main():
                     # CONVICTION_INITIAL_ENTRY_FRACTION and
                     # top_up_conviction_position for the rest of the pacing.
                     target_size_sol = MIN_SCOUT_SIZE_SOL + (MAX_CONVICTION_SIZE_SOL - MIN_SCOUT_SIZE_SOL) * (1 - risk_score / 10)
-                    target_size_sol = min(target_size_sol, MAX_POSITION_SOL)
+                    target_size_sol = min(target_size_sol, MAX_POSITION_SOL, gate["size"])  # never above the risk desk's size
                     size_sol = target_size_sol * CONVICTION_INITIAL_ENTRY_FRACTION
                     strength = "weak"  # priority wallets never reach here — they branch off above into copy_priority_wallet_entry
 
@@ -4178,12 +4837,19 @@ def main():
                         ],
                         journal_kind="did", token_ticker=display_symbol,
                         journal_meta={"risk_score": risk_score, "size_sol": size_sol, "wallet": trader_name, "platform": platform_name, "independent": analysis["independent"]},
+                        embed=trade_cards.entry_card(
+                            mint=token, symbol=display_symbol, name=metadata.get("name"),
+                            price_usd=entry_price, mcap_usd=_current_mcap(token), size_sol=size_sol,
+                            size_usd=size_sol * sol_price if sol_price else None,
+                            thesis=analysis["thesis"],
+                        ),
                     )
 
                     open_paper_position(
                         state, token, entry_price, size_sol, opened_by=wallet, strength=strength,
                         thesis=analysis["thesis"], risk_score=risk_score, target_size_sol=target_size_sol,
                         entry_condition=analysis.get("entry_condition"), invalidation=analysis.get("invalidation"),
+                        source="conviction", price_source="jupiter",
                     )
 
                 # Only advance the cursor once every buy in this batch has
@@ -4198,51 +4864,45 @@ def main():
                 print(f"[ERROR] wallet {wallet}: {e}")
             time.sleep(0.3)  # spread requests out across the cycle
 
-        check_open_positions(state)
-        sweep_stuck_real_positions(state)
-        if SNIPER_MODE_ENABLED:
-            check_sniper_positions(state)
-        elif not PAPER_TRADING_ENABLED:
-            # check_sniper_positions() — and the check_real_only_sniper_positions()
-            # branch it delegates to when PAPER_TRADING_ENABLED is off — is
-            # what actually exits real-only-mode positions (stop-loss, TP
-            # ladder, time exit). It's normally reached through the
-            # SNIPER_MODE_ENABLED gate above, which silently meant that
-            # with Sniper Mode OFF, a real-only position got zero exit
-            # monitoring ever again after its opening buy — confirmed live:
-            # several priority-copy real-only positions sat open for hours
-            # with no stop-loss/time-exit coverage once SNIPER_MODE_ENABLED
-            # was turned off. This keeps real-only exits running at the
-            # normal cycle cadence independent of that toggle.
-            check_real_only_sniper_positions()
-        check_for_daily_target_hit(state)
-        check_for_blowup_reset(state)
-        check_daily_loss_pause(state)
-        check_ultra_conservative_mode(state)
-        check_goal_deadline(state)
-        state.save()
+        _run_housekeeping(state)
 
-        if SNIPER_MODE_ENABLED:
-            # Sniper positions need much faster monitoring than the main
-            # 2-minute cycle — Cupsey's average hold is ~40 seconds, so a
-            # single check per full cycle would miss most of that window.
-            # Break the wait into smaller chunks and re-check sniper
-            # positions (and drain/scan new launches) on each one.
-            elapsed = 0
-            while elapsed < POLL_SECONDS:
-                time.sleep(min(SNIPER_CHECK_INTERVAL_SECONDS, POLL_SECONDS - elapsed))
-                elapsed += SNIPER_CHECK_INTERVAL_SECONDS
-                drain_sniper_queue(state)
-                scan_sniper_pending(state)
-                check_sniper_positions(state)
-                check_for_daily_target_hit(state)
-                check_for_blowup_reset(state)
-                check_daily_loss_pause(state)
-                check_ultra_conservative_mode(state)
-                check_goal_deadline(state)
-                state.save()
-        else:
-            time.sleep(POLL_SECONDS)
+        # Positions are re-checked every POSITION_CHECK_SECONDS regardless
+        # of Sniper Mode (the old loop only checked priority copies once per
+        # full wallet-poll cycle when the sniper was off).
+        elapsed = 0
+        while elapsed < POLL_SECONDS:
+            step = min(POSITION_CHECK_SECONDS, POLL_SECONDS - elapsed)
+            time.sleep(step)
+            elapsed += step
+            if SNIPER_MODE_ENABLED:
+                _safe("drain_sniper_queue", drain_sniper_queue, state)
+                _safe("scan_sniper_pending", scan_sniper_pending, state)
+            _run_housekeeping(state)
+
+
+def _safe(name: str, fn, *args):
+    """One failing stage (an API returning garbage, a KeyError on an odd
+    position) must not crash the whole process — the old main loop had no
+    guard around position checks, so one bad response restarted the bot
+    and dropped every in-memory sniper candidate."""
+    try:
+        return fn(*args)
+    except Exception as e:
+        print(f"[ERROR] {name} failed: {type(e).__name__}: {e}")
+        return None
+
+
+def _run_housekeeping(state: LedgerState):
+    _safe("manage_positions", manage_positions, state)
+    _safe("sweep_stuck_real_positions", sweep_stuck_real_positions, state)
+    if PAPER_TRADING_ENABLED:
+        _safe("roll_day", _roll_day, state)
+        _safe("check_for_daily_target_hit", check_for_daily_target_hit, state)
+        _safe("check_for_blowup_reset", check_for_blowup_reset, state)
+        _safe("check_daily_loss_pause", check_daily_loss_pause, state)
+        _safe("check_ultra_conservative_mode", check_ultra_conservative_mode, state)
+        _safe("check_goal_deadline", check_goal_deadline, state)
+    _safe("state.save", state.save)
 
 
 if __name__ == "__main__":

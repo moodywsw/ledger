@@ -13,3 +13,7 @@ __pycache__/
 ledger_state.json
 real_positions.json
 journal.jsonl
+
+# Backtest raw candles (large, re-fetchable with python -m backtest.fetch_prices)
+backtest/data/prices.json
+.pytest_cache/
