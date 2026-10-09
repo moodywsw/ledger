@@ -132,15 +132,21 @@ it. Load order: profile < learned `tuned_params.json` (exit params only) <
 env < **hard rails** (clamped in every profile, reported at boot as
 `rails_applied`).
 
-| | `conservative` (default) | `balanced` | `degen` |
-|---|---|---|---|
-| Sizing | 1% risk/trade, ≤5% | per-wallet edge | per-wallet edge |
-| Unknown wallet / weak / base → max / top | — | 1.5% / 0.75% / 2→4% / 5% | 2% / 1% / 3→8% / **10%** |
-| Sniper / own thesis size | 1% / 0.5% | 1.5% / 1% | 3% / 2% |
-| Max concurrent / exposure / daily loss | 4 / 20% / 5% | 6 / 30% / 8% | 10 / 50% / 15% |
-| Stop / TP ladder | 20% / +25%:½, +60%:¼ | 25% / +30%:40%, +80%:30% | 30% / +40%:35%, +100%:25%, +300%:15% |
-| Min liquidity (copies / sniper) | $15K / $5K | $10K / $4K | $8K / $2.5K |
-| Sniper age window | 2–45 min | 1–30 min | 30 s–15 min |
+| | `conservative` (default) | `balanced` | `degen` | `scalper` |
+|---|---|---|---|---|
+| Sizing | 1% risk/trade, ≤5% | per-wallet edge | per-wallet edge | per-wallet edge |
+| Unknown wallet / weak / base → max / top | — | 1.5% / 0.75% / 2→4% / 5% | 2% / 1% / 3→8% / **10%** | 2% / 1% / 3→6% / 8% |
+| Sniper / own thesis size | 1% / 0.5% | 1.5% / 1% | 3% / 2% | 2% / 1% |
+| Max concurrent / exposure / daily loss | 4 / 20% / 5% | 6 / 30% / 8% | 10 / 50% / 15% | 8 / 40% / 12% |
+| Stop / TP ladder | 20% / +25%:½, +60%:¼ | 25% / +30%:40%, +80%:30% | 30% / +40%:35%, +100%:25%, +300%:15% | 10% / +12%:½, +25%:30% |
+| Trailing / time stop / max hold | +30% arms, 25% / 30 min / 24 h | +40%, 25% / 45 min / 24 h | +50%, 30% / 60 min / 48 h | +15%, 8% / 5 min / 30 min |
+| Max signal age / chase | 120 s / 25% | 150 s / 35% | 180 s / 50% | **45 s / 15%** |
+| Min liquidity (copies / sniper) | $15K / $5K | $10K / $4K | $8K / $2.5K | $10K / $4K |
+| Sniper age window | 2–45 min | 1–30 min | 30 s–15 min | 15 s–5 min |
+
+`scalper` needs fast detection: `WALLET_POLL_SECONDS` defaults to 15 for it
+(60 otherwise). Each poll is one `getSignaturesForAddress` per tracked
+wallet, so it costs RPC credits.
 
 **Per-trader edge**: every closed copy (and every shadow trade) gives
 `R = pnl% / stop%`. A wallet's score is the recency-weighted (half-life
@@ -196,6 +202,7 @@ extensions are always enforced. `REAL_TRADING_ENABLED` still defaults to
 | `OWN_THESIS_MIN_SCORE` / `OWN_THESIS_PAPER_TRADE` | `4` / `true` | Confluence bar; also open a small paper position tagged `own_thesis` (never mirrored to real). |
 | `FOMO_API_KEY` | unset | ⚠️ fomo.family's Terms forbid automated/third-party data extraction; fomoapi.io is unofficial. Preferred: track a Fomo account's public **Solana wallet address** on-chain via `wallets.json` instead. |
 | `FOMO_API_KEY` (cont.) | unset | Unofficial fomoapi.io key (free: https://fomoapi.io/dashboard). Unset = Fomo inputs disabled. |
+| `LEARNING_SEED_FILE` | `backtest/data/fomo_candidates.json` | Seed wallets (Fomo leaderboard traders) queued into shadow on boot, ordered by replay copy-score. |
 | `FOMO_HANDLES` | unset | Comma-separated public Fomo handles (e.g. your own) whose Solana wallet is resolved via the API and shadow-traded/scored like any discovered wallet. |
 | `FOMO_LEADERBOARD_PERIOD` / `FOMO_LEADERBOARD_LIMIT` / `FOMO_TRADERS_EVERY_MIN` / `FOMO_TRENDING_EVERY_MIN` | `7d` / `10` / `180` / `120` | ≈ 600 calls/month, inside the free 1,000. |
 
@@ -256,6 +263,8 @@ python -m backtest.collect_wallet_buys     # tracked-wallet buys from RPC -> bac
 python -m backtest.fetch_prices            # GeckoTerminal minute candles + mint facts
 python -m backtest.replay                  # old vs new rules + each RISK_PROFILE, with risk of ruin
 python -m tuning --profile degen          # walk-forward exit tuning on the same data
+python -m backtest.copy_score --buys backtest/data/fomo_buys.json --prices backtest/data/fomo_prices.json \
+    --profile scalper --latency 15         # re-rank wallets by what copying them made
 python -m backtest.replay --trade-log path/to/ledger_state.json   # stats from a real state file
 ```
 

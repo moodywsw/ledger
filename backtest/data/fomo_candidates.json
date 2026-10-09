@@ -45,7 +45,16 @@
      "pnl_usd": 202276
     }
    },
-   "prior_weight": 2.4
+   "prior_weight": 2.4,
+   "copy_score": -0.305,
+   "copy_stats": {
+    "n": 24,
+    "win_rate": 0.5416666666666666,
+    "mean_ret": -0.03685778551380258,
+    "fwd5_median": -0.006706905018046272,
+    "fwd30_median": -0.1476354474502598
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
   },
   {
    "handle": "000000",
@@ -58,7 +67,16 @@
      "pnl_usd": 182024
     }
    },
-   "prior_weight": 2.1
+   "prior_weight": 2.1,
+   "copy_score": -0.119,
+   "copy_stats": {
+    "n": 5,
+    "win_rate": 0.2,
+    "mean_ret": -0.023824205770083207,
+    "fwd5_median": -0.006864643082783173,
+    "fwd30_median": 0.06564809039810449
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
   },
   {
    "handle": "ExactTallTakin",
@@ -71,7 +89,16 @@
      "pnl_usd": 795082
     }
    },
-   "prior_weight": 2.0
+   "prior_weight": 2.0,
+   "copy_score": -1.067,
+   "copy_stats": {
+    "n": 21,
+    "win_rate": 0.3333333333333333,
+    "mean_ret": -0.13211575749409238,
+    "fwd5_median": -0.11571150340913472,
+    "fwd30_median": -0.3033032286725702
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
   },
   {
    "handle": "Adolf",
@@ -95,7 +122,16 @@
      "pnl_usd": 591258
     }
    },
-   "prior_weight": 1.8
+   "prior_weight": 1.8,
+   "copy_score": 0.507,
+   "copy_stats": {
+    "n": 11,
+    "win_rate": 0.36363636363636365,
+    "mean_ret": 0.07368045811247577,
+    "fwd5_median": 0.011680595922028303,
+    "fwd30_median": -0.06290665602874324
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
   },
   {
    "handle": "bystevenr",
@@ -108,7 +144,16 @@
      "pnl_usd": 530244
     }
    },
-   "prior_weight": 1.6
+   "prior_weight": 1.6,
+   "copy_score": 0.015,
+   "copy_stats": {
+    "n": 15,
+    "win_rate": 0.26666666666666666,
+    "mean_ret": 0.0019713600539903414,
+    "fwd5_median": -0.02594358528691515,
+    "fwd30_median": -0.19911172003381006
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
   },
   {
    "handle": "Hifive_07",
@@ -149,7 +194,16 @@
      "pnl_usd": 520673
     }
    },
-   "prior_weight": 1.4
+   "prior_weight": 1.4,
+   "copy_score": -0.448,
+   "copy_stats": {
+    "n": 13,
+    "win_rate": 0.23076923076923078,
+    "mean_ret": -0.061965424725308485,
+    "fwd5_median": -0.07491912924763766,
+    "fwd30_median": -0.15535441989654886
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
   },
   {
    "handle": "GenerationalFumbler",
@@ -162,7 +216,16 @@
      "pnl_usd": 481673
     }
    },
-   "prior_weight": 1.2
+   "prior_weight": 1.2,
+   "copy_score": 0.104,
+   "copy_stats": {
+    "n": 1,
+    "win_rate": 1.0,
+    "mean_ret": 0.06260870340787184,
+    "fwd5_median": -0.12457615790909671,
+    "fwd30_median": 0.9709484696173531
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
   },
   {
    "handle": "leo",
@@ -206,7 +269,16 @@
      "pnl_usd": 3200000.0
     }
    },
-   "prior_weight": 0.9
+   "prior_weight": 0.9,
+   "copy_score": 0.059,
+   "copy_stats": {
+    "n": 1,
+    "win_rate": 1.0,
+    "mean_ret": 0.03522215040378862,
+    "fwd5_median": -0.15708236189455427,
+    "fwd30_median": -0.32878081071959286
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
   },
   {
    "handle": "jxnwa",
@@ -230,7 +302,16 @@
      "pnl_usd": 3980000.0
     }
    },
-   "prior_weight": 0.9
+   "prior_weight": 0.9,
+   "copy_score": 0.098,
+   "copy_stats": {
+    "n": 3,
+    "win_rate": 0.6666666666666666,
+    "mean_ret": 0.026119647318349037,
+    "fwd5_median": 0.08140208470661536,
+    "fwd30_median": -0.030390131315781888
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
   },
   {
    "handle": "USronaldcarter",
@@ -243,7 +324,16 @@
      "pnl_usd": 368213
     }
    },
-   "prior_weight": 0.8
+   "prior_weight": 0.8,
+   "copy_score": -0.125,
+   "copy_stats": {
+    "n": 1,
+    "win_rate": 0.0,
+    "mean_ret": -0.07476295963966817,
+    "fwd5_median": 0.022996123036903793,
+    "fwd30_median": -0.04678797108842481
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
   },
   {
    "handle": "DumbCrayonEater",
@@ -256,7 +346,16 @@
      "pnl_usd": 3350000.0
     }
    },
-   "prior_weight": 0.8
+   "prior_weight": 0.8,
+   "copy_score": 0.356,
+   "copy_stats": {
+    "n": 1,
+    "win_rate": 1.0,
+    "mean_ret": 0.21387761707186026,
+    "fwd5_median": 0.07646238275243045,
+    "fwd30_median": -0.21126955635770672
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
   },
   {
    "handle": "The__Solstice",
@@ -269,7 +368,16 @@
      "pnl_usd": 3300000.0
     }
    },
-   "prior_weight": 0.7
+   "prior_weight": 0.7,
+   "copy_score": -0.076,
+   "copy_stats": {
+    "n": 2,
+    "win_rate": 0.0,
+    "mean_ret": -0.026685211448265855,
+    "fwd5_median": 0.0029633628229952524,
+    "fwd30_median": -0.04336856798732558
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
   },
   {
    "handle": "hitscanr",
@@ -293,7 +401,16 @@
      "pnl_usd": 299879
     }
    },
-   "prior_weight": 0.5
+   "prior_weight": 0.5,
+   "copy_score": -0.255,
+   "copy_stats": {
+    "n": 1,
+    "win_rate": 0.0,
+    "mean_ret": -0.15293143581487467,
+    "fwd5_median": -0.12178019669112017,
+    "fwd30_median": 0.5466868315694526
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
   },
   {
    "handle": "Salem1299534",
@@ -319,7 +436,16 @@
      "pnl_usd": 107902
     }
    },
-   "prior_weight": 0.45
+   "prior_weight": 0.45,
+   "copy_score": 0.051,
+   "copy_stats": {
+    "n": 1,
+    "win_rate": 1.0,
+    "mean_ret": 0.030601276587504167,
+    "fwd5_median": 0.09373488628499027,
+    "fwd30_median": -0.18855842789341382
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
   },
   {
    "handle": "inyourwalls",
@@ -332,7 +458,16 @@
      "pnl_usd": 99200
     }
    },
-   "prior_weight": 0.4
+   "prior_weight": 0.4,
+   "copy_score": -0.095,
+   "copy_stats": {
+    "n": 3,
+    "win_rate": 0.3333333333333333,
+    "mean_ret": -0.025361301577571254,
+    "fwd5_median": -0.010882898565793053,
+    "fwd30_median": 0.2100975061029018
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
   },
   {
    "handle": "0xstanczyk",
@@ -358,7 +493,16 @@
      "pnl_usd": 2760000.0
     }
    },
-   "prior_weight": 0.4
+   "prior_weight": 0.4,
+   "copy_score": -0.211,
+   "copy_stats": {
+    "n": 3,
+    "win_rate": 0.3333333333333333,
+    "mean_ret": -0.056301533319231635,
+    "fwd5_median": 0.03373430840432934,
+    "fwd30_median": 0.013174502804029542
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
   },
   {
    "handle": "Quanterty",
@@ -371,7 +515,16 @@
      "pnl_usd": 86946
     }
    },
-   "prior_weight": 0.35
+   "prior_weight": 0.35,
+   "copy_score": -0.098,
+   "copy_stats": {
+    "n": 2,
+    "win_rate": 0.0,
+    "mean_ret": -0.0343652056439222,
+    "fwd5_median": -0.004955008861503685,
+    "fwd30_median": -0.042294125418512796
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
   },
   {
    "handle": "uncsnipes",
@@ -397,7 +550,16 @@
      "pnl_usd": 2710000.0
     }
    },
-   "prior_weight": 0.3
+   "prior_weight": 0.3,
+   "copy_score": 0.143,
+   "copy_stats": {
+    "n": 1,
+    "win_rate": 1.0,
+    "mean_ret": 0.0857453028374372,
+    "fwd5_median": 0.08760213055407129,
+    "fwd30_median": 0.11147113032187717
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
   },
   {
    "handle": "domain0X",
@@ -410,7 +572,16 @@
      "pnl_usd": 78855
     }
    },
-   "prior_weight": 0.25
+   "prior_weight": 0.25,
+   "copy_score": -1.008,
+   "copy_stats": {
+    "n": 14,
+    "win_rate": 0.14285714285714285,
+    "mean_ret": -0.1368294002136853,
+    "fwd5_median": -0.016315455508026433,
+    "fwd30_median": -0.06347861376197717
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
   },
   {
    "handle": "TradBengal",
@@ -445,7 +616,16 @@
      "pnl_usd": 68693
     }
    },
-   "prior_weight": 0.15
+   "prior_weight": 0.15,
+   "copy_score": -0.11,
+   "copy_stats": {
+    "n": 4,
+    "win_rate": 0.0,
+    "mean_ret": -0.0246791600021887,
+    "fwd5_median": 0.006758812603096076,
+    "fwd30_median": 0.04804162794895617
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
   },
   {
    "handle": "Retirement",
@@ -458,7 +638,16 @@
      "pnl_usd": 68329
     }
    },
-   "prior_weight": 0.1
+   "prior_weight": 0.1,
+   "copy_score": -0.37,
+   "copy_stats": {
+    "n": 7,
+    "win_rate": 0.2857142857142857,
+    "mean_ret": -0.06349190670294551,
+    "fwd5_median": -0.0025718695090707344,
+    "fwd30_median": -0.006699897182938341
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
   }
  ]
 }

@@ -105,6 +105,7 @@ def test_fit_size_to_impact():
 # ── tuned overlay ───────────────────────────────────────────────────
 
 def test_apply_tuned_is_bounded_and_env_wins(monkeypatch, tmp_path):
+    monkeypatch.delenv("LEARNING_APPLY_TUNED", raising=False)
     base = RiskConfig.from_env("balanced")
     t = apply_tuned(base, {"stop_loss_pct": 0.9, "tp1_gain": 0.05, "max_position_pct": 0.5, "time_stop_minutes": 20})
     assert t.stop_loss_pct == pytest.approx(0.40)          # clamped to TUNABLE_BOUNDS
@@ -381,3 +382,11 @@ def test_seed_candidates_orders_by_copy_score(learn_dir, monkeypatch):
     assert learning.wallet_status("W_FAST") == "shadow"      # measured copy edge beats leaderboard size
     assert learning.wallet_status("W_BIG") == "candidate"
     assert learning.wallet_status("W_BAD") is None
+
+
+def test_scalper_profile_is_fast_and_tight(monkeypatch):
+    monkeypatch.delenv("LEARNING_APPLY_TUNED", raising=False)
+    c = RiskConfig.from_env("scalper")
+    assert c.sizing_mode == "edge" and c.stop_loss_pct == pytest.approx(0.10)
+    assert c.max_signal_age_seconds <= 45 and c.max_hold_hours <= 0.5 and c.time_stop_minutes <= 5
+    assert c.tp_ladder[0][0] <= 0.15 and not c.rails_applied

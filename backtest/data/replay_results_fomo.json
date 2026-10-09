@@ -1,0 +1,2110 @@
+{
+ "signals": 178,
+ "span_days": 6.948287037037037,
+ "latency": 45,
+ "results": {
+  "legacy_paper (no fees, as dashboard)": {
+   "metrics": {
+    "trades": 101,
+    "win_rate": 0.39603960396039606,
+    "avg_win_pct": 0.46922025817417745,
+    "avg_loss_pct": -0.32488777773985883,
+    "expectancy_pct": -0.010389545694695936,
+    "profit_factor": 0.9470513705891055,
+    "total_pnl_sol": -0.5246720575821447,
+    "return_pct": -0.05246720575821447,
+    "max_drawdown_pct": -0.2542036060997213,
+    "avg_hold_min": 216.3387788778878,
+    "median_hold_min": 22.683333333333334,
+    "worst_trade_pct": -0.9677737380115804,
+    "best_trade_pct": 1.2411482118137918
+   },
+   "risk_of_ruin": {
+    "trades_per_month": 436,
+    "p_drawdown_50pct": 0.2252,
+    "p_drawdown_80pct": 0.001,
+    "p_losing_month": 0.703,
+    "median_month": -0.203791802677582,
+    "p5_month": -0.6083268315900598,
+    "p95_month": 0.637159548935601
+   },
+   "avg_size_pct_equity": 0.045266052944800586,
+   "blocked": {
+    "no price at fill time": 30,
+    "legacy limits": 31,
+    "already holding": 2,
+    "no price data": 14
+   },
+   "by_exit_reason": {
+    "stop_loss": {
+     "n": 50,
+     "win_rate": 0.02,
+     "expectancy_pct": -0.37539632418764035,
+     "pnl_sol": -9.384908104691009
+    },
+    "trailing_stop": {
+     "n": 28,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.5923347803851398,
+     "pnl_sol": 8.292686925391957
+    },
+    "end_of_data": {
+     "n": 23,
+     "win_rate": 0.4782608695652174,
+     "expectancy_pct": 0.04935209754060065,
+     "pnl_sol": 0.5675491217169075
+    }
+   },
+   "by_wallet": {
+    "fomo:Iri0o": {
+     "n": 20,
+     "win_rate": 0.25,
+     "expectancy_pct": -0.12233367216915378,
+     "pnl_sol": -1.2233367216915378
+    },
+    "fomo:ExactTallTakin": {
+     "n": 16,
+     "win_rate": 0.3125,
+     "expectancy_pct": -0.14969389427965202,
+     "pnl_sol": -1.1975511542372161
+    },
+    "fomo:domain0X": {
+     "n": 12,
+     "win_rate": 0.25,
+     "expectancy_pct": -0.07852407873585349,
+     "pnl_sol": -0.4711444724151209
+    },
+    "fomo:bystevenr": {
+     "n": 10,
+     "win_rate": 0.3,
+     "expectancy_pct": -0.14356880018855184,
+     "pnl_sol": -0.7178440009427591
+    },
+    "fomo:bigbabba": {
+     "n": 8,
+     "win_rate": 0.25,
+     "expectancy_pct": -0.14456432117384277,
+     "pnl_sol": -0.5782572846953711
+    },
+    "fomo:OmakaseOnly": {
+     "n": 7,
+     "win_rate": 0.42857142857142855,
+     "expectancy_pct": -0.006362209460834259,
+     "pnl_sol": -0.022267733112919907
+    },
+    "fomo:Retirement": {
+     "n": 6,
+     "win_rate": 0.6666666666666666,
+     "expectancy_pct": 0.33140457623173614,
+     "pnl_sol": 0.9942137286952084
+    },
+    "fomo:UsedFaintHare": {
+     "n": 4,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.3320396800081094,
+     "pnl_sol": 0.6640793600162188
+    },
+    "fomo:pointfarmcap": {
+     "n": 3,
+     "win_rate": 0.6666666666666666,
+     "expectancy_pct": 0.05554629334351872,
+     "pnl_sol": 0.08331944001527808
+    },
+    "fomo:theveeman": {
+     "n": 3,
+     "win_rate": 0.3333333333333333,
+     "expectancy_pct": 0.15487258550083305,
+     "pnl_sol": 0.23230887825124957
+    },
+    "fomo:000000": {
+     "n": 2,
+     "win_rate": 0.5,
+     "expectancy_pct": 0.2770473956971798,
+     "pnl_sol": 0.2770473956971798
+    },
+    "fomo:inyourwalls": {
+     "n": 2,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.42555428770725745,
+     "pnl_sol": 0.42555428770725745
+    },
+    "fomo:Quanterty": {
+     "n": 2,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.03252781314739006,
+     "pnl_sol": -0.03252781314739006
+    },
+    "fomo:The__Solstice": {
+     "n": 2,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.2734619274736386,
+     "pnl_sol": 0.2734619274736386
+    },
+    "fomo:GenerationalFumbler": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.8658224944977713,
+     "pnl_sol": 0.43291124724888563
+    },
+    "fomo:USronaldcarter": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.8631504562751307,
+     "pnl_sol": 0.4315752281375653
+    },
+    "fomo:jelitics": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.25437691387772077,
+     "pnl_sol": -0.12718845693886038
+    },
+    "fomo:AvgJoesCrypto": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.06194817271309816,
+     "pnl_sol": 0.03097408635654908
+    }
+   }
+  },
+  "legacy_paper (+fees)": {
+   "metrics": {
+    "trades": 93,
+    "win_rate": 0.3870967741935484,
+    "avg_win_pct": 0.46714955470323827,
+    "avg_loss_pct": -0.3099416350220112,
+    "expectancy_pct": -0.00913214222514045,
+    "profit_factor": 0.9519270426580307,
+    "total_pnl_sol": -0.42464461346903093,
+    "return_pct": -0.04246446134690309,
+    "max_drawdown_pct": -0.24404551893744075,
+    "avg_hold_min": 232.70179211469534,
+    "median_hold_min": 23.033333333333335,
+    "worst_trade_pct": -0.968726238365918,
+    "best_trade_pct": 1.1782302535013436
+   },
+   "risk_of_ruin": {
+    "trades_per_month": 402,
+    "p_drawdown_50pct": 0.1772,
+    "p_drawdown_80pct": 0.0002,
+    "p_losing_month": 0.6766,
+    "median_month": -0.17126332441085568,
+    "p5_month": -0.5715801223260187,
+    "p95_month": 0.6287692845355453
+   },
+   "avg_size_pct_equity": 0.046609508819561864,
+   "blocked": {
+    "no price at fill time": 30,
+    "legacy limits": 39,
+    "already holding": 2,
+    "no price data": 14
+   },
+   "by_exit_reason": {
+    "stop_loss": {
+     "n": 44,
+     "win_rate": 0.022727272727272728,
+     "expectancy_pct": -0.375091309719032,
+     "pnl_sol": -8.252008813818703
+    },
+    "trailing_stop": {
+     "n": 27,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.5569598610784383,
+     "pnl_sol": 7.518958124558917
+    },
+    "end_of_data": {
+     "n": 22,
+     "win_rate": 0.36363636363636365,
+     "expectancy_pct": 0.02803691598097768,
+     "pnl_sol": 0.30840607579075446
+    }
+   },
+   "by_wallet": {
+    "fomo:Iri0o": {
+     "n": 19,
+     "win_rate": 0.2631578947368421,
+     "expectancy_pct": -0.12366109955726967,
+     "pnl_sol": -1.1747804457940618
+    },
+    "fomo:ExactTallTakin": {
+     "n": 13,
+     "win_rate": 0.38461538461538464,
+     "expectancy_pct": -0.14972552984767074,
+     "pnl_sol": -0.9732159440098598
+    },
+    "fomo:domain0X": {
+     "n": 12,
+     "win_rate": 0.25,
+     "expectancy_pct": -0.10280131493421096,
+     "pnl_sol": -0.6168078896052658
+    },
+    "fomo:bystevenr": {
+     "n": 8,
+     "win_rate": 0.375,
+     "expectancy_pct": -0.10203626202036524,
+     "pnl_sol": -0.40814504808146096
+    },
+    "fomo:Retirement": {
+     "n": 6,
+     "win_rate": 0.5,
+     "expectancy_pct": 0.29372133996363986,
+     "pnl_sol": 0.8811640198909196
+    },
+    "fomo:bigbabba": {
+     "n": 6,
+     "win_rate": 0.16666666666666666,
+     "expectancy_pct": -0.2126970797692521,
+     "pnl_sol": -0.6380912393077562
+    },
+    "fomo:OmakaseOnly": {
+     "n": 6,
+     "win_rate": 0.5,
+     "expectancy_pct": 0.09757993008389824,
+     "pnl_sol": 0.2927397902516947
+    },
+    "fomo:UsedFaintHare": {
+     "n": 4,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.3004669362443646,
+     "pnl_sol": 0.6009338724887292
+    },
+    "fomo:inyourwalls": {
+     "n": 3,
+     "win_rate": 0.6666666666666666,
+     "expectancy_pct": 0.16779175389723663,
+     "pnl_sol": 0.25168763084585494
+    },
+    "fomo:pointfarmcap": {
+     "n": 3,
+     "win_rate": 0.3333333333333333,
+     "expectancy_pct": 0.032662733097612105,
+     "pnl_sol": 0.048994099646418154
+    },
+    "fomo:theveeman": {
+     "n": 3,
+     "win_rate": 0.3333333333333333,
+     "expectancy_pct": 0.11991860008692783,
+     "pnl_sol": 0.17987790013039173
+    },
+    "fomo:000000": {
+     "n": 2,
+     "win_rate": 0.5,
+     "expectancy_pct": 0.2407818681033626,
+     "pnl_sol": 0.2407818681033626
+    },
+    "fomo:Quanterty": {
+     "n": 2,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.06112305019722081,
+     "pnl_sol": -0.06112305019722081
+    },
+    "fomo:The__Solstice": {
+     "n": 2,
+     "win_rate": 0.5,
+     "expectancy_pct": 0.2623013614370772,
+     "pnl_sol": 0.2623013614370772
+    },
+    "fomo:GenerationalFumbler": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.8134923067232258,
+     "pnl_sol": 0.4067461533616129
+    },
+    "fomo:USronaldcarter": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.8030507348480906,
+     "pnl_sol": 0.4015253674240453
+    },
+    "fomo:jelitics": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.26902666209953807,
+     "pnl_sol": -0.13451333104976904
+    },
+    "fomo:AvgJoesCrypto": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.030560541992514123,
+     "pnl_sol": 0.015280270996257062
+    }
+   }
+  },
+  "legacy_cupsey real-only (+fees)": {
+   "metrics": {
+    "trades": 133,
+    "win_rate": 0.2706766917293233,
+    "avg_win_pct": 0.09872838622612241,
+    "avg_loss_pct": -0.10070709118760689,
+    "expectancy_pct": -0.04672455594780045,
+    "profit_factor": 0.36371025673952695,
+    "total_pnl_sol": -6.362902899181894,
+    "return_pct": -0.6362902899181895,
+    "max_drawdown_pct": -0.6362902899181895,
+    "avg_hold_min": 1.263157894736842,
+    "median_hold_min": 1.1666666666666667,
+    "worst_trade_pct": -0.9297729697318123,
+    "best_trade_pct": 0.782254924707837
+   },
+   "risk_of_ruin": {
+    "trades_per_month": 574,
+    "p_drawdown_50pct": 1.0,
+    "p_drawdown_80pct": 1.0,
+    "p_losing_month": 1.0,
+    "median_month": -0.9870961811694847,
+    "p5_month": -0.9957288215349661,
+    "p95_month": -0.9634297459173702
+   },
+   "avg_size_pct_equity": 0.1579864918063972,
+   "blocked": {
+    "no price at fill time": 30,
+    "no price data": 14,
+    "already holding": 1
+   },
+   "by_exit_reason": {
+    "time_exit_60s": {
+     "n": 132,
+     "win_rate": 0.2727272727272727,
+     "expectancy_pct": -0.04685461583947844,
+     "pnl_sol": -6.34142993884471
+    },
+    "end_of_data": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.02955665024630533,
+     "pnl_sol": -0.021472960337184044
+    }
+   },
+   "by_wallet": {
+    "fomo:Iri0o": {
+     "n": 24,
+     "win_rate": 0.375,
+     "expectancy_pct": -0.007325921851134287,
+     "pnl_sol": -0.353736404034991
+    },
+    "fomo:ExactTallTakin": {
+     "n": 21,
+     "win_rate": 0.3333333333333333,
+     "expectancy_pct": -0.05785115723410618,
+     "pnl_sol": -0.8623368963716893
+    },
+    "fomo:bystevenr": {
+     "n": 15,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.1304787528193972,
+     "pnl_sol": -1.6065871546984913
+    },
+    "fomo:domain0X": {
+     "n": 14,
+     "win_rate": 0.14285714285714285,
+     "expectancy_pct": -0.08807979044386038,
+     "pnl_sol": -1.7747421780672887
+    },
+    "fomo:bigbabba": {
+     "n": 13,
+     "win_rate": 0.3076923076923077,
+     "expectancy_pct": -0.028951619396004387,
+     "pnl_sol": -0.2611469193809923
+    },
+    "fomo:OmakaseOnly": {
+     "n": 10,
+     "win_rate": 0.4,
+     "expectancy_pct": -0.029307780899241527,
+     "pnl_sol": -0.4071510848948052
+    },
+    "fomo:Retirement": {
+     "n": 7,
+     "win_rate": 0.42857142857142855,
+     "expectancy_pct": 0.002741031858055405,
+     "pnl_sol": 0.022239597791320675
+    },
+    "fomo:UsedFaintHare": {
+     "n": 4,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.03210319763599753,
+     "pnl_sol": -0.15845339266122394
+    },
+    "fomo:000000": {
+     "n": 4,
+     "win_rate": 0.25,
+     "expectancy_pct": -0.009384942667318728,
+     "pnl_sol": -0.042001636765882644
+    },
+    "fomo:pointfarmcap": {
+     "n": 4,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.02298457816129934,
+     "pnl_sol": -0.08900345235306928
+    },
+    "fomo:inyourwalls": {
+     "n": 3,
+     "win_rate": 0.3333333333333333,
+     "expectancy_pct": -0.07630713776984303,
+     "pnl_sol": -0.28678473406416205
+    },
+    "fomo:theveeman": {
+     "n": 3,
+     "win_rate": 0.6666666666666666,
+     "expectancy_pct": 0.012077824446652145,
+     "pnl_sol": 0.0393615889349761
+    },
+    "fomo:Quanterty": {
+     "n": 2,
+     "win_rate": 0.5,
+     "expectancy_pct": -0.010005582559168565,
+     "pnl_sol": -0.017787019561324002
+    },
+    "fomo:The__Solstice": {
+     "n": 2,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.029887303172880422,
+     "pnl_sol": -0.05569963547295287
+    },
+    "fomo:USronaldcarter": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.0072782924998119804,
+     "pnl_sol": 0.011277186223471736
+    },
+    "fomo:GenerationalFumbler": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.029556650246305213,
+     "pnl_sol": -0.0458492159001862
+    },
+    "fomo:ThePumponomics": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.15292799634509624,
+     "pnl_sol": -0.19116958068982015
+    },
+    "fomo:jelitics": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.043220249090929246,
+     "pnl_sol": -0.05334110574924322
+    },
+    "fomo:AvgJoesCrypto": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.02187758080139575,
+     "pnl_sol": 0.02342426803272657
+    },
+    "fomo:frankdegods": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.10887273760323349,
+     "pnl_sol": -0.10788547157980166
+    },
+    "fomo:DumbCrayonEater": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.14732317279842994,
+     "pnl_sol": -0.14552965791846562
+    }
+   }
+  },
+  "new_v2 (+fees)": {
+   "metrics": {
+    "trades": 35,
+    "win_rate": 0.4,
+    "avg_win_pct": 0.15709391884145732,
+    "avg_loss_pct": -0.2969408117895587,
+    "expectancy_pct": -0.11532691953715228,
+    "profit_factor": 0.3524462426323926,
+    "total_pnl_sol": -1.2767653824062637,
+    "return_pct": -0.12767653824062636,
+    "max_drawdown_pct": -0.16369131816028507,
+    "avg_hold_min": 71.85904761904763,
+    "median_hold_min": 11.316666666666666,
+    "worst_trade_pct": -0.9297729697318123,
+    "best_trade_pct": 0.46078670762319657
+   },
+   "risk_of_ruin": {
+    "trades_per_month": 151,
+    "p_drawdown_50pct": 0.2196,
+    "p_drawdown_80pct": 0.0,
+    "p_losing_month": 1.0,
+    "median_month": -0.44604109065109787,
+    "p5_month": -0.5497027926508925,
+    "p95_month": -0.3221637329380622
+   },
+   "avg_size_pct_equity": 0.033333333333333326,
+   "blocked": {
+    "no price at fill time": 30,
+    "market cap too large": 15,
+    "chasing: price already ran > max_chase above the wallet's fill": 17,
+    "dangerous Token-2022 extension(s): transferFeeConfig": 8,
+    "wallet benched by edge score": 32,
+    "no price data": 14,
+    "dangerous Token-2022 extension(s): transferHook": 1,
+    "token re-entry cooldown": 2,
+    "already holding": 1,
+    "market cap too small": 1,
+    "cooldown after N straight losses": 12,
+    "daily loss limit hit": 10
+   },
+   "by_exit_reason": {
+    "stop_loss": {
+     "n": 16,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.3710645503361989,
+     "pnl_sol": -1.876271699460459
+    },
+    "breakeven_stop": {
+     "n": 8,
+     "win_rate": 0.875,
+     "expectancy_pct": 0.10992696416663507,
+     "pnl_sol": 0.273773138768666
+    },
+    "time_stop": {
+     "n": 6,
+     "win_rate": 0.3333333333333333,
+     "expectancy_pct": -0.04302606811864421,
+     "pnl_sol": -0.08236679675162084
+    },
+    "trailing_stop": {
+     "n": 3,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.3676957157800405,
+     "pnl_sol": 0.3524628149980721
+    },
+    "end_of_data": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.1401177099650561,
+     "pnl_sol": 0.04413711589901542
+    },
+    "max_hold": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.03612645965245975,
+     "pnl_sol": 0.011500044140062726
+    }
+   },
+   "by_wallet": {
+    "fomo:domain0X": {
+     "n": 6,
+     "win_rate": 0.3333333333333333,
+     "expectancy_pct": -0.15102924850166274,
+     "pnl_sol": -0.3038619540419736
+    },
+    "fomo:bigbabba": {
+     "n": 6,
+     "win_rate": 0.6666666666666666,
+     "expectancy_pct": -0.026489362891926067,
+     "pnl_sol": -0.050135274489883724
+    },
+    "fomo:Iri0o": {
+     "n": 5,
+     "win_rate": 0.6,
+     "expectancy_pct": -0.1674150774814135,
+     "pnl_sol": -0.2688573139059387
+    },
+    "fomo:ExactTallTakin": {
+     "n": 5,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.3343668776740957,
+     "pnl_sol": -0.5073514150861564
+    },
+    "fomo:OmakaseOnly": {
+     "n": 3,
+     "win_rate": 0.3333333333333333,
+     "expectancy_pct": -0.15518559871887946,
+     "pnl_sol": -0.14357692796297591
+    },
+    "fomo:000000": {
+     "n": 2,
+     "win_rate": 0.5,
+     "expectancy_pct": 0.00017932668709397595,
+     "pnl_sol": -0.00028248483261561486
+    },
+    "fomo:bystevenr": {
+     "n": 2,
+     "win_rate": 0.5,
+     "expectancy_pct": -0.04915564675034445,
+     "pnl_sol": -0.031109096601435543
+    },
+    "fomo:USronaldcarter": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.07496172563753534,
+     "pnl_sol": -0.02507189001231719
+    },
+    "fomo:GenerationalFumbler": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.0008030212419679288,
+     "pnl_sol": -0.0002679094247229341
+    },
+    "fomo:jelitics": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.2216189081128858,
+     "pnl_sol": -0.07135784664714712
+    },
+    "fomo:Retirement": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.4207036229340403,
+     "pnl_sol": 0.13068904132538173
+    },
+    "fomo:AvgJoesCrypto": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.1401177099650561,
+     "pnl_sol": 0.04413711589901542
+    },
+    "fomo:inyourwalls": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.16234898128481914,
+     "pnl_sol": -0.049719426625494056
+    }
+   }
+  },
+  "new_v2 exits only, no filters (+fees)": {
+   "metrics": {
+    "trades": 127,
+    "win_rate": 0.3858267716535433,
+    "avg_win_pct": 0.19787291276070176,
+    "avg_loss_pct": -0.21844915189941863,
+    "expectancy_pct": -0.05782095372346668,
+    "profit_factor": 0.569033010420626,
+    "total_pnl_sol": -3.671630561440134,
+    "return_pct": -0.3671630561440134,
+    "max_drawdown_pct": -0.3920802648576312,
+    "avg_hold_min": 40.878608923884514,
+    "median_hold_min": 10.65,
+    "worst_trade_pct": -0.9297729697318123,
+    "best_trade_pct": 0.8239221492420421
+   },
+   "risk_of_ruin": {
+    "trades_per_month": 548,
+    "p_drawdown_50pct": 1.0,
+    "p_drawdown_80pct": 0.8576,
+    "p_losing_month": 1.0,
+    "median_month": -0.8623655581877764,
+    "p5_month": -0.9282186211907835,
+    "p95_month": -0.739635543163062
+   },
+   "avg_size_pct_equity": 0.06082327357812026,
+   "blocked": {
+    "no price at fill time": 30,
+    "no price data": 14,
+    "already holding": 3,
+    "legacy limits": 2,
+    "legacy hourly limit": 2
+   },
+   "by_exit_reason": {
+    "stop_loss": {
+     "n": 50,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.31331664673452625,
+     "pnl_sol": -7.832916168363156
+    },
+    "time_stop": {
+     "n": 32,
+     "win_rate": 0.28125,
+     "expectancy_pct": -0.026255677568552658,
+     "pnl_sol": -0.4200908410968425
+    },
+    "breakeven_stop": {
+     "n": 31,
+     "win_rate": 0.967741935483871,
+     "expectancy_pct": 0.20093154641079372,
+     "pnl_sol": 3.1144389693673027
+    },
+    "trailing_stop": {
+     "n": 7,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.3860889985485801,
+     "pnl_sol": 1.3513114949200302
+    },
+    "end_of_data": {
+     "n": 6,
+     "win_rate": 0.3333333333333333,
+     "expectancy_pct": 0.032520917968767216,
+     "pnl_sol": 0.09756275390630165
+    },
+    "max_hold": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.03612645965245975,
+     "pnl_sol": 0.018063229826229876
+    }
+   },
+   "by_wallet": {
+    "fomo:Iri0o": {
+     "n": 23,
+     "win_rate": 0.43478260869565216,
+     "expectancy_pct": -0.0856290345310154,
+     "pnl_sol": -0.9847338971066771
+    },
+    "fomo:ExactTallTakin": {
+     "n": 17,
+     "win_rate": 0.35294117647058826,
+     "expectancy_pct": -0.12285104012441948,
+     "pnl_sol": -1.0442338410575656
+    },
+    "fomo:domain0X": {
+     "n": 14,
+     "win_rate": 0.21428571428571427,
+     "expectancy_pct": -0.10792185471548987,
+     "pnl_sol": -0.7554529830084291
+    },
+    "fomo:bystevenr": {
+     "n": 14,
+     "win_rate": 0.2857142857142857,
+     "expectancy_pct": -0.10807006144518463,
+     "pnl_sol": -0.7564904301162925
+    },
+    "fomo:bigbabba": {
+     "n": 13,
+     "win_rate": 0.46153846153846156,
+     "expectancy_pct": -0.037406906387676825,
+     "pnl_sol": -0.24314489151989938
+    },
+    "fomo:OmakaseOnly": {
+     "n": 10,
+     "win_rate": 0.6,
+     "expectancy_pct": 0.03960049758581188,
+     "pnl_sol": 0.1980024879290594
+    },
+    "fomo:Retirement": {
+     "n": 7,
+     "win_rate": 0.2857142857142857,
+     "expectancy_pct": -0.006475613119233646,
+     "pnl_sol": -0.02266464591731776
+    },
+    "fomo:UsedFaintHare": {
+     "n": 4,
+     "win_rate": 0.75,
+     "expectancy_pct": 0.021816585413720502,
+     "pnl_sol": 0.043633170827441004
+    },
+    "fomo:000000": {
+     "n": 4,
+     "win_rate": 0.25,
+     "expectancy_pct": -0.0090719358088783,
+     "pnl_sol": -0.0181438716177566
+    },
+    "fomo:pointfarmcap": {
+     "n": 4,
+     "win_rate": 0.75,
+     "expectancy_pct": 0.0959278262418784,
+     "pnl_sol": 0.1918556524837568
+    },
+    "fomo:inyourwalls": {
+     "n": 3,
+     "win_rate": 0.3333333333333333,
+     "expectancy_pct": 0.0027302896891692554,
+     "pnl_sol": 0.004095434533753883
+    },
+    "fomo:theveeman": {
+     "n": 3,
+     "win_rate": 0.3333333333333333,
+     "expectancy_pct": 0.02440107906822157,
+     "pnl_sol": 0.03660161860233235
+    },
+    "fomo:Quanterty": {
+     "n": 2,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.061360735244530284,
+     "pnl_sol": -0.061360735244530284
+    },
+    "fomo:The__Solstice": {
+     "n": 2,
+     "win_rate": 0.5,
+     "expectancy_pct": -0.026810365289792415,
+     "pnl_sol": -0.026810365289792415
+    },
+    "fomo:USronaldcarter": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.07496172563753534,
+     "pnl_sol": -0.03748086281876767
+    },
+    "fomo:GenerationalFumbler": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.0008030212419678495,
+     "pnl_sol": -0.00040151062098392476
+    },
+    "fomo:ThePumponomics": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.19364278865769835,
+     "pnl_sol": 0.09682139432884918
+    },
+    "fomo:jelitics": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.22161890811288576,
+     "pnl_sol": -0.11080945405644288
+    },
+    "fomo:AvgJoesCrypto": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.14011770996505613,
+     "pnl_sol": 0.07005885498252806
+    },
+    "fomo:frankdegods": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.23051202943197324,
+     "pnl_sol": -0.11525601471598662
+    },
+    "fomo:DumbCrayonEater": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.2714313440748256,
+     "pnl_sol": -0.1357156720374128
+    }
+   }
+  },
+  "profile balanced (+fees)": {
+   "metrics": {
+    "trades": 45,
+    "win_rate": 0.3111111111111111,
+    "avg_win_pct": 0.2682290203375193,
+    "avg_loss_pct": -0.31980388829346595,
+    "expectancy_pct": -0.13686031671938165,
+    "profit_factor": 0.371081613859655,
+    "total_pnl_sol": -0.9184655906821466,
+    "return_pct": -0.09184655906821466,
+    "max_drawdown_pct": -0.10813061708215976,
+    "avg_hold_min": 67.22592592592592,
+    "median_hold_min": 11.316666666666666,
+    "worst_trade_pct": -0.9297729697318123,
+    "best_trade_pct": 0.8519940575609237
+   },
+   "risk_of_ruin": {
+    "trades_per_month": 194,
+    "p_drawdown_50pct": 0.0004,
+    "p_drawdown_80pct": 0.0,
+    "p_losing_month": 1.0,
+    "median_month": -0.3400540911953547,
+    "p5_month": -0.41565500734319616,
+    "p95_month": -0.2514899576662527
+   },
+   "avg_size_pct_equity": 0.014918492808582264,
+   "blocked": {
+    "no price at fill time": 30,
+    "market cap too large": 16,
+    "chasing: price already ran > max_chase above the wallet's fill": 20,
+    "dangerous Token-2022 extension(s): transferFeeConfig": 8,
+    "no price data": 14,
+    "dangerous Token-2022 extension(s): transferHook": 2,
+    "token re-entry cooldown": 1,
+    "wallet benched by edge score": 27,
+    "already holding": 1,
+    "market cap too small": 2,
+    "cooldown after N straight losses": 12
+   },
+   "by_exit_reason": {
+    "stop_loss": {
+     "n": 24,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.38808113334259914,
+     "pnl_sol": -1.3724381496484692
+    },
+    "time_stop": {
+     "n": 6,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.08867508463312289,
+     "pnl_sol": -0.0833223213712638
+    },
+    "trailing_stop": {
+     "n": 6,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.4987060547286853,
+     "pnl_sol": 0.44198442207231015
+    },
+    "breakeven_stop": {
+     "n": 6,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.1160471591180306,
+     "pnl_sol": 0.09020762543183496
+    },
+    "end_of_data": {
+     "n": 2,
+     "win_rate": 0.5,
+     "expectancy_pct": -0.01868114354190663,
+     "pnl_sol": -0.00017972500994617446
+    },
+    "max_hold": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.03612645965245993,
+     "pnl_sol": 0.005282557843387575
+    }
+   },
+   "by_wallet": {
+    "fomo:domain0X": {
+     "n": 12,
+     "win_rate": 0.3333333333333333,
+     "expectancy_pct": -0.03646529648998269,
+     "pnl_sol": -0.09878010134206675
+    },
+    "fomo:bigbabba": {
+     "n": 6,
+     "win_rate": 0.3333333333333333,
+     "expectancy_pct": -0.12349954510945023,
+     "pnl_sol": -0.10651372891841537
+    },
+    "fomo:Iri0o": {
+     "n": 5,
+     "win_rate": 0.4,
+     "expectancy_pct": -0.2649740410834362,
+     "pnl_sol": -0.19388051297918402
+    },
+    "fomo:ExactTallTakin": {
+     "n": 5,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.35694381387723817,
+     "pnl_sol": -0.25333886458531196
+    },
+    "fomo:OmakaseOnly": {
+     "n": 5,
+     "win_rate": 0.2,
+     "expectancy_pct": -0.27618865091438966,
+     "pnl_sol": -0.1928938863503879
+    },
+    "fomo:bystevenr": {
+     "n": 4,
+     "win_rate": 0.5,
+     "expectancy_pct": -0.09714947029325299,
+     "pnl_sol": -0.05510898579807455
+    },
+    "fomo:000000": {
+     "n": 2,
+     "win_rate": 0.5,
+     "expectancy_pct": 0.07161922938576805,
+     "pnl_sol": 0.020703034756722388
+    },
+    "fomo:USronaldcarter": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.11184262954027455,
+     "pnl_sol": -0.016893689380282323
+    },
+    "fomo:GenerationalFumbler": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.32693705448395216,
+     "pnl_sol": -0.049300585787986934
+    },
+    "fomo:jelitics": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.2690266620995382,
+     "pnl_sol": -0.03965095464947874
+    },
+    "fomo:Retirement": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.7234095429319142,
+     "pnl_sol": 0.10418241099150793
+    },
+    "fomo:AvgJoesCrypto": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.030560541992514213,
+     "pnl_sol": 0.0044489592607947215
+    },
+    "fomo:frankdegods": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.29040521085954846,
+     "pnl_sol": -0.041438685899983146
+    }
+   }
+  },
+  "profile degen (+fees)": {
+   "metrics": {
+    "trades": 54,
+    "win_rate": 0.3888888888888889,
+    "avg_win_pct": 0.23328246985856213,
+    "avg_loss_pct": -0.32790575123673094,
+    "expectancy_pct": -0.10966588747745029,
+    "profit_factor": 0.4799094442747017,
+    "total_pnl_sol": -1.012393819022068,
+    "return_pct": -0.1012393819022068,
+    "max_drawdown_pct": -0.11293191886722868,
+    "avg_hold_min": 86.30648148148148,
+    "median_hold_min": 18.366666666666667,
+    "worst_trade_pct": -0.9297729697318124,
+    "best_trade_pct": 0.7631728716538282
+   },
+   "risk_of_ruin": {
+    "trades_per_month": 233,
+    "p_drawdown_50pct": 0.011,
+    "p_drawdown_80pct": 0.0,
+    "p_losing_month": 1.0,
+    "median_month": -0.36884726247391797,
+    "p5_month": -0.4663890202246386,
+    "p95_month": -0.25355335819310343
+   },
+   "avg_size_pct_equity": 0.018703703703703705,
+   "blocked": {
+    "no price at fill time": 30,
+    "market cap too large": 11,
+    "dangerous Token-2022 extension(s): transferFeeConfig": 8,
+    "chasing: price already ran > max_chase above the wallet's fill": 14,
+    "wallet benched by edge score": 40,
+    "no price data": 14,
+    "dangerous Token-2022 extension(s): transferHook": 2,
+    "already holding": 2,
+    "market cap too small": 1,
+    "token re-entry cooldown": 1,
+    "mint authority not revoked": 1
+   },
+   "by_exit_reason": {
+    "stop_loss": {
+     "n": 24,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.4103210499726521,
+     "pnl_sol": -1.798850045556125
+    },
+    "breakeven_stop": {
+     "n": 10,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.11736625780145409,
+     "pnl_sol": 0.20829915570141008
+    },
+    "trailing_stop": {
+     "n": 9,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.4073101396705978,
+     "pnl_sol": 0.7143819650145817
+    },
+    "time_stop": {
+     "n": 8,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.10789942644915732,
+     "pnl_sol": -0.13782587867168145
+    },
+    "end_of_data": {
+     "n": 3,
+     "win_rate": 0.6666666666666666,
+     "expectancy_pct": -0.016837049298442944,
+     "pnl_sol": 0.0016009844897464098
+    }
+   },
+   "by_wallet": {
+    "fomo:domain0X": {
+     "n": 10,
+     "win_rate": 0.3,
+     "expectancy_pct": -0.11511823246109694,
+     "pnl_sol": -0.12756848425019127
+    },
+    "fomo:bigbabba": {
+     "n": 9,
+     "win_rate": 0.4444444444444444,
+     "expectancy_pct": -0.08018567044113444,
+     "pnl_sol": -0.11093978285929212
+    },
+    "fomo:Iri0o": {
+     "n": 5,
+     "win_rate": 0.4,
+     "expectancy_pct": -0.21567995959571523,
+     "pnl_sol": -0.21120066461597126
+    },
+    "fomo:ExactTallTakin": {
+     "n": 5,
+     "win_rate": 0.4,
+     "expectancy_pct": -0.15492942990763056,
+     "pnl_sol": -0.1488382718979647
+    },
+    "fomo:OmakaseOnly": {
+     "n": 5,
+     "win_rate": 0.4,
+     "expectancy_pct": -0.1367052709476158,
+     "pnl_sol": -0.12594462021255948
+    },
+    "fomo:bystevenr": {
+     "n": 5,
+     "win_rate": 0.2,
+     "expectancy_pct": -0.27645945432544744,
+     "pnl_sol": -0.2579441410038229
+    },
+    "fomo:Retirement": {
+     "n": 3,
+     "win_rate": 0.6666666666666666,
+     "expectancy_pct": 0.19291525577207622,
+     "pnl_sol": 0.10689878058941998
+    },
+    "fomo:inyourwalls": {
+     "n": 3,
+     "win_rate": 0.6666666666666666,
+     "expectancy_pct": 0.05965260878619743,
+     "pnl_sol": 0.036526390251913315
+    },
+    "fomo:000000": {
+     "n": 2,
+     "win_rate": 0.5,
+     "expectancy_pct": 0.051947108889782934,
+     "pnl_sol": 0.01990873547547417
+    },
+    "fomo:USronaldcarter": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.09261570777570853,
+     "pnl_sol": -0.01851986368079178
+    },
+    "fomo:GenerationalFumbler": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.32693705448395205,
+     "pnl_sol": -0.06525474327908476
+    },
+    "fomo:ThePumponomics": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.11220082718903247,
+     "pnl_sol": 0.021935357099292063
+    },
+    "fomo:jelitics": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.31584492856233115,
+     "pnl_sol": -0.06180093663539282
+    },
+    "fomo:AvgJoesCrypto": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.030560541992514068,
+     "pnl_sol": 0.00592107014619786
+    },
+    "fomo:frankdegods": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.31505454163445035,
+     "pnl_sol": -0.05979135611539574
+    },
+    "fomo:theveeman": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.08414093949858203,
+     "pnl_sol": -0.01578128803389864
+    }
+   }
+  },
+  "profile scalper (+fees)": {
+   "metrics": {
+    "trades": 40,
+    "win_rate": 0.4,
+    "avg_win_pct": 0.10186569956137669,
+    "avg_loss_pct": -0.2014959898544588,
+    "expectancy_pct": -0.0801513140881246,
+    "profit_factor": 0.37211690491893784,
+    "total_pnl_sol": -0.5391347582909743,
+    "return_pct": -0.05391347582909743,
+    "max_drawdown_pct": -0.0576688982078802,
+    "avg_hold_min": 4.023333333333333,
+    "median_hold_min": 2.05,
+    "worst_trade_pct": -0.9297729697318123,
+    "best_trade_pct": 0.4033474886976987
+   },
+   "risk_of_ruin": {
+    "trades_per_month": 173,
+    "p_drawdown_50pct": 0.0,
+    "p_drawdown_80pct": 0.0,
+    "p_losing_month": 1.0,
+    "median_month": -0.21279345974095498,
+    "p5_month": -0.2847434238326,
+    "p95_month": -0.13929372719068622
+   },
+   "avg_size_pct_equity": 0.01975,
+   "blocked": {
+    "no price at fill time": 30,
+    "market cap too large": 12,
+    "chasing: price already ran > max_chase above the wallet's fill": 29,
+    "dangerous Token-2022 extension(s): transferFeeConfig": 8,
+    "wallet benched by edge score": 35,
+    "no price data": 14,
+    "dangerous Token-2022 extension(s): transferHook": 2,
+    "already holding": 1,
+    "market cap too small": 1,
+    "cooldown after N straight losses": 3,
+    "token re-entry cooldown": 2,
+    "mint authority not revoked": 1
+   },
+   "by_exit_reason": {
+    "stop_loss": {
+     "n": 16,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.2728899821155347,
+     "pnl_sol": -0.7663702635737815
+    },
+    "breakeven_stop": {
+     "n": 12,
+     "win_rate": 0.9166666666666666,
+     "expectancy_pct": 0.09538825271803238,
+     "pnl_sol": 0.2236795061265065
+    },
+    "time_stop": {
+     "n": 7,
+     "win_rate": 0.14285714285714285,
+     "expectancy_pct": -0.04541503099178803,
+     "pnl_sol": -0.06254136056157775
+    },
+    "trailing_stop": {
+     "n": 4,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.10209876507180864,
+     "pnl_sol": 0.08111429681325846
+    },
+    "max_hold": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.07496172563753534,
+     "pnl_sol": -0.015016937095380073
+    }
+   },
+   "by_wallet": {
+    "fomo:domain0X": {
+     "n": 6,
+     "win_rate": 0.3333333333333333,
+     "expectancy_pct": -0.1980924942030857,
+     "pnl_sol": -0.14631437456858193
+    },
+    "fomo:Iri0o": {
+     "n": 5,
+     "win_rate": 0.8,
+     "expectancy_pct": -0.11003627873049719,
+     "pnl_sol": -0.10951668620483831
+    },
+    "fomo:bigbabba": {
+     "n": 5,
+     "win_rate": 0.4,
+     "expectancy_pct": 0.0074785912973285825,
+     "pnl_sol": 0.0070470361847833896
+    },
+    "fomo:ExactTallTakin": {
+     "n": 5,
+     "win_rate": 0.2,
+     "expectancy_pct": -0.08179268102358841,
+     "pnl_sol": -0.07957705439676299
+    },
+    "fomo:OmakaseOnly": {
+     "n": 4,
+     "win_rate": 0.25,
+     "expectancy_pct": -0.1056573778815568,
+     "pnl_sol": -0.08105365052092492
+    },
+    "fomo:bystevenr": {
+     "n": 4,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.1593581997213359,
+     "pnl_sol": -0.12242165021808932
+    },
+    "fomo:000000": {
+     "n": 2,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.04702199194851681,
+     "pnl_sol": -0.018529163287744177
+    },
+    "fomo:inyourwalls": {
+     "n": 2,
+     "win_rate": 0.5,
+     "expectancy_pct": 0.026499559913671367,
+     "pnl_sol": 0.010550338771202233
+    },
+    "fomo:Retirement": {
+     "n": 2,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.03234600302413627,
+     "pnl_sol": 0.012572738816330337
+    },
+    "fomo:USronaldcarter": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.07496172563753534,
+     "pnl_sol": -0.015016937095380073
+    },
+    "fomo:GenerationalFumbler": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.06993325030898125,
+     "pnl_sol": 0.01398858872201697
+    },
+    "fomo:jelitics": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.1154647492151914,
+     "pnl_sol": -0.02277892103027765
+    },
+    "fomo:AvgJoesCrypto": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.0579820519508337,
+     "pnl_sol": 0.011297298857029986
+    },
+    "fomo:theveeman": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.0031805850032162026,
+     "pnl_sol": 0.0006176776802621631
+    }
+   }
+  },
+  "profile scalper @15s latency (+fees)": {
+   "metrics": {
+    "trades": 39,
+    "win_rate": 0.3333333333333333,
+    "avg_win_pct": 0.31504518526802633,
+    "avg_loss_pct": -0.1758967120960184,
+    "expectancy_pct": -0.01224941297467014,
+    "profit_factor": 0.8786679376016414,
+    "total_pnl_sol": -0.10869095275480517,
+    "return_pct": -0.010869095275480517,
+    "max_drawdown_pct": -0.050939006585486446,
+    "avg_hold_min": 4.779487179487179,
+    "median_hold_min": 1.2166666666666666,
+    "worst_trade_pct": -0.9316069549287782,
+    "best_trade_pct": 1.5977441676520836
+   },
+   "risk_of_ruin": {
+    "trades_per_month": 168,
+    "p_drawdown_50pct": 0.0,
+    "p_drawdown_80pct": 0.0,
+    "p_losing_month": 0.68,
+    "median_month": -0.04909560158191206,
+    "p5_month": -0.19604746741719448,
+    "p95_month": 0.13877458369785756
+   },
+   "avg_size_pct_equity": 0.02,
+   "blocked": {
+    "no price at fill time": 30,
+    "market cap too large": 11,
+    "chasing: price already ran > max_chase above the wallet's fill": 27,
+    "dangerous Token-2022 extension(s): transferFeeConfig": 8,
+    "wallet benched by edge score": 35,
+    "no price data": 14,
+    "dangerous Token-2022 extension(s): transferHook": 2,
+    "already holding": 2,
+    "market cap too small": 1,
+    "cooldown after N straight losses": 6,
+    "token re-entry cooldown": 2,
+    "mint authority not revoked": 1
+   },
+   "by_exit_reason": {
+    "stop_loss": {
+     "n": 18,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.22833567848837255,
+     "pnl_sol": -0.8050994147035928
+    },
+    "breakeven_stop": {
+     "n": 12,
+     "win_rate": 0.9166666666666666,
+     "expectancy_pct": 0.32693042294191793,
+     "pnl_sol": 0.7534752513447942
+    },
+    "time_stop": {
+     "n": 7,
+     "win_rate": 0.14285714285714285,
+     "expectancy_pct": -0.044530320283957155,
+     "pnl_sol": -0.06100718238882552
+    },
+    "max_hold": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.07476295963966832,
+     "pnl_sol": -0.014891664610780397
+    },
+    "trailing_stop": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.09562523310292317,
+     "pnl_sol": 0.018832057603599378
+    }
+   },
+   "by_wallet": {
+    "fomo:domain0X": {
+     "n": 5,
+     "win_rate": 0.2,
+     "expectancy_pct": -0.1366476435704677,
+     "pnl_sol": -0.13626207859535475
+    },
+    "fomo:Iri0o": {
+     "n": 5,
+     "win_rate": 0.6,
+     "expectancy_pct": -0.14020243222139536,
+     "pnl_sol": -0.13888436519933928
+    },
+    "fomo:ExactTallTakin": {
+     "n": 5,
+     "win_rate": 0.2,
+     "expectancy_pct": -0.16481196750933608,
+     "pnl_sol": -0.15994942350630623
+    },
+    "fomo:OmakaseOnly": {
+     "n": 5,
+     "win_rate": 0.4,
+     "expectancy_pct": 0.23710473126046785,
+     "pnl_sol": 0.22832523949129976
+    },
+    "fomo:bystevenr": {
+     "n": 5,
+     "win_rate": 0.2,
+     "expectancy_pct": 0.17978262738567463,
+     "pnl_sol": 0.1676095443494207
+    },
+    "fomo:000000": {
+     "n": 3,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.04697755595960667,
+     "pnl_sol": -0.027794925964510275
+    },
+    "fomo:bigbabba": {
+     "n": 3,
+     "win_rate": 0.3333333333333333,
+     "expectancy_pct": -0.02331171762354739,
+     "pnl_sol": -0.013449071366074455
+    },
+    "fomo:inyourwalls": {
+     "n": 2,
+     "win_rate": 0.5,
+     "expectancy_pct": 0.02650183698170687,
+     "pnl_sol": 0.010472663420755868
+    },
+    "fomo:USronaldcarter": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.07476295963966832,
+     "pnl_sol": -0.014891664610780397
+    },
+    "fomo:GenerationalFumbler": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.06260870340787154,
+     "pnl_sol": 0.012452071396245601
+    },
+    "fomo:jelitics": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.11546474921519141,
+     "pnl_sol": -0.0227826627143404
+    },
+    "fomo:AvgJoesCrypto": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.05798205195083374,
+     "pnl_sol": 0.011253120150462259
+    },
+    "fomo:theveeman": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.0031805850032162355,
+     "pnl_sol": 0.0006237705312850672
+    },
+    "fomo:Retirement": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.12953316745786533,
+     "pnl_sol": -0.025413170137568664
+    }
+   }
+  }
+ },
+ "latency_sweep": {
+  "10": {
+   "legacy_paper (+fees)": {
+    "trades": 91,
+    "win_rate": 0.4065934065934066,
+    "expectancy_pct": 0.010520503159417821,
+    "return_pct": 0.047868289375351085,
+    "max_drawdown_pct": -0.216482393794663
+   },
+   "new_v2 (+fees)": {
+    "trades": 40,
+    "win_rate": 0.3,
+    "expectancy_pct": -0.087005782723975,
+    "return_pct": -0.11359263187429239,
+    "max_drawdown_pct": -0.16557398297427237
+   },
+   "profile balanced (+fees)": {
+    "trades": 46,
+    "win_rate": 0.32608695652173914,
+    "expectancy_pct": -0.0857998094539796,
+    "return_pct": -0.04223649077011,
+    "max_drawdown_pct": -0.08912634733800011
+   },
+   "profile degen (+fees)": {
+    "trades": 56,
+    "win_rate": 0.375,
+    "expectancy_pct": -0.06857505422340818,
+    "return_pct": -0.10688406667043104,
+    "max_drawdown_pct": -0.11041556934981632
+   },
+   "profile scalper (+fees)": {
+    "trades": 38,
+    "win_rate": 0.3157894736842105,
+    "expectancy_pct": -0.021598926690779494,
+    "return_pct": -0.017652825298502834,
+    "max_drawdown_pct": -0.04951931361215909
+   },
+   "profile scalper @15s latency (+fees)": {
+    "trades": 38,
+    "win_rate": 0.34210526315789475,
+    "expectancy_pct": -0.012720477005743814,
+    "return_pct": -0.01098682655882,
+    "max_drawdown_pct": -0.049174806053538765
+   }
+  },
+  "30": {
+   "legacy_paper (+fees)": {
+    "trades": 94,
+    "win_rate": 0.3829787234042553,
+    "expectancy_pct": -0.014474205283550132,
+    "return_pct": -0.06802876483268562,
+    "max_drawdown_pct": -0.23454421591667665
+   },
+   "new_v2 (+fees)": {
+    "trades": 38,
+    "win_rate": 0.3684210526315789,
+    "expectancy_pct": -0.10678592993589883,
+    "return_pct": -0.12921852885941898,
+    "max_drawdown_pct": -0.15482901300888705
+   },
+   "profile balanced (+fees)": {
+    "trades": 46,
+    "win_rate": 0.2826086956521739,
+    "expectancy_pct": -0.13995544702910626,
+    "return_pct": -0.08833090891374504,
+    "max_drawdown_pct": -0.09986799295498254
+   },
+   "profile degen (+fees)": {
+    "trades": 56,
+    "win_rate": 0.375,
+    "expectancy_pct": -0.09469029449859027,
+    "return_pct": -0.0958797197660323,
+    "max_drawdown_pct": -0.10445900023463041
+   },
+   "profile scalper (+fees)": {
+    "trades": 40,
+    "win_rate": 0.35,
+    "expectancy_pct": -0.04726129453713928,
+    "return_pct": -0.03779639990602483,
+    "max_drawdown_pct": -0.045661302263914356
+   },
+   "profile scalper @15s latency (+fees)": {
+    "trades": 40,
+    "win_rate": 0.35,
+    "expectancy_pct": -0.04159067142792884,
+    "return_pct": -0.03353482556176139,
+    "max_drawdown_pct": -0.045358861149682475
+   }
+  },
+  "45": {
+   "legacy_paper (+fees)": {
+    "trades": 93,
+    "win_rate": 0.3870967741935484,
+    "expectancy_pct": -0.00913214222514045,
+    "return_pct": -0.04246446134690309,
+    "max_drawdown_pct": -0.24404551893744075
+   },
+   "new_v2 (+fees)": {
+    "trades": 35,
+    "win_rate": 0.4,
+    "expectancy_pct": -0.11532691953715228,
+    "return_pct": -0.12767653824062636,
+    "max_drawdown_pct": -0.16369131816028507
+   },
+   "profile balanced (+fees)": {
+    "trades": 45,
+    "win_rate": 0.3111111111111111,
+    "expectancy_pct": -0.13686031671938165,
+    "return_pct": -0.09184655906821466,
+    "max_drawdown_pct": -0.10813061708215976
+   },
+   "profile degen (+fees)": {
+    "trades": 54,
+    "win_rate": 0.3888888888888889,
+    "expectancy_pct": -0.10966588747745029,
+    "return_pct": -0.1012393819022068,
+    "max_drawdown_pct": -0.11293191886722868
+   },
+   "profile scalper (+fees)": {
+    "trades": 40,
+    "win_rate": 0.4,
+    "expectancy_pct": -0.0801513140881246,
+    "return_pct": -0.05391347582909743,
+    "max_drawdown_pct": -0.0576688982078802
+   },
+   "profile scalper @15s latency (+fees)": {
+    "trades": 40,
+    "win_rate": 0.425,
+    "expectancy_pct": -0.06973795925105182,
+    "return_pct": -0.04599706173042623,
+    "max_drawdown_pct": -0.05353419518483454
+   }
+  },
+  "90": {
+   "legacy_paper (+fees)": {
+    "trades": 89,
+    "win_rate": 0.3258426966292135,
+    "expectancy_pct": -0.038117757758181076,
+    "return_pct": -0.16962402202390578,
+    "max_drawdown_pct": -0.25520964219927533
+   },
+   "new_v2 (+fees)": {
+    "trades": 36,
+    "win_rate": 0.3055555555555556,
+    "expectancy_pct": -0.09626189580029021,
+    "return_pct": -0.11046591549126494,
+    "max_drawdown_pct": -0.11693025020684843
+   },
+   "profile balanced (+fees)": {
+    "trades": 48,
+    "win_rate": 0.3541666666666667,
+    "expectancy_pct": -0.1142531133859342,
+    "return_pct": -0.06805336046194825,
+    "max_drawdown_pct": -0.06879581841979415
+   },
+   "profile degen (+fees)": {
+    "trades": 53,
+    "win_rate": 0.37735849056603776,
+    "expectancy_pct": -0.09795564390329566,
+    "return_pct": -0.1154528312432983,
+    "max_drawdown_pct": -0.12111521818427713
+   },
+   "profile scalper (+fees)": {
+    "trades": 0,
+    "win_rate": null,
+    "expectancy_pct": null,
+    "return_pct": null,
+    "max_drawdown_pct": null
+   },
+   "profile scalper @15s latency (+fees)": {
+    "trades": 0,
+    "win_rate": null,
+    "expectancy_pct": null,
+    "return_pct": null,
+    "max_drawdown_pct": null
+   }
+  },
+  "180": {
+   "legacy_paper (+fees)": {
+    "trades": 103,
+    "win_rate": 0.3883495145631068,
+    "expectancy_pct": -0.008375139532833649,
+    "return_pct": -0.043131968594093295,
+    "max_drawdown_pct": -0.228087772715641
+   },
+   "new_v2 (+fees)": {
+    "trades": 0,
+    "win_rate": null,
+    "expectancy_pct": null,
+    "return_pct": null,
+    "max_drawdown_pct": null
+   },
+   "profile balanced (+fees)": {
+    "trades": 0,
+    "win_rate": null,
+    "expectancy_pct": null,
+    "return_pct": null,
+    "max_drawdown_pct": null
+   },
+   "profile degen (+fees)": {
+    "trades": 50,
+    "win_rate": 0.28,
+    "expectancy_pct": -0.16311431904649876,
+    "return_pct": -0.14289301948335945,
+    "max_drawdown_pct": -0.1428930194833594
+   },
+   "profile scalper (+fees)": {
+    "trades": 0,
+    "win_rate": null,
+    "expectancy_pct": null,
+    "return_pct": null,
+    "max_drawdown_pct": null
+   },
+   "profile scalper @15s latency (+fees)": {
+    "trades": 0,
+    "win_rate": null,
+    "expectancy_pct": null,
+    "return_pct": null,
+    "max_drawdown_pct": null
+   }
+  }
+ },
+ "signal_quality": {
+  "fomo:Retirement": {
+   "+5m": {
+    "n": 7,
+    "median": -0.004015244115531336,
+    "pct_up": 0.2857142857142857
+   },
+   "+30m": {
+    "n": 6,
+    "median": -0.006099834547404814,
+    "pct_up": 0.3333333333333333
+   },
+   "+120m": {
+    "n": 7,
+    "median": -0.0013117059444385237,
+    "pct_up": 0.42857142857142855
+   }
+  },
+  "ALL": {
+   "+5m": {
+    "n": 129,
+    "median": -0.018180802619588432,
+    "pct_up": 0.3953488372093023
+   },
+   "+30m": {
+    "n": 117,
+    "median": -0.05702118175423909,
+    "pct_up": 0.3504273504273504
+   },
+   "+120m": {
+    "n": 107,
+    "median": -0.10722646618913101,
+    "pct_up": 0.3364485981308411
+   }
+  },
+  "fomo:UsedFaintHare": {
+   "+5m": {
+    "n": 4,
+    "median": 0.005933499210441506,
+    "pct_up": 0.75
+   },
+   "+30m": {
+    "n": 4,
+    "median": 0.04838825014486137,
+    "pct_up": 1.0
+   },
+   "+120m": {
+    "n": 4,
+    "median": 0.1660573287234539,
+    "pct_up": 1.0
+   }
+  },
+  "fomo:000000": {
+   "+5m": {
+    "n": 4,
+    "median": -0.013174640138543192,
+    "pct_up": 0.0
+   },
+   "+30m": {
+    "n": 3,
+    "median": 0.030512852631498166,
+    "pct_up": 0.6666666666666666
+   },
+   "+120m": {
+    "n": 4,
+    "median": 0.12086923051145093,
+    "pct_up": 0.75
+   }
+  },
+  "fomo:domain0X": {
+   "+5m": {
+    "n": 14,
+    "median": -0.022117084633941853,
+    "pct_up": 0.21428571428571427
+   },
+   "+30m": {
+    "n": 12,
+    "median": -0.05585477098878522,
+    "pct_up": 0.25
+   },
+   "+120m": {
+    "n": 11,
+    "median": -0.16863089599753733,
+    "pct_up": 0.36363636363636365
+   }
+  },
+  "fomo:USronaldcarter": {
+   "+5m": {
+    "n": 1,
+    "median": 0.022996123036903793,
+    "pct_up": 1.0
+   },
+   "+30m": {
+    "n": 1,
+    "median": -0.04678797108842481,
+    "pct_up": 0.0
+   },
+   "+120m": {
+    "n": 1,
+    "median": -0.06553029536296151,
+    "pct_up": 0.0
+   }
+  },
+  "fomo:GenerationalFumbler": {
+   "+5m": {
+    "n": 1,
+    "median": -0.10942852395106473,
+    "pct_up": 0.0
+   },
+   "+30m": {
+    "n": 1,
+    "median": 0.9871593391806579,
+    "pct_up": 1.0
+   },
+   "+120m": {
+    "n": 1,
+    "median": 1.168078642431937,
+    "pct_up": 1.0
+   }
+  },
+  "fomo:inyourwalls": {
+   "+5m": {
+    "n": 2,
+    "median": 0.18267569839266018,
+    "pct_up": 1.0
+   },
+   "+30m": {
+    "n": 3,
+    "median": 0.3042314548925491,
+    "pct_up": 0.6666666666666666
+   },
+   "+120m": {
+    "n": 2,
+    "median": 0.1962726297744103,
+    "pct_up": 1.0
+   }
+  },
+  "fomo:ThePumponomics": {
+   "+5m": {
+    "n": 1,
+    "median": -0.12178019669112017,
+    "pct_up": 0.0
+   },
+   "+30m": {
+    "n": 1,
+    "median": 0.5466868315694526,
+    "pct_up": 1.0
+   },
+   "+120m": {
+    "n": 1,
+    "median": 0.622859674719503,
+    "pct_up": 1.0
+   }
+  },
+  "fomo:jelitics": {
+   "+5m": {
+    "n": 1,
+    "median": 0.09373488628499027,
+    "pct_up": 1.0
+   },
+   "+30m": {
+    "n": 1,
+    "median": -0.18855842789341382,
+    "pct_up": 0.0
+   },
+   "+120m": {
+    "n": 1,
+    "median": -0.20593348194739736,
+    "pct_up": 0.0
+   }
+  },
+  "fomo:Iri0o": {
+   "+5m": {
+    "n": 24,
+    "median": -0.03370652985973288,
+    "pct_up": 0.3333333333333333
+   },
+   "+30m": {
+    "n": 23,
+    "median": -0.10949762645012229,
+    "pct_up": 0.21739130434782608
+   },
+   "+120m": {
+    "n": 20,
+    "median": -0.6110188146982956,
+    "pct_up": 0.2
+   }
+  },
+  "fomo:Quanterty": {
+   "+5m": {
+    "n": 2,
+    "median": 0.0013486126454267389,
+    "pct_up": 0.5
+   },
+   "+30m": {
+    "n": 2,
+    "median": -0.0327841122580399,
+    "pct_up": 0.0
+   },
+   "+120m": {
+    "n": 2,
+    "median": -0.05728457502152828,
+    "pct_up": 0.0
+   }
+  },
+  "fomo:AvgJoesCrypto": {
+   "+5m": {
+    "n": 1,
+    "median": 0.08760213055407129,
+    "pct_up": 1.0
+   },
+   "+30m": {
+    "n": 1,
+    "median": 0.11147113032187717,
+    "pct_up": 1.0
+   },
+   "+120m": {
+    "n": 0,
+    "median": null,
+    "pct_up": null
+   }
+  },
+  "fomo:pointfarmcap": {
+   "+5m": {
+    "n": 3,
+    "median": 0.005646434679246637,
+    "pct_up": 1.0
+   },
+   "+30m": {
+    "n": 3,
+    "median": -0.014043588175254973,
+    "pct_up": 0.3333333333333333
+   },
+   "+120m": {
+    "n": 3,
+    "median": -0.03165905068916941,
+    "pct_up": 0.3333333333333333
+   }
+  },
+  "fomo:bigbabba": {
+   "+5m": {
+    "n": 13,
+    "median": -0.047241868258218966,
+    "pct_up": 0.38461538461538464
+   },
+   "+30m": {
+    "n": 11,
+    "median": -0.12610181634530826,
+    "pct_up": 0.2727272727272727
+   },
+   "+120m": {
+    "n": 10,
+    "median": -0.1409876421846123,
+    "pct_up": 0.2
+   }
+  },
+  "fomo:ExactTallTakin": {
+   "+5m": {
+    "n": 19,
+    "median": -0.11571150340913472,
+    "pct_up": 0.3157894736842105
+   },
+   "+30m": {
+    "n": 15,
+    "median": -0.4265016417797247,
+    "pct_up": 0.3333333333333333
+   },
+   "+120m": {
+    "n": 12,
+    "median": -0.5038468930566395,
+    "pct_up": 0.16666666666666666
+   }
+  },
+  "fomo:OmakaseOnly": {
+   "+5m": {
+    "n": 11,
+    "median": -0.06968600676967074,
+    "pct_up": 0.45454545454545453
+   },
+   "+30m": {
+    "n": 11,
+    "median": -0.256075196617109,
+    "pct_up": 0.36363636363636365
+   },
+   "+120m": {
+    "n": 8,
+    "median": 0.0616909928926771,
+    "pct_up": 0.5
+   }
+  },
+  "fomo:bystevenr": {
+   "+5m": {
+    "n": 14,
+    "median": -0.02594358528691515,
+    "pct_up": 0.35714285714285715
+   },
+   "+30m": {
+    "n": 13,
+    "median": -0.23460432409262966,
+    "pct_up": 0.3076923076923077
+   },
+   "+120m": {
+    "n": 14,
+    "median": -0.5381481563931252,
+    "pct_up": 0.2857142857142857
+   }
+  },
+  "fomo:frankdegods": {
+   "+5m": {
+    "n": 1,
+    "median": -0.09330774572181433,
+    "pct_up": 0.0
+   },
+   "+30m": {
+    "n": 1,
+    "median": -0.2207502382095572,
+    "pct_up": 0.0
+   },
+   "+120m": {
+    "n": 1,
+    "median": -0.29760563457734934,
+    "pct_up": 0.0
+   }
+  },
+  "fomo:DumbCrayonEater": {
+   "+5m": {
+    "n": 1,
+    "median": -0.19854015453772555,
+    "pct_up": 0.0
+   },
+   "+30m": {
+    "n": 1,
+    "median": -0.19046521595626154,
+    "pct_up": 0.0
+   },
+   "+120m": {
+    "n": 1,
+    "median": -0.39474737541543725,
+    "pct_up": 0.0
+   }
+  },
+  "fomo:The__Solstice": {
+   "+5m": {
+    "n": 2,
+    "median": 0.0029633628229952524,
+    "pct_up": 1.0
+   },
+   "+30m": {
+    "n": 1,
+    "median": -0.04336856798732558,
+    "pct_up": 0.0
+   },
+   "+120m": {
+    "n": 1,
+    "median": 0.021994981267053237,
+    "pct_up": 1.0
+   }
+  },
+  "fomo:theveeman": {
+   "+5m": {
+    "n": 3,
+    "median": 0.03373430840432934,
+    "pct_up": 1.0
+   },
+   "+30m": {
+    "n": 3,
+    "median": 0.013174502804029542,
+    "pct_up": 1.0
+   },
+   "+120m": {
+    "n": 3,
+    "median": -0.17531633116643186,
+    "pct_up": 0.0
+   }
+  }
+ }
+}

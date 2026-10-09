@@ -232,18 +232,18 @@ returns over 30 days at the observed trade rate (5,000 paths). It treats trades
 as independent and ignores the circuit breakers, so read the tail numbers as
 rough.
 
-| | conservative (default) | balanced | degen | legacy paper (old bot) |
-|---|---|---|---|---|
-| Trades | 33 | 43 | 50 | 87 |
-| Win rate | 30% | 33% | 32% | 30% |
-| Expectancy / trade | −10.3% | −13.5% | −16.0% | −10.0% |
-| Avg size (% equity) | 3.3% | 1.4% | 2.1% | 6.6% |
-| Return, 9.3 days | −10.8% | −8.4% | −17.5% | −43.6% |
-| Max drawdown | −12.8% | −9.3% | −18.6% | −44.2% |
-| Median 30-day return (bootstrap) | −31% | −25% | −46% | −84% |
-| P(−50% drawdown in 30 days) | 0% | 0% | 23% | 99.7% |
-| P(−80% drawdown in 30 days) | 0% | 0% | 0% | 73% |
-| P(losing month) | 100% | 100% | 100% | 100% |
+| | conservative (default) | balanced | degen | scalper @45 s | scalper @15 s | legacy paper (old bot) |
+|---|---|---|---|---|---|---|
+| Trades | 33 | 43 | 50 | 34 | 34 | 87 |
+| Win rate | 30% | 33% | 32% | 26% | 29% | 30% |
+| Expectancy / trade | −10.3% | −13.5% | −16.0% | −7.7% | −6.8% | −10.0% |
+| Avg size (% equity) | 3.3% | 1.4% | 2.1% | 2.0% | 2.0% | 6.6% |
+| Return, 9.3 days | −10.8% | −8.4% | −17.5% | −4.9% | −3.8% | −43.6% |
+| Max drawdown | −12.8% | −9.3% | −18.6% | −6.3% | −5.0% | −44.2% |
+| Median 30-day return (bootstrap) | −31% | −25% | −46% | −15% | −12% | −84% |
+| P(−50% drawdown in 30 days) | 0% | 0% | 23% | 0% | 0% | 99.7% |
+| P(−80% drawdown in 30 days) | 0% | 0% | 0% | 0% | 0% | 73% |
+| P(losing month) | 100% | 100% | 100% | 100% | 100% | 100% |
 
 **Plain reading.** The copied wallets had no edge over this period: about −17%
 per signal after realistic latency and costs, whatever the exits. Edge sizing
@@ -279,3 +279,65 @@ retunes from its own recorded signals (≥ 60), at most daily, within the
 
 The age window, size and liquidity floor now come from the profile. All the
 token-safety rails still apply.
+
+### Scalper profile (`RISK_PROFILE=scalper`)
+
+The scalper copies fresh signals only (≤ 45 s old). It uses a 10% stop,
+takes ½ at +12% and 30% at +25%, arms the trailing stop at +15% (8% trail),
+time-stops after 5 min without a +4% move, and holds 30 min at most.
+`WALLET_POLL_SECONDS` defaults to 15 s for this profile; it is 60 s
+otherwise. On both datasets the scalper loses least, because its losses are
+small. Speed is what matters: on the Fomo dataset, going from 45 s to 15 s
+moves expectancy from −8.0% to −1.2% per copy.
+
+### Fomo leaderboard traders (user request, 2026-10-09)
+
+**Source of handles:** the user's screenshots (ALL and 30D tabs) plus the
+public pages of unofficial trackers (fomo-api.com for the 24h/7d/30d top
+10; fomoindex.xyz for ALL-time). 35 handles resolved to 29 Solana wallets
+and are listed in `backtest/data/fomo_candidates.json`. These
+handle→wallet mappings come from third parties. fomo.family's own API needs a
+logged-in session, so it was not used. Handles with no Solana wallet found:
+fxcxc, Adolf, Hifive_07, jxnwa, hitscanr, TradBengal, Burgz.
+
+**Copy data:** each wallet's last 7 days (up to its newest 300
+signatures) of on-chain buys, via `collect_wallet_buys`. That is 931 buys
+and 178 unique (wallet, token) signals. Some wallets showed 0–2 buys
+(end837, DonnyDicey, leo, Salem, uncsnipes, unipcs, frankdegods). Either
+they trade from other wallets, or their swaps go through routes our buy
+parser does not decode.
+
+| Fomo dataset, 6.9 days | conservative | balanced | degen | scalper @45 s | scalper @15 s | legacy paper |
+|---|---|---|---|---|---|---|
+| Trades | 35 | 45 | 54 | 40 | 39 | 93 |
+| Expectancy / trade | −11.5% | −13.7% | −11.0% | −8.0% | **−1.2%** | −0.9% |
+| Profit factor | 0.35 | 0.37 | 0.48 | 0.37 | **0.88** | 0.95 |
+| Return | −12.8% | −9.2% | −10.1% | −5.4% | **−1.1%** | −4.2% |
+| Max drawdown | −16.4% | −10.8% | −11.3% | −5.8% | **−5.1%** | −24.4% |
+| Median 30-day return (bootstrap) | −45% | −34% | −37% | −21% | −5% | −17% |
+| P(−50% drawdown, 30 d) | 22% | 0% | 1% | 0% | 0% | 18% |
+| P(losing month) | 100% | 100% | 100% | 100% | 68% | 68% |
+
+Raw Fomo signals are clearly better than the current `wallets.json` set: a
+median of −6% at 30 min (versus −21%), and 35% are up at 30 min (versus 25%).
+Copying them is still not profitable after costs at a realistic latency. The
+fastest scalper is close to breakeven. This is one week of data.
+
+**Re-ranked by OUR copy result** (`python -m backtest.copy_score`, scalper
+exits, 15 s latency, after costs; small samples):
+
+| Rank | Handle | Copies | Win | Mean / copy | Shrunk R |
+|---|---|---|---|---|---|
+| 1 | OmakaseOnly | 11 | 36% | +7.4% | +0.51 |
+| 2 | pointfarmcap | 3 | 67% | +2.6% | +0.10 |
+| 3 | bystevenr | 15 | 27% | +0.2% | +0.01 |
+| … | Iri0o | 24 | 54% | −3.7% | −0.31 |
+| … | bigbabba | 13 | 23% | −6.2% | −0.45 |
+| … | domain0X | 14 | 14% | −13.7% | −1.01 |
+| last | ExactTallTakin (#1 on 30D) | 21 | 33% | −13.2% | −1.07 |
+
+The #1 trader on the 30D leaderboard was the worst wallet to copy. Leaderboard
+PnL is not copy edge. Size, holding conviction and our fill delay all
+differ. The bot seeds these wallets into **shadow** in copy-score order
+(`LEARNING_SEED_FILE`). They are promoted only after their own shadow
+results clear `LEARNING_PROMOTE_MIN_R` over `LEARNING_PROMOTE_MIN_TRADES`.
