@@ -1,0 +1,53 @@
+{
+ "entry": {
+  "title": "🟢 ENTRY · 🪙 Gigachad (GIGA)",
+  "description": "📋 `9wFFyRfZBsuAha4YcuxcXLKwMxJR43S7fPfQLusDBzvT`\n[DexScreener](https://dexscreener.com/solana/9wFFyRfZBsuAha4YcuxcXLKwMxJR43S7fPfQLusDBzvT) · [Pump.fun](https://pump.fun/coin/9wFFyRfZBsuAha4YcuxcXLKwMxJR43S7fPfQLusDBzvT) · [Solscan](https://solscan.io/token/9wFFyRfZBsuAha4YcuxcXLKwMxJR43S7fPfQLusDBzvT)\n🧠 Aurelius aping a fresh cult-meme with real volume; small size, stop -20%.",
+  "color": 6333946,
+  "fields": [
+   {
+    "name": "💵 Entry",
+    "value": "$0.0001842 · $184.2K MC",
+    "inline": true
+   },
+   {
+    "name": "💰 Size",
+    "value": "0.087 SOL · $13.25",
+    "inline": true
+   }
+  ]
+ },
+ "trim": {
+  "title": "✅ TRIM 50% · 🪙 Gigachad (GIGA)",
+  "description": "📋 `9wFFyRfZBsuAha4YcuxcXLKwMxJR43S7fPfQLusDBzvT`\n[DexScreener](https://dexscreener.com/solana/9wFFyRfZBsuAha4YcuxcXLKwMxJR43S7fPfQLusDBzvT) · [Pump.fun](https://pump.fun/coin/9wFFyRfZBsuAha4YcuxcXLKwMxJR43S7fPfQLusDBzvT) · [Solscan](https://solscan.io/token/9wFFyRfZBsuAha4YcuxcXLKwMxJR43S7fPfQLusDBzvT)",
+  "color": 3462041,
+  "fields": [
+   {
+    "name": "📈 PnL",
+    "value": "**+25.0%** · +0.011 SOL · +$1.66",
+    "inline": true
+   },
+   {
+    "name": "💵 MC",
+    "value": "$184.2K → $232.0K",
+    "inline": true
+   }
+  ]
+ },
+ "exit": {
+  "title": "🔴 EXIT · 🪙 Gigachad (GIGA)",
+  "description": "📋 `9wFFyRfZBsuAha4YcuxcXLKwMxJR43S7fPfQLusDBzvT`\n[DexScreener](https://dexscreener.com/solana/9wFFyRfZBsuAha4YcuxcXLKwMxJR43S7fPfQLusDBzvT) · [Pump.fun](https://pump.fun/coin/9wFFyRfZBsuAha4YcuxcXLKwMxJR43S7fPfQLusDBzvT) · [Solscan](https://solscan.io/token/9wFFyRfZBsuAha4YcuxcXLKwMxJR43S7fPfQLusDBzvT)",
+  "color": 16281969,
+  "fields": [
+   {
+    "name": "📉 PnL",
+    "value": "**-21.4%** · -0.018 SOL · -$2.71",
+    "inline": true
+   },
+   {
+    "name": "💵 MC",
+    "value": "$184.2K → $145.5K",
+    "inline": true
+   }
+  ]
+ }
+}
