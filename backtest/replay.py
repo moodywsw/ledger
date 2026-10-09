@@ -53,8 +53,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from risk_engine import (  # noqa: E402
     RiskConfig, PortfolioSnapshot, TokenSafetyInfo, check_portfolio_limits, check_token_safety,
-    position_size, evaluate_exit, new_exit_state, score_wallets, consecutive_losses, utc_day,
+    evaluate_exit, new_exit_state, consecutive_losses, utc_day, wallet_edge, size_for_signal,
 )
+import random  # noqa: E402
 
 START_EQUITY = 10.0                  # SOL, same as STARTING_PAPER_BALANCE_SOL
 DETECTION_LATENCY_S = 45             # avg: half a 60s poll + RPC + LLM call before the fill
@@ -216,6 +217,7 @@ class Trade:
     pnl_pct: float
     reason: str
     fills: list
+    eq_at_open: float = None
 
 
 def simulate(name, buys, prices, rules, cfg: RiskConfig | None, sizing, cost_per_side, use_filters, latency=None):
@@ -249,7 +251,7 @@ def simulate(name, buys, prices, rules, cfg: RiskConfig | None, sizing, cost_per
                 if frac >= 0.999 or p["remaining"] <= 1e-12:
                     pnl = p["proceeds"] - p["size"]
                     trades.append(Trade(m, p["wallet"], p["handle"], p["t_open"], ft, p["size"], pnl,
-                                        pnl / p["size"], reason, p["fill_log"]))
+                                        pnl / p["size"], reason, p["fill_log"], p.get("eq_at_open")))
                     token_last_exit[m] = ft
                     del open_pos[m]
                     break
@@ -291,11 +293,11 @@ def simulate(name, buys, prices, rules, cfg: RiskConfig | None, sizing, cost_per
         if use_filters:
             closed = [{"wallet": tr.wallet, "pnl_pct": tr.pnl_pct, "closed_ts": tr.t_close, "mint": tr.mint}
                       for tr in trades if tr.t_close <= t_fill]
-            score = score_wallets(closed, t_fill, cfg).get(b["wallet"])
-            if score and not score["enabled"]:
-                blocked["wallet benched by scoring"] += 1
+            stat = wallet_edge(closed, t_fill, cfg).get(b["wallet"])
+            size, _note = size_for_signal(eq, cfg, "priority_copy", stat)
+            if stat and stat["tier"] == "benched":
+                blocked["wallet benched by edge score"] += 1
                 continue
-            size = position_size(eq, cfg)
             streak, last_loss = consecutive_losses(sorted(closed, key=lambda x: x["closed_ts"]))
             realized_today = sum(tr.pnl for tr in trades if utc_day(tr.t_close) == day and tr.t_close <= t_fill)
             snap = PortfolioSnapshot(
@@ -344,7 +346,7 @@ def simulate(name, buys, prices, rules, cfg: RiskConfig | None, sizing, cost_per
         events.append((t_fill, cash, mint))
         open_pos[mint] = {"size": size, "remaining": size / entry_px, "fills": [(ft, fp, fr, rs) for ft, fp, fr, rs in fills],
                           "fill_log": list(fills), "proceeds": 0.0, "t_open": t_fill,
-                          "wallet": b["wallet"], "handle": b.get("handle", b["wallet"][:6])}
+                          "wallet": b["wallet"], "handle": b.get("handle", b["wallet"][:6]), "eq_at_open": eq}
     settle_until(float("inf"))
 
     # equity curve on realized cash after each close (positions are short-lived; a
@@ -375,6 +377,39 @@ def equity_curve_mtm(trades, prices):
         curve.append((t, START_EQUITY + realized + unreal))
         t += step
     return curve
+
+
+# ── risk of ruin (bootstrap) ─────────────────────────────────────────
+
+def risk_of_ruin(trades, days_span, horizon_days=30, paths=5000, ruin_dd=0.5, seed=7):
+    """
+    Bootstrap: resample this run's per-trade equity returns (pnl / equity at
+    entry) to simulate `horizon_days` of trading at the observed trade rate.
+    Returns P(equity ever falls ≥ ruin_dd below start), P(down ≥ 80%),
+    P(losing month) and median / 5th / 95th percentile month return.
+    Trades are treated as independent (they aren't fully: losing streaks
+    cluster), so treat this as a lower bound on tail risk.
+    """
+    rets = [t.pnl / t.eq_at_open for t in trades if t.eq_at_open]
+    if len(rets) < 5 or days_span <= 0:
+        return None
+    n_per = max(1, round(len(rets) / days_span * horizon_days))
+    rng = random.Random(seed)
+    ruin = wipe = lose = 0
+    finals = []
+    for _ in range(paths):
+        eq, low = 1.0, 1.0
+        for _ in range(n_per):
+            eq *= 1.0 + rng.choice(rets)
+            low = min(low, eq)
+        finals.append(eq - 1.0)
+        ruin += low <= 1.0 - ruin_dd
+        wipe += low <= 0.2
+        lose += eq < 1.0
+    finals.sort()
+    return {"trades_per_month": n_per, "p_drawdown_50pct": ruin / paths, "p_drawdown_80pct": wipe / paths,
+            "p_losing_month": lose / paths, "median_month": finals[paths // 2],
+            "p5_month": finals[int(paths * 0.05)], "p95_month": finals[int(paths * 0.95)]}
 
 
 # ── metrics ──────────────────────────────────────────────────────────
@@ -514,7 +549,7 @@ def main():
         seen.add(k)
         signals.append(b)
 
-    cfg = RiskConfig()  # defaults = what ships
+    cfg = RiskConfig.from_env("conservative")  # shipped default profile
     legacy_paper_limits = {"cap_abs": 0.5, "cap_pct": 1.0, "max_concurrent": 8, "max_exposure": 0.25, "max_per_hour": 10}
     legacy_real_limits = {"cap_abs": 1e9, "cap_pct": 0.30, "max_concurrent": 99, "max_exposure": 0.85, "max_per_hour": 10**6}
     runs = {
@@ -524,11 +559,24 @@ def main():
         "new_v2 (+fees)": (lambda e, p, t: exits_v2(e, p, t, cfg), cfg, None, cfg.paper_cost_per_side_pct, True),
         "new_v2 exits only, no filters (+fees)": (lambda e, p, t: exits_v2(e, p, t, cfg), cfg, legacy_paper_limits, cfg.paper_cost_per_side_pct, False),
     }
+    for prof in ("balanced", "degen", "scalper"):
+        pc = RiskConfig.from_env(prof)
+        runs[f"profile {prof} (+fees)"] = (lambda e, p, t, c=pc: exits_v2(e, p, t, c), pc, None, pc.paper_cost_per_side_pct, True)
+    # The scalper only works with fast detection; also replay it at a 15 s fill
+    # latency (WALLET_POLL_SECONDS≈15 or a websocket feed) to show what speed buys.
+    sc = RiskConfig.from_env("scalper")
+    runs["profile scalper @15s latency (+fees)"] = (lambda e, p, t, c=sc: exits_v2(e, p, t, c, check_every=5), sc, None,
+                                                    sc.paper_cost_per_side_pct, True, 15.0)
     results = {}
-    for name, (rules, rcfg, sizing, cost, filters) in runs.items():
-        trades, blocked, curve = simulate(name, signals, prices, rules, rcfg, sizing, cost, filters, args.latency)
+    span_days_all = (signals[-1]["block_time"] - signals[0]["block_time"]) / 86400 if signals else 0
+    for name, spec in runs.items():
+        rules, rcfg, sizing, cost, filters = spec[:5]
+        lat = spec[5] if len(spec) > 5 else args.latency
+        trades, blocked, curve = simulate(name, signals, prices, rules, rcfg, sizing, cost, filters, lat)
         results[name] = {
             "metrics": metrics(trades, curve),
+            "risk_of_ruin": risk_of_ruin(trades, span_days_all),
+            "avg_size_pct_equity": (sum(t.size / t.eq_at_open for t in trades if t.eq_at_open) / len(trades)) if trades else None,
             "blocked": blocked,
             "by_exit_reason": breakdown(trades, lambda t: t.reason),
             "by_wallet": breakdown(trades, lambda t: t.handle),
@@ -536,8 +584,9 @@ def main():
     sweep = {}
     for lat in (10, 30, 45, 90, 180):
         sweep[lat] = {}
-        for name in ("legacy_paper (+fees)", "new_v2 (+fees)"):
-            rules, rcfg, sizing, cost, filters = runs[name]
+        for name in ("legacy_paper (+fees)", "new_v2 (+fees)", "profile balanced (+fees)", "profile degen (+fees)",
+                     "profile scalper (+fees)", "profile scalper @15s latency (+fees)"):
+            rules, rcfg, sizing, cost, filters = runs[name][:5]
             tr, _, cv = simulate(name, signals, prices, rules, rcfg, sizing, cost, filters, lat)
             m = metrics(tr, cv)
             sweep[lat][name] = {k: m.get(k) for k in ("trades", "win_rate", "expectancy_pct", "return_pct", "max_drawdown_pct")}
@@ -546,6 +595,9 @@ def main():
     print(f"signals: {len(signals)} unique (wallet, token) buys over {span_days:.1f} days; "
           f"{sum(1 for b in signals if prices.get(b['mint'], {}).get('candles'))} with candle data\n")
     print(print_table(results))
+    print("\n## risk of ruin (bootstrap, 30-day horizon)")
+    for name, r in results.items():
+        print(name, json.dumps(r["risk_of_ruin"]), "avg size %:", r["avg_size_pct_equity"])
     for name, r in results.items():
         print(f"\n## {name}\nblocked: {r['blocked']}\nby exit: {json.dumps(r['by_exit_reason'], default=str)}\nby wallet: {json.dumps(r['by_wallet'], default=str)}")
     print("\n## latency sweep (seconds from wallet buy to our fill)")

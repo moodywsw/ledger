@@ -80,10 +80,15 @@ from real_trading import (
 )
 import real_only_positions
 import trade_cards
+import learning
+import market_data
+import fomo
+import own_thesis
 from risk_engine import (
     RiskConfig, PortfolioSnapshot, TokenSafetyInfo, UNKNOWN as SAFETY_UNKNOWN,
     position_size as risk_position_size, check_portfolio_limits, check_token_safety,
     evaluate_exit, score_wallets, consecutive_losses, utc_day,
+    wallet_edge, size_for_signal, fit_size_to_impact,
 )
 from real_trading import get_realized_pnl_today_usdc
 
@@ -359,7 +364,11 @@ WATCHED_WALLETS, WALLET_HANDLES, PRIORITY_WALLETS = load_wallets()
 # with the fetch fixed — that gap is exactly why Alchemy's
 # Address-Activity webhooks (push-based, no polling cost at all) are
 # worth evaluating for real speed beyond this, separately.
-POLL_SECONDS = 60
+# Wallet poll interval. The scalper profile needs fresh signals (≤ 45 s), so it
+# defaults to 15 s; every poll is 1 getSignaturesForAddress per wallet (+1
+# getTransaction per new signature), so a shorter interval costs more RPC.
+POLL_SECONDS = int(os.environ.get("WALLET_POLL_SECONDS",
+                                  "15" if os.environ.get("RISK_PROFILE", "").strip().lower() == "scalper" else "60"))
 WALLET_MAX_PAGES = int(os.environ.get("WALLET_MAX_PAGES", "3"))
 
 # ── Risk limits (hard-coded, not suggestions) ───────────────────────────
@@ -399,9 +408,18 @@ SNIPER_MODE_ENABLED = os.environ.get("SNIPER_MODE_ENABLED", "true").lower() == "
 SNIPER_WS_URL = "wss://pumpdev.io/ws"  # same free, unofficial feed as pumpfun_listener.py
 SNIPER_ACTIVE_PRESET = os.environ.get("SNIPER_PRESET", "hyper_early_scalp")
 
-SNIPER_MIN_CONFIDENCE_TO_ENTER = 2.0  # minimum confidence multiplier required to actually buy —
-                                       # replaces the old 50% coin-flip with a real conviction bar
-SNIPER_MIN_DEV_BUY_SOL = 0.5      # below this, strongly correlates with instant rugs
+# Optional LLM conviction gate. Was hard-coded 2.0 — but without
+# ANTHROPIC_API_KEY (or on any LLM error) confidence is 1.0, so the sniper
+# could never enter. 0 = off (mechanical filters + risk desk decide).
+SNIPER_MIN_CONFIDENCE_TO_ENTER = float(os.environ.get("SNIPER_MIN_CONFIDENCE", "0"))
+SNIPER_MIN_DEV_BUY_SOL = float(os.environ.get("SNIPER_MIN_DEV_BUY_SOL", "0.5"))  # below this, strongly correlates with instant rugs
+# Socials now come from the launch's IPFS metadata (the WS event has none).
+SNIPER_REQUIRE_SOCIALS = os.environ.get("SNIPER_REQUIRE_SOCIALS", "true").lower() == "true"
+# Also snipe fresh pump.fun graduations (pumpswap/raydium pools of a
+# ...pump mint), polled from GeckoTerminal — pumpdev has no migration feed.
+SNIPER_MIGRATIONS_ENABLED = os.environ.get("SNIPER_MIGRATIONS_ENABLED", "true").lower() == "true"
+SNIPER_MIGRATION_POLL_SECONDS = int(os.environ.get("SNIPER_MIGRATION_POLL_SECONDS", "60"))
+SNIPER_MAX_DATA_RETRIES = int(os.environ.get("SNIPER_MAX_DATA_RETRIES", "6"))  # passes to wait for a pool to be indexed
 SNIPER_POSITION_SIZE_PCT = 0.08   # 8% of current bankroll per trade at 1.0x confidence — scales
                                    # automatically as the bankroll grows toward 10 SOL or resets to 1
 SNIPER_MIN_POSITION_SOL = 0.005   # floor, so sizing doesn't round down to something meaningless
@@ -414,7 +432,7 @@ SNIPER_MIN_POSITION_SOL = 0.005   # floor, so sizing doesn't round down to somet
 PRIORITY_MAX_SIZE_MULTIPLIER = 5.0
 SNIPER_MAX_SIZE_MULTIPLIER = 4.0
 
-SNIPER_MIN_LIQUIDITY_USD = 1_000     # below this, a launch is too thin to trade safely
+SNIPER_MIN_LIQUIDITY_USD = 1_000     # legacy; the risk desk's sniper_min_liquidity_usd (per profile) is what's enforced
 SNIPER_MAX_ENTRY_MARKET_CAP_USD = 250_000  # above this, it's no longer an "early" entry
 
 # Priority-copy gets far more room than the sniper ceiling above — it's
@@ -647,6 +665,29 @@ class LedgerState:
         return state
 
 
+def _exclude_program_owned_accounts(accounts: list) -> list:
+    """Filter getTokenLargestAccounts rows whose OWNER is off-curve (a PDA).
+    One getMultipleAccounts call; on failure returns the list unchanged
+    (conservative: concentration is over- rather than under-stated)."""
+    addrs = [a.get("address") for a in accounts if a.get("address")]
+    if not addrs:
+        return accounts
+    try:
+        payload = {"jsonrpc": "2.0", "id": 1, "method": "getMultipleAccounts",
+                   "params": [addrs, {"encoding": "jsonParsed"}]}
+        resp = request_with_backoff("POST", ALCHEMY_RPC_URL, json=payload, timeout=15)
+        values = (resp.json().get("result") or {}).get("value") or []
+        owners = {}
+        for addr, v in zip(addrs, values):
+            info = ((((v or {}).get("data") or {}).get("parsed") or {}).get("info") or {})
+            owners[addr] = info.get("owner")
+        return [a for a in accounts if not (owners.get(a.get("address")) and
+                                             market_data.is_program_owned(owners[a.get("address")]))]
+    except Exception as e:
+        print(f"[WARN] owner lookup for top-10 failed: {e}")
+        return accounts
+
+
 def get_top10_holder_pct(mint: str) -> float:
     """
     Returns the percentage of total token supply held by the top 10
@@ -674,7 +715,11 @@ def get_top10_holder_pct(mint: str) -> float:
             largest_payload = {"jsonrpc": "2.0", "id": 1, "method": "getTokenLargestAccounts", "params": [mint]}
             largest_resp = request_with_backoff("POST", ALCHEMY_RPC_URL, json=largest_payload, timeout=15)
             largest_data = largest_resp.json()
-            accounts = largest_data.get("result", {}).get("value", [])[:10]
+            accounts = largest_data.get("result", {}).get("value", [])
+            # Drop token accounts owned by PDAs (pump.fun bonding curve, AMM
+            # pool vaults): they hold most of a fresh launch's supply, so
+            # counting them made "top 10 > 35%" true for EVERY launch.
+            accounts = _exclude_program_owned_accounts(accounts)[:10]
             top10_amount = sum(float(a.get("uiAmount") or 0) for a in accounts)
 
             return (top10_amount / total_supply) * 100
@@ -1539,7 +1584,7 @@ def detect_market_structure(candles: list) -> dict:
 
 def copy_priority_wallet_entry(
     token: str, wallet: str, trader_name: str, platform_name: str, metadata: dict, state: "LedgerState",
-    signal_block_time: float = None, wallet_fill_price_usd: float = None,
+    signal_block_time: float = None, wallet_fill_price_usd: float = None, mirror_real: bool = True,
 ):
     """
     Directly mirrors a trusted wallet's buy — no independent-conviction
@@ -1649,7 +1694,7 @@ def copy_priority_wallet_entry(
     # journal. Old: 8% of balance x up to 5.0 confidence = up to 40% per
     # memecoin (real-only, capped at 30% by real_trading.py).
     if PAPER_TRADING_ENABLED:
-        size_sol = min(gate["size"], MAX_POSITION_SOL)
+        size_sol = min(gate["size"], paper_max_position_sol(state))
         ok, block_reason = can_open_position(state, size_sol)
         if not ok:
             print(f"  [BLOCKED] {display_symbol}: {block_reason}")
@@ -1687,7 +1732,7 @@ def copy_priority_wallet_entry(
 
         open_paper_position(
             state, token, entry_price, size_sol, opened_by=wallet, strength="strong",
-            thesis=entry_opinion, entry_market_cap_usd=entry_mc, mirror_real=True,
+            thesis=entry_opinion, entry_market_cap_usd=entry_mc, mirror_real=mirror_real,
             source="priority_copy", price_source="dexscreener",
         )
         if token in state.open_positions:
@@ -1942,7 +1987,15 @@ def _dexscreener_best_pair(mint: str):
             pair = max(solana_pairs, key=lambda p: (p.get("liquidity") or {}).get("usd", 0) or 0)
     except Exception as e:
         print(f"[WARN] DexScreener lookup failed for {mint}: {e}")
-        return None  # don't cache failures
+        pair = None
+    if pair is None:
+        # DexScreener returns `pairs: null` for pump.fun bonding-curve tokens
+        # (and sometimes for minutes after a migration). GeckoTerminal indexes
+        # them from the first trade — without this the sniper never had a
+        # price, liquidity or market cap and could not trade at all.
+        pair = market_data.gt_best_pair(mint)
+        if pair is None:
+            return None  # don't cache misses: the token may get indexed seconds later
     _DEX_CACHE[mint] = (now, pair)
     if len(_DEX_CACHE) > 2000:
         for k in list(_DEX_CACHE)[:1000]:
@@ -2021,6 +2074,18 @@ def wallet_scores(state: LedgerState) -> dict:
     return score_wallets(closed_trades_for_scoring(state), time.time(), RISK)
 
 
+def wallet_edges(state: LedgerState) -> dict:
+    """Rolling, recency-weighted, shrunk edge per copied wallet (risk_engine.wallet_edge).
+    Includes shadow-mode outcomes from the learning loop, so a wallet's
+    track record exists before we ever risk paper money on it."""
+    trades = closed_trades_for_scoring(state)
+    try:
+        trades = trades + learning.shadow_closed_trades()
+    except Exception as e:
+        print(f"[WARN] shadow outcomes unavailable: {e}")
+    return wallet_edge(trades, time.time(), RISK)
+
+
 def paper_portfolio_snapshot(state: LedgerState) -> PortfolioSnapshot:
     _roll_day(state)
     now = time.time()
@@ -2077,29 +2142,33 @@ def risk_gate_entry(state: LedgerState, token: str, symbol: str, source: str, wa
     confidence multiplier no longer scales size (it was uncalibrated and
     could push a single memecoin to 30-40% of the wallet).
     """
-    result = {"ok": False, "reason": "", "size": 0.0, "info": None}
+    result = {"ok": False, "reason": "", "size": 0.0, "info": None, "size_note": ""}
 
+    wallet_stat = None
     if wallet:
-        score = wallet_scores(state).get(wallet)
-        if score and not score["enabled"]:
-            result["reason"] = (f"wallet benched by scoring: {score['n']} closed copies, "
-                                f"avg {score['expectancy_pct']:+.1%}, win rate {score['win_rate']:.0%}")
+        if learning.wallet_status(wallet) == "benched":
+            result["reason"] = "wallet benched by the learning loop (see learning journal)"
             return result
+        wallet_stat = wallet_edges(state).get(wallet)
 
     sol_price = get_sol_price_usd()
     try:
+        import dataclasses as _dc
         if PAPER_TRADING_ENABLED:
             snap = paper_portfolio_snapshot(state)
             scale = ULTRA_CONSERVATIVE_SIZE_MULTIPLIER if state.ultra_conservative_mode else 1.0
-            size = risk_position_size(snap.equity, RISK, scale=scale)
+            size, note = size_for_signal(snap.equity, RISK, source, wallet_stat, scale=scale)
             size_usd = size * sol_price if sol_price else None
         else:
             snap = real_portfolio_snapshot(state)
-            import dataclasses as _dc
-            size = risk_position_size(snap.equity, _dc.replace(RISK, min_position_sol=0.0))
+            size, note = size_for_signal(snap.equity, _dc.replace(RISK, min_position_sol=0.0), source, wallet_stat)
             size_usd = size
     except Exception as e:
         result["reason"] = f"couldn't build portfolio snapshot: {e}"
+        return result
+    result["size_note"] = note
+    if size <= 0:
+        result["reason"] = note
         return result
 
     ok, reason = check_portfolio_limits(snap, token, size, time.time(), RISK)
@@ -2112,13 +2181,41 @@ def risk_gate_entry(state: LedgerState, token: str, symbol: str, source: str, wa
     if size_usd is None:
         result["reason"] = "no SOL/USD price to size the trade"
         return result
-    ok, reason = check_token_safety(info, size_usd, RISK, apply_mcap_floor=apply_mcap_floor)
+    # Thin pool: shrink the ticket to fit the price-impact rail instead of
+    # refusing outright (degen/sniper entries are often on thin pools).
+    fitted_usd = fit_size_to_impact(size_usd, info.liquidity_usd, RISK)
+    if fitted_usd < size_usd:
+        size = size * fitted_usd / size_usd
+        size_usd = fitted_usd
+        result["size_note"] += f", shrunk to fit {RISK.max_entry_price_impact_pct:.1f}% impact"
+        if PAPER_TRADING_ENABLED and size < RISK.min_position_sol:
+            result["reason"] = "pool too thin: impact-capped size below minimum ticket"
+            return result
+    gate_cfg = RISK
+    if source == "sniper":
+        import dataclasses as _dc
+        gate_cfg = _dc.replace(RISK, min_liquidity_usd=RISK.sniper_min_liquidity_usd)
+    ok, reason = check_token_safety(info, size_usd, gate_cfg, apply_mcap_floor=apply_mcap_floor)
     if not ok:
         result["reason"] = reason
         return result
 
     result.update(ok=True, reason="ok", size=size)
+    _LAST_GATE_FEATURES[token] = {
+        "liquidity_usd": info.liquidity_usd, "market_cap_usd": info.market_cap_usd,
+        "signal_age_seconds": info.signal_age_seconds, "chase_pct": info.chase_pct,
+        "size_note": result["size_note"], "profile": RISK.profile,
+    }
+    if len(_LAST_GATE_FEATURES) > 500:
+        for k in list(_LAST_GATE_FEATURES)[:250]:
+            _LAST_GATE_FEATURES.pop(k, None)
     return result
+
+
+# Entry features of the last approved gate per mint — attached to the position
+# at open and carried into its closed record, so the learning loop can score
+# feature buckets (liquidity, MC, signal age, chase, time of day).
+_LAST_GATE_FEATURES: dict = {}
 
 
 def _log_risk_refusal(symbol: str, token: str, source: str, reason: str, wallet_name: str = None):
@@ -2131,9 +2228,16 @@ def _log_risk_refusal(symbol: str, token: str, source: str, reason: str, wallet_
     )
 
 
+def paper_max_position_sol(state: LedgerState) -> float:
+    """Per-position cap: the legacy MAX_POSITION_SOL, or the active profile's
+    max_position_pct of equity if larger (the % cap is a hard rail, ≤10%)."""
+    return max(MAX_POSITION_SOL, compute_total_equity(state) * RISK.max_position_pct)
+
+
 def can_open_position(state: LedgerState, size_sol: float) -> tuple[bool, str]:
-    if size_sol > MAX_POSITION_SOL:
-        return False, f"size {size_sol} exceeds MAX_POSITION_SOL ({MAX_POSITION_SOL})"
+    cap = paper_max_position_sol(state)
+    if size_sol > cap + 1e-9:
+        return False, f"size {size_sol:.4f} exceeds the per-position cap ({cap:.4f} SOL)"
     # Was `state.realized_pnl_sol` — the ALL-TIME realized PnL, never reset —
     # so after -2 SOL of lifetime losses the bot refused every paper trade
     # forever. Now genuinely daily (UTC day).
@@ -2141,8 +2245,9 @@ def can_open_position(state: LedgerState, size_sol: float) -> tuple[bool, str]:
         return False, "daily loss limit hit, no new positions"
     if size_sol > state.balance_sol:
         return False, "insufficient paper balance"
-    if len(state.open_positions) >= MAX_CONCURRENT_SNIPER_POSITIONS:
-        return False, f"max concurrent positions ({MAX_CONCURRENT_SNIPER_POSITIONS}) reached"
+    max_conc = max(MAX_CONCURRENT_SNIPER_POSITIONS, RISK.max_concurrent_positions)
+    if len(state.open_positions) >= max_conc:
+        return False, f"max concurrent positions ({max_conc}) reached"
     if is_trading_paused(state):
         return False, f"trading paused until {state.trading_paused_until} (daily loss circuit breaker)"
 
@@ -2150,8 +2255,9 @@ def can_open_position(state: LedgerState, size_sol: float) -> tuple[bool, str]:
     if total_equity > 0:
         committed = sum(pos.get("size_sol", 0) for pos in state.open_positions.values())
         exposure_after = (committed + size_sol) / total_equity
-        if exposure_after > MAX_TOTAL_EXPOSURE_PCT:
-            return False, f"total exposure would exceed {MAX_TOTAL_EXPOSURE_PCT:.0%} of equity"
+        max_exp = max(MAX_TOTAL_EXPOSURE_PCT, RISK.max_total_exposure_pct)  # profile value is rail-clamped (≤60%)
+        if exposure_after > max_exp + 1e-9:
+            return False, f"total exposure would exceed {max_exp:.0%} of equity"
 
         balance_after = state.balance_sol - size_sol
         if balance_after < total_equity * MIN_RESERVE_PCT:
@@ -2159,7 +2265,7 @@ def can_open_position(state: LedgerState, size_sol: float) -> tuple[bool, str]:
 
     now = time.time()
     state.trades_this_hour = [t for t in state.trades_this_hour if now - t < 3600]
-    if len(state.trades_this_hour) >= MAX_TRADES_PER_HOUR:
+    if len(state.trades_this_hour) >= max(MAX_TRADES_PER_HOUR, RISK.max_trades_per_hour):
         return False, "hourly trade limit hit"
 
     return True, "ok"
@@ -2355,6 +2461,7 @@ def open_paper_position(
         "source": source, "price_source": price_source, "mid_entry_price": mid_price,
         "invested_sol": size_sol, "realized_pnl_sol": 0.0, "original_size_sol": size_sol,
         "opened_ts": now_ts, "peak_price": price, "tp_rungs_hit": [], "last_price_ts": now_ts,
+        "entry_features": _LAST_GATE_FEATURES.pop(token, None) or {},
     })
     state.trades_this_hour.append(time.time())
     state.trade_log.append({
@@ -2852,6 +2959,7 @@ def _record_round_trip(state: LedgerState, token: str, pos: dict, reason: str):
         "pnl_pct": (pnl / invested) if invested else 0.0,
         "reason": reason, "opened_ts": opened_ts, "closed_ts": now_ts,
         "held_seconds": (now_ts - opened_ts) if opened_ts else None,
+        "features": pos.get("entry_features") or {},
     })
     state.token_last_exit_ts[token] = now_ts
 
@@ -4202,7 +4310,7 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
         print(f"[SNIPE SKIP] {symbol}: already holding a real-only position in this token.")
         return
 
-    if candidate.get("initial_buy_sol", 0) < SNIPER_MIN_DEV_BUY_SOL:
+    if candidate.get("kind") != "migration" and (candidate.get("initial_buy_sol") or 0) < SNIPER_MIN_DEV_BUY_SOL:
         print(f"[SNIPE SKIP] {symbol}: dev buy too low ({candidate.get('initial_buy_sol', 0)} SOL)")
         return
 
@@ -4239,15 +4347,25 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
             print(f"[SNIPE SKIP] {symbol}: too few holders ({holder_count} < {preset['min_holders']})")
             return
 
-    if preset.get("require_socials"):
-        has_socials = bool(candidate.get("twitter") or candidate.get("telegram") or candidate.get("website"))
+    if preset.get("require_socials") and SNIPER_REQUIRE_SOCIALS and candidate.get("kind") != "migration":
+        if not (candidate.get("twitter") or candidate.get("telegram") or candidate.get("website")):
+            meta = market_data.fetch_launch_metadata(candidate.get("uri"))
+            for k in ("twitter", "telegram", "website"):
+                candidate[k] = candidate.get(k) or meta.get(k)
+        has_socials = any(market_data.looks_like_real_social(candidate.get(k)) for k in ("twitter", "telegram", "website"))
         if not has_socials:
-            print(f"[SNIPE SKIP] {symbol}: no social links present")
+            print(f"[SNIPE SKIP] {symbol}: no social links in launch metadata")
             return
 
     liquidity_usd, market_cap_usd = get_liquidity_and_market_cap(mint)
-    if liquidity_usd is not None and liquidity_usd < SNIPER_MIN_LIQUIDITY_USD:
-        print(f"[SNIPE SKIP] {symbol}: liquidity too thin (${liquidity_usd:,.0f})")
+    if not liquidity_usd and candidate.get("retries", 0) < SNIPER_MAX_DATA_RETRIES:
+        # Not indexed yet (common for the first minute after launch/migration):
+        # keep it pending and look again next pass instead of giving up.
+        candidate["retries"] = candidate.get("retries", 0) + 1
+        return "retry"
+    if liquidity_usd is None or liquidity_usd < RISK.sniper_min_liquidity_usd:
+        print(f"[SNIPE SKIP] {symbol}: liquidity unknown or too thin "
+              f"({'?' if liquidity_usd is None else f'${liquidity_usd:,.0f}'} < ${RISK.sniper_min_liquidity_usd:,.0f})")
         return
     if market_cap_usd is not None and market_cap_usd > SNIPER_MAX_ENTRY_MARKET_CAP_USD:
         print(f"[SNIPE SKIP] {symbol}: market cap too high for an early entry (${market_cap_usd:,.0f})")
@@ -4277,10 +4395,21 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
     # gets bought if Ledger's own read on it clears a real conviction
     # bar, not at random.
     prior_entries = get_token_history(symbol, limit=5)
-    judgment = get_snipe_confidence(
-        symbol, name, top10_pct, dev_pct, max_multiplier=SNIPER_MAX_SIZE_MULTIPLIER,
-        history_context=summarize_token_history(prior_entries),
-    )
+    if SNIPER_MIN_CONFIDENCE_TO_ENTER > 0:
+        judgment = get_snipe_confidence(
+            symbol, name, top10_pct, dev_pct, max_multiplier=SNIPER_MAX_SIZE_MULTIPLIER,
+            history_context=summarize_token_history(prior_entries),
+        )
+    else:
+        # Speed path: no LLM round-trip. Thesis is built from the facts that passed.
+        bits = ["fresh pump.fun " + ("graduation" if candidate.get("kind") == "migration" else "launch")]
+        if liquidity_usd:
+            bits.append(f"${liquidity_usd / 1000:.0f}K liq")
+        if top10_pct is not None:
+            bits.append(f"top10 {top10_pct:.0f}%")
+        if dev_pct is not None:
+            bits.append(f"dev {dev_pct:.0f}%")
+        judgment = {"opinion": ", ".join(bits), "confidence_multiplier": 1.0}
     snipe_opinion = judgment["opinion"]
     confidence_multiplier = judgment["confidence_multiplier"]
 
@@ -4296,7 +4425,7 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
     # 10 SOL bankroll that's ≥1.6 SOL vs a 0.5 SOL cap, so every paper
     # snipe was silently blocked. Sizing now comes from the risk desk.
     if PAPER_TRADING_ENABLED:
-        size_sol = min(gate["size"], MAX_POSITION_SOL)
+        size_sol = min(gate["size"], paper_max_position_sol(state))
         ok, block_reason = can_open_position(state, size_sol)
         if not ok:
             print(f"[SNIPE BLOCKED] {symbol}: {block_reason}")
@@ -4588,8 +4717,42 @@ def drain_sniper_queue(state: "LedgerState"):
                 "twitter": event.get("twitter"),
                 "telegram": event.get("telegram"),
                 "website": event.get("website"),
+                "uri": event.get("uri"),
+                "kind": "launch",
                 "first_seen": time.time(),
             }
+
+
+_LAST_MIGRATION_POLL = [0.0]
+
+
+def poll_sniper_migrations(state: "LedgerState"):
+    """pump.fun graduations: a new pumpswap/raydium/meteora pool whose base
+    mint ends in 'pump'. Queued like a launch, aged from pool creation."""
+    if not SNIPER_MIGRATIONS_ENABLED or time.time() - _LAST_MIGRATION_POLL[0] < SNIPER_MIGRATION_POLL_SECONDS:
+        return
+    _LAST_MIGRATION_POLL[0] = time.time()
+    for pair in market_data.gt_new_pools():
+        mint = (pair.get("baseToken") or {}).get("address") or ""
+        if pair.get("dexId") not in market_data.MIGRATION_DEX_IDS or not mint.endswith("pump"):
+            continue
+        if mint in SNIPER_PENDING or mint in state.open_positions:
+            continue
+        created = (pair.get("pairCreatedAt") or 0) / 1000 or time.time()
+        SNIPER_PENDING[mint] = {
+            "mint": mint, "symbol": (pair.get("baseToken") or {}).get("name") or "?",
+            "name": (pair.get("baseToken") or {}).get("name") or "", "creator": "",
+            "initial_buy_sol": None, "twitter": None, "telegram": None, "website": None,
+            "uri": None, "kind": "migration", "first_seen": created,
+        }
+        print(f"[SNIPER] migration queued: {mint} on {pair.get('dexId')}")
+
+
+def sniper_age_window_seconds() -> tuple:
+    """Age window from the active RISK_PROFILE (degen 30s-15min, balanced
+    1-30min, conservative 2-45min = the old hyper_early_scalp window);
+    override with SNIPER_AGE_MIN_SECONDS / SNIPER_AGE_MAX_SECONDS."""
+    return RISK.sniper_age_min_seconds, RISK.sniper_age_max_seconds
 
 
 def scan_sniper_pending(state: "LedgerState"):
@@ -4600,7 +4763,7 @@ def scan_sniper_pending(state: "LedgerState"):
     being evaluated. This is what lets "Hyper-Early Scalp" mean
     2-45 minutes old, not literally the instant of launch.
     """
-    preset = SNIPER_PRESETS[SNIPER_ACTIVE_PRESET]
+    age_min_s, age_max_s = sniper_age_window_seconds()
     now = time.time()
     processed = 0
 
@@ -4608,22 +4771,24 @@ def scan_sniper_pending(state: "LedgerState"):
         if processed >= SNIPER_MAX_PENDING_EVAL_PER_CYCLE:
             break
         candidate = SNIPER_PENDING[mint]
-        age_minutes = (now - candidate["first_seen"]) / 60
+        age_s = now - candidate["first_seen"]
 
-        if age_minutes < preset["age_min_minutes"]:
-            continue  # still too young for this preset — check again next cycle
+        if age_s < age_min_s:
+            continue  # still too young — check again next pass (every POSITION_CHECK_SECONDS)
 
-        if age_minutes > preset["age_max_minutes"]:
+        if age_s > age_max_s:
             print(f"[SNIPE EXPIRED] {candidate['symbol']}: aged past the {SNIPER_ACTIVE_PRESET} window, giving up")
             del SNIPER_PENDING[mint]
             continue
 
-        # Within the window — evaluate now, one shot, then remove either way
+        # Within the window — evaluate now; remove unless market data wasn't indexed yet
+        result = None
         try:
-            evaluate_snipe_candidate(candidate, state)
+            result = evaluate_snipe_candidate(candidate, state)
         except Exception as e:
             print(f"[ERROR] sniper evaluation failed for {candidate['symbol']}: {e}")
-        del SNIPER_PENDING[mint]
+        if result != "retry":
+            del SNIPER_PENDING[mint]
         processed += 1
 
 
@@ -4636,6 +4801,7 @@ def main():
 
     state = LedgerState.load()
     print(f"Ledger booting up. Paper balance: {state.balance_sol} SOL")
+    print(f"[RISK] profile={RISK.profile} sizing={RISK.sizing_mode} rails_applied={RISK.rails_applied or 'none'}")
     print(f"[RISK] exit engine={EXIT_ENGINE} paper={PAPER_TRADING_ENABLED} real_armed={REAL_TRADING_ENABLED} "
           f"position_check={POSITION_CHECK_SECONDS}s config={json.dumps(RISK.as_dict())}")
 
@@ -4644,10 +4810,12 @@ def main():
     if SNIPER_MODE_ENABLED:
         start_sniper_listener()
         preset = SNIPER_PRESETS[SNIPER_ACTIVE_PRESET]
-        print(f"[SNIPER] Mode ENABLED — preset '{SNIPER_ACTIVE_PRESET}', "
-              f"min confidence to enter {SNIPER_MIN_CONFIDENCE_TO_ENTER}x, "
-              f"age window {preset['age_min_minutes']}-{preset['age_max_minutes']} min, "
-              f"max top10 {preset['top10_holders_max_pct']}%")
+        amin, amax = sniper_age_window_seconds()
+        print(f"[SNIPER] Mode ENABLED — preset '{SNIPER_ACTIVE_PRESET}', profile '{RISK.profile}', "
+              f"LLM gate {'off' if SNIPER_MIN_CONFIDENCE_TO_ENTER <= 0 else f'{SNIPER_MIN_CONFIDENCE_TO_ENTER}x'}, "
+              f"age window {amin:.0f}-{amax:.0f}s, max top10 (ex-PDAs) {preset['top10_holders_max_pct']}%, "
+              f"min liq ${RISK.sniper_min_liquidity_usd:,.0f}, size {RISK.sniper_position_pct:.1%} of equity, "
+              f"migrations {'on' if SNIPER_MIGRATIONS_ENABLED else 'off'}")
 
     whale_wallets = set()  # kept for backward compatibility with functions below, always empty now
     cycle_count = 0
@@ -4661,6 +4829,18 @@ def main():
 
         # Reload every cycle — edit wallets.json anytime, no restart needed
         watched_wallets, wallet_handles, priority_wallets = load_wallets()
+        _LEARNING_TRACKED.clear()
+        _LEARNING_TRACKED.update(wallet_handles)  # wallets.json wallets the learning loop may bench/reinstate
+        # Learning loop: shadow wallets (discovered / benched-and-recovering)
+        # are polled too but only paper-on-paper traded; discovered wallets
+        # that earned 'active' are copied like priority wallets (paper; real
+        # only with LEARNING_PROMOTE_TO_REAL=true).
+        shadow_map = learning.shadow_wallets()
+        promoted_map = learning.promoted_wallets()
+        for w, h in {**shadow_map, **promoted_map}.items():
+            if w not in wallet_handles:
+                watched_wallets.append(w)
+                wallet_handles[w] = h
         globals()["WALLET_HANDLES"] = wallet_handles  # analyze_conviction() reads this via WALLET_HANDLES.get()
 
         if not watched_wallets:
@@ -4720,7 +4900,17 @@ def main():
                         elif buy.get("sol_spent"):
                             sp = get_sol_price_usd()
                             wallet_fill_price_usd = (buy["sol_spent"] * sp / buy["amount"]) if sp else None
-                    is_priority = wallet in priority_wallets
+                    roster_status = learning.wallet_status(wallet)
+                    learning.record_signal(wallet, token, buy.get("block_time"), "wallet_buy",
+                                           handle=wallet_handles.get(wallet, ""), price_usd=wallet_fill_price_usd)
+                    if roster_status in ("shadow", "benched") or (wallet in shadow_map):
+                        # Track record without risking the paper balance.
+                        sym = (get_token_metadata(token) or {}).get("symbol", "")
+                        learning.shadow_open(wallet, token, get_sniper_entry_price(token), sym,
+                                             source="shadow" if roster_status != "benched" else "benched_shadow")
+                        if roster_status == "shadow" or wallet in shadow_map:
+                            continue
+                    is_priority = wallet in priority_wallets or wallet in promoted_map
                     trader_name = WALLET_HANDLES.get(wallet, wallet[:6] + "...")  # "..." kept for unknown handles
                     platform_name = get_source_display_name(buy["source"])
 
@@ -4737,6 +4927,7 @@ def main():
                         copy_priority_wallet_entry(
                             token, wallet, trader_name, platform_name, metadata, state,
                             signal_block_time=buy.get("block_time"), wallet_fill_price_usd=wallet_fill_price_usd,
+                            mirror_real=(wallet not in promoted_map) or learning.LEARNING_PROMOTE_TO_REAL,
                         )
                         continue
 
@@ -4805,7 +4996,7 @@ def main():
                     # CONVICTION_INITIAL_ENTRY_FRACTION and
                     # top_up_conviction_position for the rest of the pacing.
                     target_size_sol = MIN_SCOUT_SIZE_SOL + (MAX_CONVICTION_SIZE_SOL - MIN_SCOUT_SIZE_SOL) * (1 - risk_score / 10)
-                    target_size_sol = min(target_size_sol, MAX_POSITION_SOL, gate["size"])  # never above the risk desk's size
+                    target_size_sol = min(target_size_sol, paper_max_position_sol(state), gate["size"])  # never above the risk desk's size
                     size_sol = target_size_sol * CONVICTION_INITIAL_ENTRY_FRACTION
                     strength = "weak"  # priority wallets never reach here — they branch off above into copy_priority_wallet_entry
 
@@ -4876,6 +5067,7 @@ def main():
             elapsed += step
             if SNIPER_MODE_ENABLED:
                 _safe("drain_sniper_queue", drain_sniper_queue, state)
+                _safe("poll_sniper_migrations", poll_sniper_migrations, state)
                 _safe("scan_sniper_pending", scan_sniper_pending, state)
             _run_housekeeping(state)
 
@@ -4892,8 +5084,86 @@ def _safe(name: str, fn, *args):
         return None
 
 
+_LAST_SHADOW_TICK = [0.0]
+_LEARNING_TRACKED: dict = {}
+
+
+def _shadow_prices(mints: list) -> dict:
+    prices = get_token_prices_usd(mints) or {}
+    for m in mints:  # bonding-curve tokens Jupiter can't price: DexScreener/GeckoTerminal
+        if not prices.get(m):
+            p = get_sniper_exit_price(m)
+            if p:
+                prices[m] = p
+    return prices
+
+
+def run_learning(state: LedgerState):
+    if learning.consume_reload_flag():
+        globals()["RISK"] = RiskConfig.from_env()
+        print("[LEARN] reloaded risk config with tuned exits: "
+              f"stop={RISK.stop_loss_pct} ladder={RISK.tp_ladder} time_stop={RISK.time_stop_minutes}")
+    if time.time() - _LAST_SHADOW_TICK[0] >= 60:
+        _LAST_SHADOW_TICK[0] = time.time()
+        learning.shadow_tick(_shadow_prices, RISK)
+    if not _LEARNING_TRACKED:
+        _LEARNING_TRACKED.update(load_wallets()[1])
+    learning.periodic(closed_trades_for_scoring(state), RISK, dict(_LEARNING_TRACKED))
+
+
+def run_own_thesis(state: LedgerState):
+    if not own_thesis.due():
+        return
+    sol_price = get_sol_price_usd()
+
+    def safety(mint, symbol):
+        info = build_token_safety_info(mint, symbol)
+        eq = compute_total_equity(state) if PAPER_TRADING_ENABLED else 0
+        size_usd = eq * RISK.own_thesis_position_pct * (sol_price or 0)
+        ok, reason = check_token_safety(info, size_usd, RISK)
+        return ok, reason, info
+
+    th = own_thesis.form_thesis(
+        recent_signals=learning.recorded_signals(1), gt_trending=market_data.gt_trending_pools("1h"),
+        fomo_trending=fomo.trending_tokens(), best_pair_fn=_dexscreener_best_pair, safety_fn=safety,
+        held=set(state.open_positions),
+    )
+    if not th:
+        print("[THESIS] nothing cleared the bar this pass")
+        return
+    symbol = th["symbol"] or th["mint"][:6]
+    inval = f"-{RISK.stop_loss_pct:.0%} from entry"
+    if th.get("mcap_usd"):
+        inval += f" (< {trade_cards.fmt_money(th['mcap_usd'] * (1 - RISK.stop_loss_pct))} MC)"
+    speak(
+        title=f"🧠 THESIS — {symbol}", description="; ".join(th["why"]), color=COLOR_BUY,
+        fields=[{"name": "CA:", "value": th["mint"], "inline": False}],
+        journal_kind="commentary", token_ticker=symbol,
+        journal_meta={"own_thesis": True, "score": th["score"], "why": th["why"], "regime": th["regime"],
+                      "wallets": th["wallets"], "conviction": th["conviction"]},
+        embed=trade_cards.thesis_card(mint=th["mint"], symbol=symbol, name=th.get("name"), why=th["why"],
+                                      mcap_usd=th.get("mcap_usd"), invalidation=inval, conviction=th["conviction"]),
+    )
+    learning.note("thesis", f"own thesis on {symbol} (score {th['score']}, {th['conviction']}): {'; '.join(th['why'])}",
+                  mint=th["mint"])
+    if own_thesis.OWN_THESIS_PAPER_TRADE and PAPER_TRADING_ENABLED and th.get("price_usd"):
+        gate = risk_gate_entry(state, th["mint"], symbol, "own_thesis")
+        if not gate["ok"]:
+            _log_risk_refusal(symbol, th["mint"], "own_thesis", gate["reason"])
+            return
+        size_sol = min(gate["size"], paper_max_position_sol(state))
+        price = get_sniper_entry_price(th["mint"]) or th["price_usd"]
+        open_paper_position(
+            state, th["mint"], price, size_sol, opened_by="own_thesis", strength="weak",
+            thesis="; ".join(th["why"]), entry_market_cap_usd=th.get("mcap_usd"), mirror_real=False,
+            source="own_thesis", price_source="dexscreener",
+        )
+
+
 def _run_housekeeping(state: LedgerState):
     _safe("manage_positions", manage_positions, state)
+    _safe("learning", run_learning, state)
+    _safe("own_thesis", run_own_thesis, state)
     _safe("sweep_stuck_real_positions", sweep_stuck_real_positions, state)
     if PAPER_TRADING_ENABLED:
         _safe("roll_day", _roll_day, state)

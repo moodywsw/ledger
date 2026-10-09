@@ -1,0 +1,464 @@
+{
+ "_source": "Fomo leaderboard handles: user screenshots (ALL, 30D, 2026-10-09) + public pages of unofficial trackers fomo-api.com (24h/7d/30d top 10 with wallets) and fomoindex.xyz (ALL-time wallets). Third-party handle->wallet mappings, not verified by fomo.family; verified on-chain activity by backtest/collect_wallet_buys.",
+ "_weights": "prior_weight = sum(board_weight * (11-rank)/10), board weights 7d=3, 30d=2, all=1, 24h=0.5. Prior only orders shadow slots; promotion needs our own copy-score.",
+ "candidates": [
+  {
+   "handle": "end837",
+   "solana_wallets": [
+    "5DBkonys2H4qHr5x9CCeXPLSWEFbnnLFP1RdfxjJgzvy"
+   ],
+   "boards": {
+    "24h": {
+     "rank": 10,
+     "pnl_usd": 67673
+    },
+    "7d": {
+     "rank": 2,
+     "pnl_usd": 218492
+    },
+    "30d": {
+     "rank": 8,
+     "pnl_usd": 360318
+    }
+   },
+   "prior_weight": 3.35
+  },
+  {
+   "handle": "fxcxc",
+   "solana_wallets": [],
+   "boards": {
+    "7d": {
+     "rank": 1,
+     "pnl_usd": 246763
+    }
+   },
+   "prior_weight": 3.0
+  },
+  {
+   "handle": "Iri0o",
+   "solana_wallets": [
+    "83Y8aqfDxz8XSerVACBubyinHm8rQ6REg9j5YXvT8b57"
+   ],
+   "boards": {
+    "7d": {
+     "rank": 3,
+     "pnl_usd": 202276
+    }
+   },
+   "prior_weight": 2.4
+  },
+  {
+   "handle": "000000",
+   "solana_wallets": [
+    "5XUNoSihvRq8Crj2FbPfB5bvBHhfWoxwy8ZTH7djSroE"
+   ],
+   "boards": {
+    "7d": {
+     "rank": 4,
+     "pnl_usd": 182024
+    }
+   },
+   "prior_weight": 2.1
+  },
+  {
+   "handle": "ExactTallTakin",
+   "solana_wallets": [
+    "AGdtsMmphhymH5wYW3dWKSkAxpLYRrNDCTFAfuq8ii9v"
+   ],
+   "boards": {
+    "30d": {
+     "rank": 1,
+     "pnl_usd": 795082
+    }
+   },
+   "prior_weight": 2.0
+  },
+  {
+   "handle": "Adolf",
+   "solana_wallets": [],
+   "boards": {
+    "7d": {
+     "rank": 5,
+     "pnl_usd": 172541
+    }
+   },
+   "prior_weight": 1.8
+  },
+  {
+   "handle": "OmakaseOnly",
+   "solana_wallets": [
+    "F5MYbjEATQFD6rxwdS2zXzEHBGuUhSGvJkUhLFAcr4hv"
+   ],
+   "boards": {
+    "30d": {
+     "rank": 2,
+     "pnl_usd": 591258
+    }
+   },
+   "prior_weight": 1.8
+  },
+  {
+   "handle": "bystevenr",
+   "solana_wallets": [
+    "AH75Bn6QHSt5K2Ad4p1otns3JTwpSJWZTwiwKWNhmnKx"
+   ],
+   "boards": {
+    "30d": {
+     "rank": 3,
+     "pnl_usd": 530244
+    }
+   },
+   "prior_weight": 1.6
+  },
+  {
+   "handle": "Hifive_07",
+   "solana_wallets": [],
+   "boards": {
+    "7d": {
+     "rank": 6,
+     "pnl_usd": 143725
+    }
+   },
+   "prior_weight": 1.5
+  },
+  {
+   "handle": "DonnyDicey",
+   "solana_wallets": [
+    "2ZXtcsDXkDnWsCgBGd6zbn2TigkDBxT5uLhEGpmz37sc"
+   ],
+   "boards": {
+    "7d": {
+     "rank": 7,
+     "pnl_usd": 140089
+    },
+    "30d": {
+     "rank": 10,
+     "pnl_usd": 352372
+    }
+   },
+   "prior_weight": 1.4
+  },
+  {
+   "handle": "bigbabba",
+   "solana_wallets": [
+    "mDR91ufq4S2uSHa9E2PYL7xg4LwcQXaQFP7YK864a1z"
+   ],
+   "boards": {
+    "30d": {
+     "rank": 4,
+     "pnl_usd": 520673
+    }
+   },
+   "prior_weight": 1.4
+  },
+  {
+   "handle": "GenerationalFumbler",
+   "solana_wallets": [
+    "Gxir4qAwqMh96gUskLkAct3fmWpdDDuwFHfwThPLofoV"
+   ],
+   "boards": {
+    "30d": {
+     "rank": 5,
+     "pnl_usd": 481673
+    }
+   },
+   "prior_weight": 1.2
+  },
+  {
+   "handle": "leo",
+   "solana_wallets": [
+    "3qBVJLMAWXCbW3nhz99T99in82zZeUHkbDeSDJThbN4Z",
+    "9LF3d3fxAbeabsxn2GLzMKqNbS1MUMtKvMcNLjTPbDNo"
+   ],
+   "boards": {
+    "30d": {
+     "rank": 6,
+     "pnl_usd": 416295
+    }
+   },
+   "prior_weight": 1.0
+  },
+  {
+   "handle": "unipcs",
+   "solana_wallets": [
+    "2heJbC32Tpfcb3nbUb5ER61K11FGZVfVGtVnDm6LDogF"
+   ],
+   "boards": {
+    "all": {
+     "rank": 1,
+     "pnl_usd": 6100000.0
+    }
+   },
+   "prior_weight": 1.0
+  },
+  {
+   "handle": "frankdegods",
+   "solana_wallets": [
+    "498g1rVnFcnjBjpfw1xyqA1WvgQXUU8RWuELjxkjAayQ"
+   ],
+   "boards": {
+    "24h": {
+     "rank": 5,
+     "pnl_usd": 84542
+    },
+    "all": {
+     "rank": 5,
+     "pnl_usd": 3200000.0
+    }
+   },
+   "prior_weight": 0.9
+  },
+  {
+   "handle": "jxnwa",
+   "solana_wallets": [],
+   "boards": {
+    "7d": {
+     "rank": 8,
+     "pnl_usd": 139142
+    }
+   },
+   "prior_weight": 0.9
+  },
+  {
+   "handle": "pointfarmcap",
+   "solana_wallets": [
+    "Beqv6dzTcjV2eodo8RRXCiCcnSYrS1vkQKhfqwHXqeit"
+   ],
+   "boards": {
+    "all": {
+     "rank": 2,
+     "pnl_usd": 3980000.0
+    }
+   },
+   "prior_weight": 0.9
+  },
+  {
+   "handle": "USronaldcarter",
+   "solana_wallets": [
+    "6CpipySaXTAiUKDyyhWeCfYSMQLCiHrbCN1WvRv5s8kF"
+   ],
+   "boards": {
+    "30d": {
+     "rank": 7,
+     "pnl_usd": 368213
+    }
+   },
+   "prior_weight": 0.8
+  },
+  {
+   "handle": "DumbCrayonEater",
+   "solana_wallets": [
+    "5FGoPPj1nL8LCnfVnpTmreqQtqLuMXXAwuS1uahMrp8V"
+   ],
+   "boards": {
+    "all": {
+     "rank": 3,
+     "pnl_usd": 3350000.0
+    }
+   },
+   "prior_weight": 0.8
+  },
+  {
+   "handle": "The__Solstice",
+   "solana_wallets": [
+    "4ugDhHJ8XDXAeABmrNmGffFaLbJb9BkPyiFGVSV9ocwo"
+   ],
+   "boards": {
+    "all": {
+     "rank": 4,
+     "pnl_usd": 3300000.0
+    }
+   },
+   "prior_weight": 0.7
+  },
+  {
+   "handle": "hitscanr",
+   "solana_wallets": [],
+   "boards": {
+    "7d": {
+     "rank": 9,
+     "pnl_usd": 137912
+    }
+   },
+   "prior_weight": 0.6
+  },
+  {
+   "handle": "ThePumponomics",
+   "solana_wallets": [
+    "3zs5nZyqTZmjvvaNTRnfNZyhNzuu7WW9BrJL31gGyPVY"
+   ],
+   "boards": {
+    "24h": {
+     "rank": 1,
+     "pnl_usd": 299879
+    }
+   },
+   "prior_weight": 0.5
+  },
+  {
+   "handle": "Salem1299534",
+   "solana_wallets": [
+    "2yXwy5Dsa1XtEXcsrkFVRJeyuWD3qKkMN3pP3p5VTW3V"
+   ],
+   "boards": {
+    "all": {
+     "rank": 6,
+     "pnl_usd": 2910000.0
+    }
+   },
+   "prior_weight": 0.5
+  },
+  {
+   "handle": "jelitics",
+   "solana_wallets": [
+    "mXvJVLBBVyi9o7E2rUAdnNzUyA7gFtabEjdKfCWRTtj"
+   ],
+   "boards": {
+    "24h": {
+     "rank": 2,
+     "pnl_usd": 107902
+    }
+   },
+   "prior_weight": 0.45
+  },
+  {
+   "handle": "inyourwalls",
+   "solana_wallets": [
+    "CBKJmhjDp7mxBYGAFWxCaPjD2BSJWpb4nQqnLd7rhSaM"
+   ],
+   "boards": {
+    "24h": {
+     "rank": 3,
+     "pnl_usd": 99200
+    }
+   },
+   "prior_weight": 0.4
+  },
+  {
+   "handle": "0xstanczyk",
+   "solana_wallets": [
+    "EjhX8RakDRQzxg8YHAPDvVNPp2eog8bWX26KDmhivBhf"
+   ],
+   "boards": {
+    "30d": {
+     "rank": 9,
+     "pnl_usd": 356757
+    }
+   },
+   "prior_weight": 0.4
+  },
+  {
+   "handle": "theveeman",
+   "solana_wallets": [
+    "F5hkYsi8JxjyA2JHN5CA7MbnnhWubkXB2ZQB7Gkaxqs6"
+   ],
+   "boards": {
+    "all": {
+     "rank": 7,
+     "pnl_usd": 2760000.0
+    }
+   },
+   "prior_weight": 0.4
+  },
+  {
+   "handle": "Quanterty",
+   "solana_wallets": [
+    "8f39XhhZoRD8sYb6K5K9N7iSHXkL7BDmFFQNDF3TtsEr"
+   ],
+   "boards": {
+    "24h": {
+     "rank": 4,
+     "pnl_usd": 86946
+    }
+   },
+   "prior_weight": 0.35
+  },
+  {
+   "handle": "uncsnipes",
+   "solana_wallets": [
+    "navoLmYzqYeawqsHedm5CZLAP5YXhwGW3xDchYsWqBT"
+   ],
+   "boards": {
+    "7d": {
+     "rank": 10,
+     "pnl_usd": 136330
+    }
+   },
+   "prior_weight": 0.3
+  },
+  {
+   "handle": "AvgJoesCrypto",
+   "solana_wallets": [
+    "H2QSGECp13sFLJgdTsDtayX3dk18Dm6sQMSQKcew7Xzk"
+   ],
+   "boards": {
+    "all": {
+     "rank": 8,
+     "pnl_usd": 2710000.0
+    }
+   },
+   "prior_weight": 0.3
+  },
+  {
+   "handle": "domain0X",
+   "solana_wallets": [
+    "EFeexw9qnf6Q9oTRQy3ZFTb86RJz33cT81deMBKiViSA"
+   ],
+   "boards": {
+    "24h": {
+     "rank": 6,
+     "pnl_usd": 78855
+    }
+   },
+   "prior_weight": 0.25
+  },
+  {
+   "handle": "TradBengal",
+   "solana_wallets": [],
+   "boards": {
+    "24h": {
+     "rank": 7,
+     "pnl_usd": 78127
+    }
+   },
+   "prior_weight": 0.2
+  },
+  {
+   "handle": "Burgz",
+   "solana_wallets": [],
+   "boards": {
+    "all": {
+     "rank": 9,
+     "pnl_usd": null
+    }
+   },
+   "prior_weight": 0.2
+  },
+  {
+   "handle": "UsedFaintHare",
+   "solana_wallets": [
+    "7WvuAt8ZKmEpqNukntbiybZh352QC3XqNbDCPZQzzxZR"
+   ],
+   "boards": {
+    "24h": {
+     "rank": 8,
+     "pnl_usd": 68693
+    }
+   },
+   "prior_weight": 0.15
+  },
+  {
+   "handle": "Retirement",
+   "solana_wallets": [
+    "5MGvPrQy6ui4vFFdHp81JyVetXdhk5Sh2EvkYGe2Fgi3"
+   ],
+   "boards": {
+    "24h": {
+     "rank": 9,
+     "pnl_usd": 68329
+    }
+   },
+   "prior_weight": 0.1
+  }
+ ]
+}

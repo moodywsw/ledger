@@ -110,6 +110,16 @@ def load_context() -> str:
         except (json.JSONDecodeError, OSError) as e:
             print(f"[WARN] couldn't load market intel: {e}")
 
+    try:
+        import learning
+        lj = learning.summary_for_discord(8)
+        if lj:
+            context_parts.append(
+                "Your learning journal (what you've measured and changed — cite it when asked how "
+                "you're improving; it's measured paper results, not promises):\n" + lj)
+    except Exception as e:
+        print(f"[WARN] couldn't load learning journal: {e}")
+
     return "\n\n".join(context_parts) if context_parts else "No trading state or research data available yet."
 
 

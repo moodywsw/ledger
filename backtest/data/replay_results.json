@@ -19,6 +19,16 @@
     "worst_trade_pct": -0.8893003917387614,
     "best_trade_pct": 1.4095352787188098
    },
+   "risk_of_ruin": {
+    "trades_per_month": 355,
+    "p_drawdown_50pct": 0.987,
+    "p_drawdown_80pct": 0.6428,
+    "p_losing_month": 0.9988,
+    "median_month": -0.8212035733506509,
+    "p5_month": -0.9234333282247749,
+    "p95_month": -0.5846242133119152
+   },
+   "avg_size_pct_equity": 0.05956978504707171,
    "blocked": {
     "no price data": 12,
     "no price at fill time": 18,
@@ -136,6 +146,16 @@
     "worst_trade_pct": -0.8925723013425418,
     "best_trade_pct": 1.3367591389094793
    },
+   "risk_of_ruin": {
+    "trades_per_month": 281,
+    "p_drawdown_50pct": 0.9974,
+    "p_drawdown_80pct": 0.731,
+    "p_losing_month": 1.0,
+    "median_month": -0.8403425950058325,
+    "p5_month": -0.9247032019724435,
+    "p95_month": -0.6580972432729069
+   },
+   "avg_size_pct_equity": 0.06552773935340099,
    "blocked": {
     "no price data": 12,
     "no price at fill time": 18,
@@ -253,6 +273,16 @@
     "worst_trade_pct": -0.5132133079006622,
     "best_trade_pct": 0.5017030641820076
    },
+   "risk_of_ruin": {
+    "trades_per_month": 436,
+    "p_drawdown_50pct": 0.9836,
+    "p_drawdown_80pct": 0.6652,
+    "p_losing_month": 0.999,
+    "median_month": -0.8303325271473878,
+    "p5_month": -0.9336637773345519,
+    "p95_month": -0.5614884690583676
+   },
+   "avg_size_pct_equity": 0.15751289260854923,
    "blocked": {
     "no price data": 12,
     "no price at fill time": 18,
@@ -357,6 +387,16 @@
     "worst_trade_pct": -0.45965019896287396,
     "best_trade_pct": 0.5333172581940486
    },
+   "risk_of_ruin": {
+    "trades_per_month": 107,
+    "p_drawdown_50pct": 0.0,
+    "p_drawdown_80pct": 0.0,
+    "p_losing_month": 1.0,
+    "median_month": -0.30899489815518677,
+    "p5_month": -0.39864423225432044,
+    "p95_month": -0.20251275989642648
+   },
+   "avg_size_pct_equity": 0.033333333333333326,
    "blocked": {
     "no price data": 12,
     "no price at fill time": 18,
@@ -369,7 +409,7 @@
     "market cap too small": 8,
     "mint authority not revoked": 2,
     "daily loss limit hit": 6,
-    "wallet benched by scoring": 2
+    "wallet benched by edge score": 2
    },
    "by_exit_reason": {
     "stop_loss": {
@@ -470,6 +510,16 @@
     "worst_trade_pct": -0.650992875733735,
     "best_trade_pct": 0.575841301334977
    },
+   "risk_of_ruin": {
+    "trades_per_month": 407,
+    "p_drawdown_50pct": 1.0,
+    "p_drawdown_80pct": 1.0,
+    "p_losing_month": 1.0,
+    "median_month": -0.9959935462162437,
+    "p5_month": -0.9981099283417063,
+    "p95_month": -0.9916401745308326
+   },
+   "avg_size_pct_equity": 0.0820934375976344,
    "blocked": {
     "no price data": 12,
     "no price at fill time": 18,
@@ -569,6 +619,508 @@
      "pnl_sol": -0.016339170221505495
     }
    }
+  },
+  "profile balanced (+fees)": {
+   "metrics": {
+    "trades": 43,
+    "win_rate": 0.32558139534883723,
+    "avg_win_pct": 0.2605635421948633,
+    "avg_loss_pct": -0.32531740026662725,
+    "expectancy_pct": -0.13456546551172338,
+    "profit_factor": 0.3758267777544287,
+    "total_pnl_sol": -0.8382644118932031,
+    "return_pct": -0.08382644118932031,
+    "max_drawdown_pct": -0.09301766900037274,
+    "avg_hold_min": 22.839147286821703,
+    "median_hold_min": 5.816666666666666,
+    "worst_trade_pct": -0.7746103475352043,
+    "best_trade_pct": 0.7680830490946359
+   },
+   "risk_of_ruin": {
+    "trades_per_month": 139,
+    "p_drawdown_50pct": 0.0,
+    "p_drawdown_80pct": 0.0,
+    "p_losing_month": 1.0,
+    "median_month": -0.24649601219638417,
+    "p5_month": -0.30977280768446047,
+    "p95_month": -0.1739617524092696
+   },
+   "avg_size_pct_equity": 0.01447674418604651,
+   "blocked": {
+    "no price data": 12,
+    "no price at fill time": 18,
+    "market cap too large": 8,
+    "chasing: price already ran > max_chase above the wallet's fill": 47,
+    "dangerous Token-2022 extension(s): transferHook": 5,
+    "dangerous Token-2022 extension(s): transferFeeConfig": 3,
+    "cooldown after N straight losses": 7,
+    "wallet benched by edge score": 19,
+    "market cap too small": 3,
+    "mint authority not revoked": 2
+   },
+   "by_exit_reason": {
+    "stop_loss": {
+     "n": 27,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.3402097062921715,
+     "pnl_sol": -1.305996641174094
+    },
+    "breakeven_stop": {
+     "n": 8,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.23615360478644318,
+     "pnl_sol": 0.26357348076856263
+    },
+    "trailing_stop": {
+     "n": 6,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.2931101254060901,
+     "pnl_sol": 0.24116174592798617
+    },
+    "time_stop": {
+     "n": 2,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.12427126892177985,
+     "pnl_sol": -0.03700299741565802
+    }
+   },
+   "by_wallet": {
+    "aurelius": {
+     "n": 9,
+     "win_rate": 0.2222222222222222,
+     "expectancy_pct": -0.0864833063112465,
+     "pnl_sol": -0.1105328109062031
+    },
+    "RC calendar": {
+     "n": 6,
+     "win_rate": 0.5,
+     "expectancy_pct": -0.012884470546271828,
+     "pnl_sol": -0.02095732853007863
+    },
+    "Lizzerd": {
+     "n": 5,
+     "win_rate": 0.4,
+     "expectancy_pct": -0.04029060477569021,
+     "pnl_sol": -0.030979204031852392
+    },
+    "Rowdy": {
+     "n": 5,
+     "win_rate": 0.6,
+     "expectancy_pct": -0.0688429571198017,
+     "pnl_sol": -0.04675892697661388
+    },
+    "OCR": {
+     "n": 5,
+     "win_rate": 0.2,
+     "expectancy_pct": -0.363547409269133,
+     "pnl_sol": -0.2609847150980979
+    },
+    "ansem": {
+     "n": 4,
+     "win_rate": 0.5,
+     "expectancy_pct": -0.05224412924472415,
+     "pnl_sol": -0.031038848348107606
+    },
+    "remus": {
+     "n": 4,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.3308452608333231,
+     "pnl_sol": -0.18581556850111408
+    },
+    "pow": {
+     "n": 3,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.28919451362353354,
+     "pnl_sol": -0.13004933096108517
+    },
+    "binkie": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.24446889266235858,
+     "pnl_sol": 0.036670333899353785
+    },
+    "omo (omotrades.com)": {
+     "n": 1,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.41178137258170006,
+     "pnl_sol": -0.05781801243940414
+    }
+   }
+  },
+  "profile degen (+fees)": {
+   "metrics": {
+    "trades": 50,
+    "win_rate": 0.32,
+    "avg_win_pct": 0.2795846057934206,
+    "avg_loss_pct": -0.36702696433157883,
+    "expectancy_pct": -0.16011126189157907,
+    "profit_factor": 0.3244678817303495,
+    "total_pnl_sol": -1.7451996838611201,
+    "return_pct": -0.174519968386112,
+    "max_drawdown_pct": -0.18552499760959862,
+    "avg_hold_min": 63.245666666666665,
+    "median_hold_min": 10.433333333333334,
+    "worst_trade_pct": -0.7746103475352043,
+    "best_trade_pct": 0.834204310706007
+   },
+   "risk_of_ruin": {
+    "trades_per_month": 162,
+    "p_drawdown_50pct": 0.2264,
+    "p_drawdown_80pct": 0.0,
+    "p_losing_month": 1.0,
+    "median_month": -0.46148089276889004,
+    "p5_month": -0.537101287458859,
+    "p95_month": -0.37211473724536914
+   },
+   "avg_size_pct_equity": 0.02115844425347391,
+   "blocked": {
+    "no price data": 12,
+    "no price at fill time": 18,
+    "market cap too large": 3,
+    "chasing: price already ran > max_chase above the wallet's fill": 23,
+    "dangerous Token-2022 extension(s): transferHook": 5,
+    "dangerous Token-2022 extension(s): transferFeeConfig": 4,
+    "wallet benched by edge score": 45,
+    "cooldown after N straight losses": 5,
+    "market cap too small": 1,
+    "mint authority not revoked": 1
+   },
+   "by_exit_reason": {
+    "stop_loss": {
+     "n": 30,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.39112753467481626,
+     "pnl_sol": -2.4378139412031112
+    },
+    "trailing_stop": {
+     "n": 9,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.3672471408871219,
+     "pnl_sol": 0.6193500634254219
+    },
+    "breakeven_stop": {
+     "n": 7,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.16687563210151887,
+     "pnl_sol": 0.21889467624639355
+    },
+    "time_stop": {
+     "n": 4,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.18627268675729844,
+     "pnl_sol": -0.14563048232982448
+    }
+   },
+   "by_wallet": {
+    "aurelius": {
+     "n": 11,
+     "win_rate": 0.2727272727272727,
+     "expectancy_pct": -0.07442220511561952,
+     "pnl_sol": -0.3265624705068343
+    },
+    "Rowdy": {
+     "n": 7,
+     "win_rate": 0.42857142857142855,
+     "expectancy_pct": -0.12672679847996676,
+     "pnl_sol": -0.2394719788363628
+    },
+    "RC calendar": {
+     "n": 7,
+     "win_rate": 0.2857142857142857,
+     "expectancy_pct": -0.1163438042983691,
+     "pnl_sol": -0.17224399466728907
+    },
+    "Lizzerd": {
+     "n": 5,
+     "win_rate": 0.4,
+     "expectancy_pct": -0.18291036378449585,
+     "pnl_sol": -0.1817629563046817
+    },
+    "OCR": {
+     "n": 5,
+     "win_rate": 0.2,
+     "expectancy_pct": -0.3651721066028534,
+     "pnl_sol": -0.33283329673358986
+    },
+    "remus": {
+     "n": 5,
+     "win_rate": 0.2,
+     "expectancy_pct": -0.25095291551954996,
+     "pnl_sol": -0.21877853203407815
+    },
+    "ansem": {
+     "n": 4,
+     "win_rate": 0.5,
+     "expectancy_pct": -0.09045524185614748,
+     "pnl_sol": -0.06807657091817998
+    },
+    "pow": {
+     "n": 3,
+     "win_rate": 0.3333333333333333,
+     "expectancy_pct": -0.19388241056157632,
+     "pnl_sol": -0.11672779139251552
+    },
+    "omo (omotrades.com)": {
+     "n": 2,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.3794036876857799,
+     "pnl_sol": -0.13114766949890644
+    },
+    "binkie": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.21202788515658808,
+     "pnl_sol": 0.042405577031317615
+    }
+   }
+  },
+  "profile scalper (+fees)": {
+   "metrics": {
+    "trades": 34,
+    "win_rate": 0.2647058823529412,
+    "avg_win_pct": 0.1800200788925417,
+    "avg_loss_pct": -0.17019477595307497,
+    "expectancy_pct": -0.07749084378805879,
+    "profit_factor": 0.39138766161485444,
+    "total_pnl_sol": -0.4851994986225546,
+    "return_pct": -0.04851994986225546,
+    "max_drawdown_pct": -0.06267814206876808,
+    "avg_hold_min": 2.3941176470588235,
+    "median_hold_min": 2.1,
+    "worst_trade_pct": -0.459650198962874,
+    "best_trade_pct": 0.33774504902232555
+   },
+   "risk_of_ruin": {
+    "trades_per_month": 110,
+    "p_drawdown_50pct": 0.0,
+    "p_drawdown_80pct": 0.0,
+    "p_losing_month": 1.0,
+    "median_month": -0.14872402479563174,
+    "p5_month": -0.20068585321318522,
+    "p95_month": -0.09048362826639478
+   },
+   "avg_size_pct_equity": 0.019705882352941177,
+   "blocked": {
+    "no price data": 12,
+    "no price at fill time": 18,
+    "market cap too large": 3,
+    "chasing: price already ran > max_chase above the wallet's fill": 67,
+    "dangerous Token-2022 extension(s): transferHook": 2,
+    "cooldown after N straight losses": 7,
+    "dangerous Token-2022 extension(s): transferFeeConfig": 2,
+    "market cap too small": 3,
+    "mint authority not revoked": 2,
+    "wallet benched by edge score": 17
+   },
+   "by_exit_reason": {
+    "stop_loss": {
+     "n": 20,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.20054282349042865,
+     "pnl_sol": -0.7498698960483263
+    },
+    "breakeven_stop": {
+     "n": 7,
+     "win_rate": 0.8571428571428571,
+     "expectancy_pct": 0.13929807635967045,
+     "pnl_sol": 0.18621483647134318
+    },
+    "time_stop": {
+     "n": 4,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.04965518438356506,
+     "pnl_sol": -0.03862324606162537
+    },
+    "trailing_stop": {
+     "n": 3,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.1999006613437138,
+     "pnl_sol": 0.11707880701605386
+    }
+   },
+   "by_wallet": {
+    "aurelius": {
+     "n": 6,
+     "win_rate": 0.3333333333333333,
+     "expectancy_pct": -0.06356443545479966,
+     "pnl_sol": -0.043207376849257254
+    },
+    "OCR": {
+     "n": 5,
+     "win_rate": 0.2,
+     "expectancy_pct": -0.12132225910643701,
+     "pnl_sol": -0.1173148108479485
+    },
+    "remus": {
+     "n": 5,
+     "win_rate": 0.2,
+     "expectancy_pct": -0.12408142560879454,
+     "pnl_sol": -0.11848443281700999
+    },
+    "ansem": {
+     "n": 4,
+     "win_rate": 0.25,
+     "expectancy_pct": -0.027340846461471075,
+     "pnl_sol": -0.024403082444057728
+    },
+    "Rowdy": {
+     "n": 4,
+     "win_rate": 0.5,
+     "expectancy_pct": 0.02775595084658189,
+     "pnl_sol": 0.021118772983969553
+    },
+    "RC calendar": {
+     "n": 4,
+     "win_rate": 0.25,
+     "expectancy_pct": -0.10605903730372734,
+     "pnl_sol": -0.0833484428777789
+    },
+    "Lizzerd": {
+     "n": 3,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.1601081905408738,
+     "pnl_sol": -0.09460182440975298
+    },
+    "pow": {
+     "n": 2,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.1991638732258934,
+     "pnl_sol": -0.07994718081268515
+    },
+    "binkie": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.27494439725983144,
+     "pnl_sol": 0.05498887945196629
+    }
+   }
+  },
+  "profile scalper @15s latency (+fees)": {
+   "metrics": {
+    "trades": 34,
+    "win_rate": 0.29411764705882354,
+    "avg_win_pct": 0.179364652105546,
+    "avg_loss_pct": -0.17120490672223465,
+    "expectancy_pct": -0.068096212949358,
+    "profit_factor": 0.47743329502235593,
+    "total_pnl_sol": -0.38347996859219885,
+    "return_pct": -0.038347996859219885,
+    "max_drawdown_pct": -0.049614911544064985,
+    "avg_hold_min": 12.404411764705882,
+    "median_hold_min": 1.5333333333333334,
+    "worst_trade_pct": -0.746612070444795,
+    "best_trade_pct": 0.3392765682745247
+   },
+   "risk_of_ruin": {
+    "trades_per_month": 110,
+    "p_drawdown_50pct": 0.0,
+    "p_drawdown_80pct": 0.0,
+    "p_losing_month": 0.999,
+    "median_month": -0.11976127579160034,
+    "p5_month": -0.1726524705633532,
+    "p95_month": -0.05857702332453174
+   },
+   "avg_size_pct_equity": 0.019705882352941177,
+   "blocked": {
+    "no price data": 12,
+    "no price at fill time": 19,
+    "market cap too large": 3,
+    "chasing: price already ran > max_chase above the wallet's fill": 66,
+    "dangerous Token-2022 extension(s): transferHook": 3,
+    "cooldown after N straight losses": 5,
+    "dangerous Token-2022 extension(s): transferFeeConfig": 2,
+    "market cap too small": 4,
+    "mint authority not revoked": 2,
+    "wallet benched by edge score": 17
+   },
+   "by_exit_reason": {
+    "stop_loss": {
+     "n": 19,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.20510458816604946,
+     "pnl_sol": -0.6923726368562187
+    },
+    "breakeven_stop": {
+     "n": 7,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.15590323647271567,
+     "pnl_sol": 0.21136539547654395
+    },
+    "time_stop": {
+     "n": 5,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.0423861172357385,
+     "pnl_sol": -0.041466631775724544
+    },
+    "trailing_stop": {
+     "n": 3,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.23410795524881678,
+     "pnl_sol": 0.1389939045632005
+    }
+   },
+   "by_wallet": {
+    "aurelius": {
+     "n": 6,
+     "win_rate": 0.3333333333333333,
+     "expectancy_pct": -0.1317470002079353,
+     "pnl_sol": -0.08265414411185498
+    },
+    "OCR": {
+     "n": 5,
+     "win_rate": 0.2,
+     "expectancy_pct": -0.10570752049964038,
+     "pnl_sol": -0.10348797652528
+    },
+    "remus": {
+     "n": 5,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.1724665795729378,
+     "pnl_sol": -0.1670626046537603
+    },
+    "Lizzerd": {
+     "n": 4,
+     "win_rate": 0.25,
+     "expectancy_pct": -0.014480641181413983,
+     "pnl_sol": -0.011916575846579375
+    },
+    "ansem": {
+     "n": 4,
+     "win_rate": 0.5,
+     "expectancy_pct": 0.019970209883827382,
+     "pnl_sol": 0.013594891188401986
+    },
+    "Rowdy": {
+     "n": 3,
+     "win_rate": 0.3333333333333333,
+     "expectancy_pct": -0.059109403042755526,
+     "pnl_sol": -0.03413017036106947
+    },
+    "RC calendar": {
+     "n": 3,
+     "win_rate": 0.3333333333333333,
+     "expectancy_pct": 0.008963543053336668,
+     "pnl_sol": 0.004967648899762728
+    },
+    "pow": {
+     "n": 2,
+     "win_rate": 0.0,
+     "expectancy_pct": -0.2299599115275353,
+     "pnl_sol": -0.09231626436417192
+    },
+    "binkie": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.2738868214124643,
+     "pnl_sol": 0.05477736428249286
+    },
+    "omo (omotrades.com)": {
+     "n": 1,
+     "win_rate": 1.0,
+     "expectancy_pct": 0.18059356813354008,
+     "pnl_sol": 0.03474786289985962
+    }
+   }
   }
  },
  "latency_sweep": {
@@ -581,11 +1133,39 @@
     "max_drawdown_pct": -0.4520778107858376
    },
    "new_v2 (+fees)": {
-    "trades": 35,
-    "win_rate": 0.3142857142857143,
-    "expectancy_pct": -0.10731063828686509,
-    "return_pct": -0.11905863702929805,
-    "max_drawdown_pct": -0.13813373302514123
+    "trades": 37,
+    "win_rate": 0.32432432432432434,
+    "expectancy_pct": -0.11261762759666605,
+    "return_pct": -0.1313247199056467,
+    "max_drawdown_pct": -0.15013421739721455
+   },
+   "profile balanced (+fees)": {
+    "trades": 41,
+    "win_rate": 0.24390243902439024,
+    "expectancy_pct": -0.1812602847231809,
+    "return_pct": -0.11237723476615095,
+    "max_drawdown_pct": -0.11951381457983674
+   },
+   "profile degen (+fees)": {
+    "trades": 45,
+    "win_rate": 0.26666666666666666,
+    "expectancy_pct": -0.19829745614042701,
+    "return_pct": -0.185426605185305,
+    "max_drawdown_pct": -0.19413560508191116
+   },
+   "profile scalper (+fees)": {
+    "trades": 34,
+    "win_rate": 0.29411764705882354,
+    "expectancy_pct": -0.06640228336388111,
+    "return_pct": -0.03742636537592455,
+    "max_drawdown_pct": -0.04870407808672836
+   },
+   "profile scalper @15s latency (+fees)": {
+    "trades": 34,
+    "win_rate": 0.29411764705882354,
+    "expectancy_pct": -0.07223299277321664,
+    "return_pct": -0.04103381338889971,
+    "max_drawdown_pct": -0.05401006044295647
    }
   },
   "30": {
@@ -597,11 +1177,39 @@
     "max_drawdown_pct": -0.4459665013781011
    },
    "new_v2 (+fees)": {
-    "trades": 32,
-    "win_rate": 0.28125,
-    "expectancy_pct": -0.11671799234020198,
-    "return_pct": -0.11844354068814467,
-    "max_drawdown_pct": -0.1378586860816008
+    "trades": 33,
+    "win_rate": 0.30303030303030304,
+    "expectancy_pct": -0.103610280250028,
+    "return_pct": -0.10914820946965158,
+    "max_drawdown_pct": -0.12876807255892983
+   },
+   "profile balanced (+fees)": {
+    "trades": 42,
+    "win_rate": 0.2619047619047619,
+    "expectancy_pct": -0.166862220948598,
+    "return_pct": -0.09945969578236558,
+    "max_drawdown_pct": -0.10849408780285089
+   },
+   "profile degen (+fees)": {
+    "trades": 48,
+    "win_rate": 0.2708333333333333,
+    "expectancy_pct": -0.20032157735023012,
+    "return_pct": -0.1990422887380628,
+    "max_drawdown_pct": -0.20972039442401297
+   },
+   "profile scalper (+fees)": {
+    "trades": 33,
+    "win_rate": 0.2727272727272727,
+    "expectancy_pct": -0.08481411320116779,
+    "return_pct": -0.05162962360930361,
+    "max_drawdown_pct": -0.05998403874631554
+   },
+   "profile scalper @15s latency (+fees)": {
+    "trades": 33,
+    "win_rate": 0.2727272727272727,
+    "expectancy_pct": -0.08515820732774422,
+    "return_pct": -0.05184555057905612,
+    "max_drawdown_pct": -0.060198063565189544
    }
   },
   "45": {
@@ -618,6 +1226,34 @@
     "expectancy_pct": -0.10256346640012824,
     "return_pct": -0.10799401232691781,
     "max_drawdown_pct": -0.12763929512142558
+   },
+   "profile balanced (+fees)": {
+    "trades": 43,
+    "win_rate": 0.32558139534883723,
+    "expectancy_pct": -0.13456546551172338,
+    "return_pct": -0.08382644118932031,
+    "max_drawdown_pct": -0.09301766900037274
+   },
+   "profile degen (+fees)": {
+    "trades": 50,
+    "win_rate": 0.32,
+    "expectancy_pct": -0.16011126189157907,
+    "return_pct": -0.174519968386112,
+    "max_drawdown_pct": -0.18552499760959862
+   },
+   "profile scalper (+fees)": {
+    "trades": 34,
+    "win_rate": 0.2647058823529412,
+    "expectancy_pct": -0.07749084378805879,
+    "return_pct": -0.04851994986225546,
+    "max_drawdown_pct": -0.06267814206876808
+   },
+   "profile scalper @15s latency (+fees)": {
+    "trades": 35,
+    "win_rate": 0.2857142857142857,
+    "expectancy_pct": -0.08163218928205258,
+    "return_pct": -0.05276362610698017,
+    "max_drawdown_pct": -0.0668586716569483
    }
   },
   "90": {
@@ -634,6 +1270,34 @@
     "expectancy_pct": -0.06859237374051336,
     "return_pct": -0.08918590726779738,
     "max_drawdown_pct": -0.13807074557738713
+   },
+   "profile balanced (+fees)": {
+    "trades": 46,
+    "win_rate": 0.391304347826087,
+    "expectancy_pct": -0.08842394113986597,
+    "return_pct": -0.05853351335232957,
+    "max_drawdown_pct": -0.0720520804277923
+   },
+   "profile degen (+fees)": {
+    "trades": 48,
+    "win_rate": 0.25,
+    "expectancy_pct": -0.19403441293927912,
+    "return_pct": -0.17753515475562825,
+    "max_drawdown_pct": -0.18900283511079383
+   },
+   "profile scalper (+fees)": {
+    "trades": 0,
+    "win_rate": null,
+    "expectancy_pct": null,
+    "return_pct": null,
+    "max_drawdown_pct": null
+   },
+   "profile scalper @15s latency (+fees)": {
+    "trades": 0,
+    "win_rate": null,
+    "expectancy_pct": null,
+    "return_pct": null,
+    "max_drawdown_pct": null
    }
   },
   "180": {
@@ -645,6 +1309,34 @@
     "max_drawdown_pct": -0.6391158050374911
    },
    "new_v2 (+fees)": {
+    "trades": 0,
+    "win_rate": null,
+    "expectancy_pct": null,
+    "return_pct": null,
+    "max_drawdown_pct": null
+   },
+   "profile balanced (+fees)": {
+    "trades": 0,
+    "win_rate": null,
+    "expectancy_pct": null,
+    "return_pct": null,
+    "max_drawdown_pct": null
+   },
+   "profile degen (+fees)": {
+    "trades": 44,
+    "win_rate": 0.22727272727272727,
+    "expectancy_pct": -0.2108695030589964,
+    "return_pct": -0.17911916436225384,
+    "max_drawdown_pct": -0.18777096233802232
+   },
+   "profile scalper (+fees)": {
+    "trades": 0,
+    "win_rate": null,
+    "expectancy_pct": null,
+    "return_pct": null,
+    "max_drawdown_pct": null
+   },
+   "profile scalper @15s latency (+fees)": {
     "trades": 0,
     "win_rate": null,
     "expectancy_pct": null,

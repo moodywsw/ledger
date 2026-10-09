@@ -221,3 +221,61 @@ on them.
 4. **Stay on paper with the new rules for at least 2–4 weeks**, and only arm
    real money if paper expectancy is positive *after costs*.
 
+
+## 7. Phase 2: risk profiles, per-trader sizing, sniper, learning loop
+
+### Replay per profile (same 167 signals, 9.3 days, 45 s latency, 1.5%/side costs)
+
+Wallet edge is computed walk-forward: each copy is sized only from outcomes
+closed *before* it. Risk of ruin is a bootstrap of each run's per-trade equity
+returns over 30 days at the observed trade rate (5,000 paths). It treats trades
+as independent and ignores the circuit breakers, so read the tail numbers as
+rough.
+
+| | conservative (default) | balanced | degen | legacy paper (old bot) |
+|---|---|---|---|---|
+| Trades | 33 | 43 | 50 | 87 |
+| Win rate | 30% | 33% | 32% | 30% |
+| Expectancy / trade | −10.3% | −13.5% | −16.0% | −10.0% |
+| Avg size (% equity) | 3.3% | 1.4% | 2.1% | 6.6% |
+| Return, 9.3 days | −10.8% | −8.4% | −17.5% | −43.6% |
+| Max drawdown | −12.8% | −9.3% | −18.6% | −44.2% |
+| Median 30-day return (bootstrap) | −31% | −25% | −46% | −84% |
+| P(−50% drawdown in 30 days) | 0% | 0% | 23% | 99.7% |
+| P(−80% drawdown in 30 days) | 0% | 0% | 0% | 73% |
+| P(losing month) | 100% | 100% | 100% | 100% |
+
+**Plain reading.** The copied wallets had no edge over this period: about −17%
+per signal after realistic latency and costs, whatever the exits. Edge sizing
+does what it is designed to do. It starts every wallet small and benches
+wallets as their losses come in, so degen never reached its 8–10% "top" tier
+(average size was 2.1%). Degen still loses about 1.6× more than conservative
+because its filters are looser and its stops wider. No profile is profitable on
+this data. Degen sizing only pays off **after** some wallets show a real,
+measured edge, and the scoring is built to detect exactly that.
+
+### Walk-forward exit tuning (`python -m tuning --profile X`)
+
+| Profile | Out-of-sample mean/trade, tuned vs current | Verdict |
+|---|---|---|
+| conservative | −17.9% vs −16.6% | rejected (kept current) |
+| balanced | −18.5% vs −19.2% | rejected (< +1pp) |
+| degen | −16.7% vs −21.2% | would be accepted: stop 20%, TP1 +20%:½, time stop 60 m, trail 25% |
+
+Tuning makes losing signals lose less. It cannot create an edge. The bot only
+retunes from its own recorded signals (≥ 60), at most daily, within the
+`TUNABLE_BOUNDS`. Nothing tuned on this backtest is shipped.
+
+### Sniper: why it never traded, and the fixes
+
+| Blocker | Fix |
+|---|---|
+| LLM conviction ≥ 2.0 required; without an Anthropic key (or on any error) confidence = 1.0 | `SNIPER_MIN_CONFIDENCE` defaults to 0 (off) |
+| `require_socials`, but the pumpdev WS event has no socials | Socials are read from the launch's IPFS `uri` metadata |
+| DexScreener returns no pairs for bonding-curve tokens, so there was no price, liquidity or MC, and exits were written off at 60 min | GeckoTerminal fallback (throttled and cached) for price, liquidity, MC and txns |
+| Top-10 holders included the bonding-curve and pool vaults (PDAs), so it was always over the limit | Off-curve owners are excluded |
+| No migration feed | Polls GeckoTerminal `new_pools` for pumpswap/raydium/meteora pools of `…pump` mints |
+| Not indexed yet at first look meant dropped | Up to 6 re-checks while inside the age window |
+
+The age window, size and liquidity floor now come from the profile. All the
+token-safety rails still apply.

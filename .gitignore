@@ -17,3 +17,14 @@ journal.jsonl
 # Backtest raw candles (large, re-fetchable with python -m backtest.fetch_prices)
 backtest/data/prices.json
 .pytest_cache/
+backtest/data/fomo_prices.json
+
+# Learning-loop runtime files (written under DATA_DIR at run time)
+wallet_roster.json
+shadow_book.json
+signals.jsonl
+learning_scores.json
+learning_journal.jsonl
+tuned_params.json
+tuning_last_attempt.json
+fomo_cache.json

@@ -122,8 +122,86 @@ as `[RISK] ...`.
 | `EXIT_MAX_HOLD_HOURS` | `24` | Absolute max hold. |
 | `EXIT_NO_PRICE_WRITEOFF_MINUTES` | `60` | Close (write off) a position with no price quote for this long. |
 | `PAPER_COST_PER_SIDE_PCT` | `0.015` | Fees + slippage charged to paper fills per side, so paper PnL is realistic. |
-| `WALLET_SCORE_MIN_TRADES` / `WALLET_SCORE_MIN_EXPECTANCY_PCT` / `WALLET_SCORE_LOOKBACK_DAYS` | `5` / `0.0` / `30` | Stop copying a wallet whose copied trades have negative expectancy. |
+| `WALLET_SCORE_MIN_TRADES` / `WALLET_SCORE_MIN_EXPECTANCY_PCT` / `WALLET_SCORE_LOOKBACK_DAYS` | `5` / `0.0` / `30` | Minimum sample before a wallet's edge is trusted; lookback window (benching now uses the edge tiers below). |
 | `ALLOW_LLM_DIP_BUYS` / `MAX_DIP_BUYS` | `false` / `1` | Legacy engine only: LLM averaging down is off by default. |
+
+### Risk profiles, per-trader sizing and hard rails
+
+`RISK_PROFILE` picks a preset; any explicit variable above still overrides
+it. Load order: profile < learned `tuned_params.json` (exit params only) <
+env < **hard rails** (clamped in every profile, reported at boot as
+`rails_applied`).
+
+| | `conservative` (default) | `balanced` | `degen` |
+|---|---|---|---|
+| Sizing | 1% risk/trade, ≤5% | per-wallet edge | per-wallet edge |
+| Unknown wallet / weak / base → max / top | — | 1.5% / 0.75% / 2→4% / 5% | 2% / 1% / 3→8% / **10%** |
+| Sniper / own thesis size | 1% / 0.5% | 1.5% / 1% | 3% / 2% |
+| Max concurrent / exposure / daily loss | 4 / 20% / 5% | 6 / 30% / 8% | 10 / 50% / 15% |
+| Stop / TP ladder | 20% / +25%:½, +60%:¼ | 25% / +30%:40%, +80%:30% | 30% / +40%:35%, +100%:25%, +300%:15% |
+| Min liquidity (copies / sniper) | $15K / $5K | $10K / $4K | $8K / $2.5K |
+| Sniper age window | 2–45 min | 1–30 min | 30 s–15 min |
+
+**Per-trader edge**: every closed copy (and every shadow trade) gives
+`R = pnl% / stop%`. A wallet's score is the recency-weighted (half-life
+`EDGE_HALF_LIFE_DAYS`=7) mean R, shrunk toward 0 with
+`EDGE_PRIOR_TRADES`=5 pseudo-trades so a lucky streak doesn't earn full
+size. Tiers: `unknown` (< `WALLET_SCORE_MIN_TRADES`) → small size;
+`benched` (shrunk R < `EDGE_BENCH_R`) → not copied, shadow-traded only;
+`weak` → `EDGE_WEAK_WALLET_PCT`; `core` → linear from `EDGE_BASE_PCT` to
+`EDGE_MAX_PCT` as R approaches `EDGE_TARGET_R`; `top` (R ≥ 2×target with ≥ 2×min
+trades) → `EDGE_TOP_PCT`. Sizes are then shrunk (not refused) to fit the
+price-impact cap.
+
+**Hard rails (every profile, env can't exceed):** daily loss ≤ 20%,
+exposure ≤ 60%, any single position ≤ 10%, unknown/weak wallet ≤ 5%, sniper
+≤ 5%, own thesis ≤ 3%, price impact ≤ 5%, ≤ 15 concurrent, ≤ 30 trades/h,
+stop 5–50%; mint + freeze authority revoked and dangerous Token-2022
+extensions are always enforced. `REAL_TRADING_ENABLED` still defaults to
+`false`; real orders also stay under `real_trading.py`'s own caps.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RISK_PROFILE` | `conservative` | `conservative` \| `balanced` \| `degen`. |
+| `RISK_SIZING_MODE` | per profile | `risk` (fixed-fractional) or `edge` (per-wallet). |
+| `EDGE_UNKNOWN_WALLET_PCT`, `EDGE_WEAK_WALLET_PCT`, `EDGE_BASE_PCT`, `EDGE_MAX_PCT`, `EDGE_TOP_PCT` | per profile | Equity fraction per tier (see above). |
+| `EDGE_TARGET_R` / `EDGE_BENCH_R` / `EDGE_PRIOR_TRADES` / `EDGE_HALF_LIFE_DAYS` | `0.5` / `-0.25` / `5` / `7` | Edge scoring knobs. |
+| `SNIPER_POSITION_PCT`, `SNIPER_MIN_LIQUIDITY_USD`, `SNIPER_AGE_MIN_SECONDS`, `SNIPER_AGE_MAX_SECONDS` | per profile | Sniper sizing / liquidity floor / age window. |
+| `OWN_THESIS_POSITION_PCT` | per profile | Paper size of Ledger's own calls. |
+
+### Sniper
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SNIPER_MODE_ENABLED` | `true` | pump.fun launch feed (pumpdev WS) + migrations. |
+| `SNIPER_MIN_CONFIDENCE` | `0` | Optional LLM gate (old hard-coded 2.0 blocked every snipe without an Anthropic key). `0` = off. |
+| `SNIPER_REQUIRE_SOCIALS` | `true` | Socials are read from the launch's IPFS metadata (the WS event has none). |
+| `SNIPER_MIN_DEV_BUY_SOL` | `0.5` | Minimum creator buy (launches only). |
+| `SNIPER_MIGRATIONS_ENABLED` / `SNIPER_MIGRATION_POLL_SECONDS` | `true` / `60` | Snipe fresh pump.fun graduations (pumpswap/raydium/meteora pools of `…pump` mints) found via GeckoTerminal `new_pools`. |
+| `GT_MIN_INTERVAL_SECONDS` / `GT_CACHE_SECONDS` | `2.1` / `20` | GeckoTerminal throttle (free tier ≈ 30 req/min) and cache. GeckoTerminal is the fallback whenever DexScreener has no pair (all bonding-curve tokens). |
+
+### Learning loop, own theses, Fomo
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `LEARNING_ENABLED` | `true` | Scoring, roster promote/demote, discovery, shadow book, tuning. |
+| `LEARNING_PROMOTE_TO_REAL` | `false` | Promoted (discovered) wallets are copied on paper only unless this is `true`. |
+| `LEARNING_MAX_SHADOW_WALLETS` | `10` | Discovered wallets shadow-traded at once (each is polled like a tracked wallet: RPC cost). |
+| `LEARNING_PROMOTE_MIN_TRADES` / `LEARNING_PROMOTE_MIN_R` / `LEARNING_DROP_MAX_R` | `8` / `0.25` / `-0.10` | Shadow → active / dropped thresholds (shrunk R). |
+| `LEARNING_REINSTATE_MIN_NEW` | `5` | Benched wallet needs this many new shadow trades with R ≥ 0 to come back. |
+| `LEARNING_DISCOVERY_EVERY_MIN` / `LEARNING_DISCOVERY_MIN_PROFIT_USD` | `240` / `1000` | Discovery cadence; min realized profit on a winning token's visible trades. |
+| `LEARNING_TUNE_EVERY_HOURS` / `LEARNING_TUNE_MIN_SIGNALS` / `LEARNING_APPLY_TUNED` | `24` / `60` / `true` | Walk-forward exit tuning (`tuning.py`); accepted only if it beats current params out of sample. |
+| `TUNE_MIN_IMPROVEMENT` / `TUNE_MIN_OOS` | `0.01` / `20` | Acceptance bar: +1pp/trade over ≥ 20 out-of-sample trades. |
+| `OWN_THESIS_ENABLED` / `OWN_THESIS_EVERY_MIN` / `OWN_THESIS_MAX_PER_DAY` | `true` / `240` / `3` | Cadence of Ledger's own 🧠 THESIS cards. |
+| `OWN_THESIS_MIN_SCORE` / `OWN_THESIS_PAPER_TRADE` | `4` / `true` | Confluence bar; also open a small paper position tagged `own_thesis` (never mirrored to real). |
+| `FOMO_API_KEY` | unset | ⚠️ fomo.family's Terms forbid automated/third-party data extraction; fomoapi.io is unofficial. Preferred: track a Fomo account's public **Solana wallet address** on-chain via `wallets.json` instead. |
+| `FOMO_API_KEY` (cont.) | unset | Unofficial fomoapi.io key (free: https://fomoapi.io/dashboard). Unset = Fomo inputs disabled. |
+| `FOMO_HANDLES` | unset | Comma-separated public Fomo handles (e.g. your own) whose Solana wallet is resolved via the API and shadow-traded/scored like any discovered wallet. |
+| `FOMO_LEADERBOARD_PERIOD` / `FOMO_LEADERBOARD_LIMIT` / `FOMO_TRADERS_EVERY_MIN` / `FOMO_TRENDING_EVERY_MIN` | `7d` / `10` / `180` / `120` | ≈ 600 calls/month, inside the free 1,000. |
+
+Files written under `DATA_DIR`: `wallet_roster.json`, `shadow_book.json`,
+`signals.jsonl`, `learning_scores.json`, `learning_journal.jsonl`,
+`tuned_params.json` / `tuning_last_attempt.json`, `fomo_cache.json`.
 
 ## Run it
 
@@ -176,7 +254,8 @@ pip install pytest
 python -m pytest -q                       # risk engine + paper engine unit tests
 python -m backtest.collect_wallet_buys     # tracked-wallet buys from RPC -> backtest/data/
 python -m backtest.fetch_prices            # GeckoTerminal minute candles + mint facts
-python -m backtest.replay                  # old vs new rules on the same signals
+python -m backtest.replay                  # old vs new rules + each RISK_PROFILE, with risk of ruin
+python -m tuning --profile degen          # walk-forward exit tuning on the same data
 python -m backtest.replay --trade-log path/to/ledger_state.json   # stats from a real state file
 ```
 

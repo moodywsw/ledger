@@ -8,6 +8,7 @@ tests/test_trade_cards.py. ledger_bot.speak() posts the returned dict as
   ENTRY  🟢        blue   🪙 token + ticker, 📋 CA + links, 💵 entry price/MC, 💰 size, 🧠 one-line thesis
   EXIT   ✅ / 🔴   green / red by PnL   🪙 token, 📋 CA + links, 📈/📉 PnL (% · SOL · USD), 💵 entry → exit MC
   TRIM   ✅ / 🔴   same as EXIT, for a partial take-profit / partial stop
+  THESIS 🧠        violet  Ledger's own call: 🪙 token, 📋 CA + links, ≤3 reasons, ❌ invalidation, 🎯 conviction
 
 Scale-ins (top-ups, dip buys) are intentionally NOT posted.
 """
@@ -123,6 +124,34 @@ def exit_card(*, mint: str, symbol: str, name: str | None = None, partial_fracti
         "title": f"{'✅' if win else '🔴'} {word} · 🪙 {_token_label(symbol, name)}"[:256],
         "description": "\n".join(_header(mint)),
         "color": COLOR_WIN if win else COLOR_LOSS,
+        "fields": fields,
+    }
+
+
+COLOR_THESIS = 0xA78BFA  # violet
+
+
+def thesis_card(*, mint: str, symbol: str, name: str | None = None, why: list | None = None,
+                mcap_usd: float | None = None, invalidation: str | None = None,
+                conviction: str | None = None, **_unused) -> dict:
+    """Ledger's own call. Labelled 'Thesis' (no NFA boilerplate): 🧠 title,
+    📋 CA + links, ≤3 short reasons, ❌ invalidation, 🎯 conviction."""
+    lines = _header(mint)
+    for w in (why or [])[:3]:
+        t = _one_line(w, 90)
+        if t:
+            lines.append(f"• {t}")
+    fields = []
+    if mcap_usd:
+        fields.append({"name": "💵 MC", "value": fmt_money(mcap_usd), "inline": True})
+    if invalidation:
+        fields.append({"name": "❌ Invalid if", "value": _one_line(invalidation, 60), "inline": True})
+    if conviction:
+        fields.append({"name": "🎯 Conviction", "value": conviction, "inline": True})
+    return {
+        "title": f"🧠 THESIS · 🪙 {_token_label(symbol, name)}",
+        "description": "\n".join(lines),
+        "color": COLOR_THESIS,
         "fields": fields,
     }
 
