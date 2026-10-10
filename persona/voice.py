@@ -50,6 +50,8 @@ TEMPLATES = {
 
 
 def template(kind: str, ctx: dict) -> str:
+    if kind == "musing":
+        return ctx.get("draft") or ""
     m = ctx.get("mood_state") or {}
     vals = {"tk": "", "wallet": "a tracked trader", "size": "a small bag", "why": "", "chg": "",
             "wins": 0, "losses": 0, "pnl": "0", "belief": ""}
@@ -103,7 +105,13 @@ def write(kind: str, ctx: dict, beliefs: list | None = None) -> str:
         return draft
     m = ctx.get("mood_state") or {}
     facts = {k: v for k, v in ctx.items() if k != "mood_state" and v not in (None, "")}
-    prompt = (f"Post type: {kind}\nFacts: {facts}\nMy mood: {moodmod.label(m)} "
+    if kind == "musing":
+        prompt = (f"Write a genuine, opinionated musing (not about a specific trade of mine) on the topic: {ctx.get('topic')}.\n"
+                  f"Free inputs (use at most one, never invent numbers): fear&greed={ctx.get('fng')}, trending={ctx.get('trending')}, "
+                  f"headlines={ctx.get('headlines')}\nMy mood: {moodmod.label(m)}. My beliefs: {'; '.join((beliefs or [])[:4])}\n"
+                  f"Don't repeat these recent posts: {ctx.get('recent')}\nShow emotion and a clear opinion. Fallback draft: {draft}")
+    else:
+      prompt = (f"Post type: {kind}\nFacts: {facts}\nMy mood: {moodmod.label(m)} "
               f"(confidence {m.get('confidence', 0.5):.2f}, tilt {m.get('tilt', 0):.2f})\n"
               f"My beliefs: {'; '.join((beliefs or [])[:6])}\nDraft: {draft}\n"
               "Rewrite the draft in my voice, keep every number accurate.")

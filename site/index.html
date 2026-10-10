@@ -17,18 +17,28 @@
 </header>
 
 <main class="wrap">
-  <!-- HERO: status + switch -->
-  <section class="hero card">
-    <div class="hero-left">
-      <div class="label">Bot status</div>
-      <div class="status-line"><span class="pulse" id="status-pulse"></span><span id="switch-state" class="switch-state">…</span></div>
-      <div class="hero-note" id="switch-note">Checking…</div>
-      <div class="chips"><span class="chip" id="real-armed-badge">REAL</span><span class="chip" id="chip-open">0 open</span><span class="chip" id="chip-wl">—</span></div>
+  <!-- FIRST VIEWPORT: hero banner + status + live thoughts -->
+  <section class="top">
+    <div class="hero-banner card">
+      <img src="ledger-hero.jpg" alt="Ledger — a punk robot scanning a universe of galaxies" class="hero-img" width="1000" height="563">
+      <div class="hero-shade"></div>
+      <div class="hero-status">
+        <div class="hero-left">
+          <div class="label">Bot status</div>
+          <div class="status-line"><span class="pulse" id="status-pulse"></span><span id="switch-state" class="switch-state">…</span></div>
+          <div class="hero-note" id="switch-note">Checking…</div>
+          <div class="chips"><span class="chip" id="real-armed-badge">REAL</span><span class="chip" id="chip-open">0 open</span><span class="chip" id="chip-wl">—</span></div>
+        </div>
+        <div class="hero-right">
+          <button id="switch-btn" class="switch" type="button" disabled aria-label="Toggle bot"><span class="knob"></span></button>
+          <div class="switch-caption" id="switch-caption">…</div>
+        </div>
+      </div>
     </div>
-    <div class="hero-right">
-      <button id="switch-btn" class="switch" type="button" disabled aria-label="Toggle bot"><span class="knob"></span></button>
-      <div class="switch-caption" id="switch-caption">…</div>
-    </div>
+    <aside class="mind card">
+      <div class="card-head"><h2>🧠 Ledger's mind</h2><span class="mood-pill" id="mood-pill">…</span></div>
+      <div id="mind-feed" class="mind-feed"></div>
+    </aside>
   </section>
 
   <!-- KPIs -->
@@ -62,7 +72,7 @@
 
   <section class="card">
     <div class="card-head"><h2>Theses</h2>
-      <div class="tabs" id="thesis-tabs"><button class="tab active" data-t="fomo">Fomo traders</button><button class="tab" data-t="own">Ledger's own</button><button class="tab" data-t="active">Active</button></div>
+      <div class="tabs" id="thesis-tabs"><button class="tab active" data-t="own">Ledger's own</button><button class="tab" data-t="active">Active</button></div>
     </div>
     <div id="theses-body" class="list"></div>
   </section>

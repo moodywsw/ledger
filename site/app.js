@@ -60,7 +60,7 @@ function renderRealState(r) {
   setVal("stat-exposure", usd(r.exposure_usdc));
 }
 
-let overview = null, fomoTheses = { enabled: false, theses: [] }, activeTheses = [], thesisTab = "fomo";
+let overview = null, activeTheses = [], thesisTab = "own";
 function renderOverview(o) {
   overview = o;
   setVal("pnl-today", sol(o.pnl_sol.today, 3), cls(o.pnl_sol.today));
@@ -86,11 +86,7 @@ function renderOverview(o) {
 
 function renderTheses() {
   const body = $("theses-body");
-  if (thesisTab === "fomo") {
-    const ts = fomoTheses.theses || [];
-    body.innerHTML = ts.length ? ts.map(t => `<div class="thesis"><div class="m">@${esc(t.handle)} · ${esc(t.symbol || (t.mint || "").slice(0, 6))} · score ${num(t.score, 2)} · ${t.ts ? ago(new Date(t.ts * 1000)) : ""}</div>${esc(t.text)}</div>`).join("")
-      : empty(fomoTheses.enabled ? "No fresh theses from tracked traders right now." : "Fomo theses will appear here once a fomoapi.io key is configured.");
-  } else if (thesisTab === "own") {
+  if (thesisTab === "own") {
     const ts = (overview && overview.own_theses) || [];
     body.innerHTML = ts.length ? ts.map(t => `<div class="thesis"><div class="m">${esc(t.symbol)} · ${esc(t.conviction || "")} conviction · score ${esc(t.score)} · ${esc(t.regime || "")} · ${ago(t.at)}</div><ul>${(t.why || []).map(w => `<li>${esc(w)}</li>`).join("")}</ul></div>`).join("")
       : empty("Ledger hasn't formed its own thesis yet.");
@@ -101,6 +97,20 @@ function renderTheses() {
 }
 $("thesis-tabs").addEventListener("click", e => { const b = e.target.closest(".tab"); if (!b) return; thesisTab = b.dataset.t;
   document.querySelectorAll("#thesis-tabs .tab").forEach(x => x.classList.toggle("active", x === b)); renderTheses(); });
+
+// ── Ledger's mind (persona feed) ─────────────────────────────────────
+const KIND = { musing: ["💭", "thought"], mood: ["🫀", "mood"], recap: ["📊", "recap"], entry: ["🟢", "entry"], exit_win: ["💰", "exit"],
+  exit_loss: ["🩸", "exit"], refusal: ["🚩", "refused"], thesis_own: ["🧭", "thesis"], thesis_kol: ["👀", "kol"] };
+function renderMind(f) {
+  const pill = $("mood-pill"), body = $("mind-feed");
+  if (!f) { pill.textContent = "offline"; body.innerHTML = empty("Ledger's thoughts will appear here."); return; }
+  pill.textContent = `${f.mood.emoji || ""} ${f.mood.label || ""}`.trim();
+  const ps = f.posts || [];
+  body.innerHTML = ps.length ? ps.slice(0, 12).map((p, i) => { const [ic, lb] = KIND[p.kind] || ["💬", p.kind];
+    return `<div class="thought ${i === 0 ? "latest" : ""} k-${esc(p.kind)}"><div class="th-meta"><span>${ic} ${esc(p.topic ? p.topic.replace("_", " ") : lb)}</span><span>${ago(new Date(p.ts * 1000))}</span></div><div class="th-text">${esc(p.text)}</div></div>`; }).join("")
+    : (f.beliefs || []).length ? f.beliefs.map(b => `<div class="thought"><div class="th-meta"><span>🧭 belief</span></div><div class="th-text">${esc(b)}</div></div>`).join("")
+    : empty("Ledger is quiet for now — first thoughts land within a few hours.");
+}
 
 // ── Journal (same classification logic as v1) ───────────────────────
 function classifyEntry(e) {
@@ -135,7 +145,7 @@ async function pollOnce() {
     real: fetchJson("/api/real_state").then(renderRealState),
     theses: fetchJson("/api/theses").then(t => { activeTheses = t || []; }),
     journal: fetchJson("/api/journal?limit=150").then(renderJournal),
-    fomo: fetchJson("/api/fomo_theses").then(f => { fomoTheses = f; }).catch(() => {}),
+    persona: fetchJson("/api/persona/feed?limit=20").then(renderMind).catch(() => renderMind(null)),
     overview: fetchJson("/api/overview").then(renderOverview).catch(e => console.error(e)),
   };
   const res = await Promise.allSettled(Object.values(jobs));

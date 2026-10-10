@@ -3,7 +3,7 @@ import hashlib, json, os, re, threading, time
 from collections import defaultdict
 from pathlib import Path
 
-from . import store, mood as moodmod, values, voice, outlets
+from . import store, mood as moodmod, values, voice, outlets, muse
 
 TICK_SECONDS = int(os.environ.get("PERSONA_TICK_SECONDS", "60"))
 X_MAX_PER_DAY = int(os.environ.get("PERSONA_X_MAX_PER_DAY", "12"))
@@ -11,10 +11,11 @@ DISCORD_MAX_PER_DAY = int(os.environ.get("PERSONA_DISCORD_MAX_PER_DAY", "40"))
 QUIET_HOURS = os.environ.get("PERSONA_QUIET_HOURS", "")  # e.g. "1-7" (UTC), empty = off
 RECAP_HOUR_UTC = int(os.environ.get("PERSONA_RECAP_HOUR_UTC", "22"))
 MOOD_POST_EVERY_H = float(os.environ.get("PERSONA_MOOD_EVERY_HOURS", "8"))
+MUSE_EVERY_H = float(os.environ.get("PERSONA_MUSE_EVERY_HOURS", "3.5"))
 BELIEFS_EVERY_H = float(os.environ.get("PERSONA_BELIEFS_EVERY_HOURS", "6"))
 # X budget is small, so only the most interesting kinds go there.
-X_KINDS = {"exit_win", "exit_loss", "thesis_own", "refusal", "recap", "mood", "thesis_kol", "entry"}
-X_PRIORITY = {"recap": 0, "exit_loss": 1, "exit_win": 1, "thesis_own": 2, "refusal": 3, "entry": 4, "thesis_kol": 5, "mood": 6}
+X_KINDS = {"musing", "exit_win", "exit_loss", "thesis_own", "refusal", "recap", "mood", "thesis_kol", "entry"}
+X_PRIORITY = {"recap": 0, "exit_loss": 1, "exit_win": 1, "thesis_own": 2, "refusal": 3, "entry": 4, "thesis_kol": 5, "mood": 6, "musing": 5}
 
 
 def _day() -> str:
@@ -118,7 +119,7 @@ class Persona:
                     sent.append("x")
             for k in [k for k in c if not k.endswith(_day())]:
                 del c[k]
-        post = {"ts": time.time(), "kind": kind, "text": text, "outlets": sent, "key": key}
+        post = {"ts": time.time(), "kind": kind, "text": text, "outlets": sent, "key": key, "topic": ctx.get("topic")}
         self.s["posts"].append(post)  # always visible on the website feed
         return post
 
@@ -244,10 +245,33 @@ class Persona:
             b = self.s["beliefs"]
             self.publish("mood", {"belief": b[int(now) % len(b)] if b else ""}, key=f"mood:{int(now // 3600)}")
 
+    def muse(self, now: float | None = None, ctx: dict | None = None) -> dict | None:
+        """Non-trade thought every ~MUSE_EVERY_H hours, rotating topics, no repeats."""
+        now = now or time.time()
+        if now - self.s.get("last_muse", 0) < MUSE_EVERY_H * 3600:
+            return None
+        self.s["last_muse"] = now
+        ctx = dict(ctx if ctx is not None else muse.gather())
+        ctx.update(beliefs=self.s["beliefs"], lessons_count=len(self.s["lessons"]), mood_state=self.s["mood"])
+        recent = self.s.setdefault("muse_topics", [])
+        topic = muse.choose_topic(recent, ctx)
+        recent.append(topic); del recent[:-10]
+        recent_texts = [p["text"] for p in self.s["posts"][-30:] if p.get("kind") == "musing"]
+        draft = muse.template(topic, ctx, recent_texts)
+        if (ctx.get("fng") or {}).get("value") is not None:
+            self.add_fact("market", "", f"Fear & Greed {ctx['fng']['value']} ({ctx['fng']['label']})")
+        return self.publish("musing", {"topic": topic, "draft": draft, "headlines": (ctx.get("headlines") or [])[:3],
+                                       "trending": (ctx.get("trending") or [])[:5], "fng": ctx.get("fng"),
+                                       "recent": recent_texts[-3:]}, key=f"muse:{int(now)}")
+
     def tick(self):
         with store.LOCK:
             self.read_new_journal()
             self.periodic()
+            try:
+                self.muse()
+            except Exception as ex:
+                print(f"[PERSONA] muse skipped: {str(ex)[:120]}")
             if int(time.time() // 60) % 15 == 0:
                 self.react_kol_theses()
             store.save(self.s)
@@ -261,7 +285,7 @@ def feed(limit: int = 30) -> dict:
         "mood": {"label": moodmod.label(m), "emoji": moodmod.emoji(m),
                  **{k: (round(v, 3) if isinstance(v, float) else v) for k, v in m.items()}},
         "beliefs": s["beliefs"],
-        "posts": [{k: p[k] for k in ("ts", "kind", "text", "outlets")} for p in reversed(s["posts"][-limit:])],
+        "posts": [{**{k: p[k] for k in ("ts", "kind", "text", "outlets")}, "topic": p.get("topic")} for p in reversed(s["posts"][-limit:])],
         "lessons_count": len(s["lessons"]),
         "outlets": {"discord": outlets.discord_enabled(), "x": outlets.x_enabled(), "llm": voice.llm_backend()},
     }

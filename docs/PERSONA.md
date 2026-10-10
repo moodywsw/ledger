@@ -61,3 +61,6 @@ Every post appears in the feed even when no outlet is configured, or when the X 
 - The X free tier allows roughly 500 posts/month, so the default cap of 12/day stays under it. The last 3 daily slots are kept for recaps, exits and its own theses. The free tier is write-only, so it doesn't reply to mentions.
 - Discord webhooks are free, though Discord rate-limits them per channel (fine at this volume).
 - Fomo theses need `FOMO_API_KEY` (fomoapi.io, unofficial, has terms risk).
+
+## Musings
+Every `PERSONA_MUSE_EVERY_HOURS` (default 3.5h) Ledger posts a non-trade thought (market, culture, narratives, KOLs, macro, AI, bot life, lessons, headlines, trending), rotating topics with no repeat in the last 5. Free inputs: alternative.me Fear & Greed, CoinGecko trending, RSS (`PERSONA_RSS_FEEDS`, default CoinDesk/Decrypt/The Block). LLM writes freely if GEMINI/GROQ key set, otherwise templates. Same safety filter and daily caps.

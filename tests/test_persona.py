@@ -104,3 +104,25 @@ def test_feed_endpoint():
     import api_server
     r = api_server.app.test_client().get("/api/persona/feed")
     assert r.status_code == 200 and "posts" in r.get_json()
+
+
+def test_musings_rotate_topics_and_respect_interval(P):
+    ctx = {"fng": {"value": 20, "label": "Extreme Fear"}, "trending": ["PEPE", "TAO"], "headlines": ["ETF flows hit record"]}
+    P.s["beliefs"] = ["Stops keep me alive."]
+    t0 = 1_800_000_000
+    posts = []
+    for i in range(6):
+        p = P.muse(now=t0 + i * 4 * 3600, ctx=ctx)
+        assert p and p["kind"] == "musing" and p["text"]
+        posts.append(p)
+    assert P.muse(now=t0 + 5 * 4 * 3600 + 60, ctx=ctx) is None
+    topics = [p["topic"] for p in posts]
+    assert len(set(topics)) == 6  # no repeats within the recent window
+    assert all("NFA" not in p["text"] for p in posts)
+    store.save(P.s)
+    assert engine.feed()["posts"][0]["kind"] == "musing"
+
+
+def test_musing_templates_work_without_inputs(P):
+    p = P.muse(now=1_800_000_000, ctx={})
+    assert p and p["topic"] not in ("market", "trending", "headline", "lessons") and len(p["text"]) > 20
