@@ -648,6 +648,18 @@
     "fwd30_median": -0.006699897182938341
    },
    "copy_score_basis": "scalper exits @ 15s latency"
+  },
+  {
+   "handle": "DegenCapitalLLC",
+   "solana_wallets": [
+    "4CRX74nxAdmFY4Eh1WhTrmYqHoxwxGzwXfgzTWvhUfFn"
+   ],
+   "boards": {},
+   "prior_weight": 2.0,
+   "source": "user request 2026-10-10; wallet self-described as 'my public fomo wallet' by @DegenCapitalLLC on X (via mirror zamantika.com), unverified by Fomo",
+   "paper_only": true,
+   "copy_score": 0.17,
+   "copy_score_basis": "scalper@15s, 83 copies, 2026-09-28..10-09, win 47%, +1.8%/copy after costs; @45s -3.1%/copy"
   }
  ]
 }

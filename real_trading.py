@@ -111,6 +111,63 @@ MAX_TOTAL_EXPOSURE_PCT = float(os.environ.get("MAX_TOTAL_EXPOSURE_PCT", "0.40"))
 # minimum — Jupiter's platform fee plus network fee eats a large
 # fraction of anything much smaller than this, so a sub-$1 "real" fill
 # would mostly just be fees.
+# ── "Live small" rails (all optional; unset = old behaviour) ──────────
+# REAL_KILL_SWITCH=true      refuses every new real BUY (sells still run so
+#                            positions can be exited). Flip it on Railway.
+# REAL_BUDGET_USDC           absolute ceiling on open real cost basis + the
+#                            new buy, independent of wallet balance.
+# REAL_MAX_TRADE_USDC        absolute per-trade ceiling.
+# REAL_DAILY_LOSS_CAP_USDC   no new real buys once today's (UTC) realized
+#                            real PnL is <= -cap.
+# REAL_COPY_ALLOWLIST        comma-separated wallet addresses whose copies
+#                            may be mirrored for real; set => ONLY these.
+# REAL_SNIPER_ENABLED        false => sniper never mirrors to real.
+def _env_float(name):
+    v = os.environ.get(name, "").strip()
+    try:
+        return float(v) if v else None
+    except ValueError:
+        return None
+
+
+REAL_KILL_SWITCH = os.environ.get("REAL_KILL_SWITCH", "false").strip().lower() == "true"
+REAL_BUDGET_USDC = _env_float("REAL_BUDGET_USDC")
+REAL_MAX_TRADE_USDC = _env_float("REAL_MAX_TRADE_USDC")
+REAL_DAILY_LOSS_CAP_USDC = _env_float("REAL_DAILY_LOSS_CAP_USDC")
+REAL_COPY_ALLOWLIST = {a.strip() for a in os.environ.get("REAL_COPY_ALLOWLIST", "").split(",") if a.strip()}
+REAL_SNIPER_ENABLED = os.environ.get("REAL_SNIPER_ENABLED", "true").strip().lower() == "true"
+
+
+def real_entry_allowed(source: str, opened_by: str = "") -> tuple:
+    """Which entry points may mirror to real money. Returns (ok, reason)."""
+    src = (source or "").lower()
+    if "sniper" in src and "priority" not in src and not REAL_SNIPER_ENABLED:
+        return False, "REAL_SNIPER_ENABLED=false"
+    if REAL_COPY_ALLOWLIST:
+        if "sniper" in src and "priority" not in src:
+            return (REAL_SNIPER_ENABLED, "sniper")
+        if opened_by not in REAL_COPY_ALLOWLIST:
+            return False, "wallet not in REAL_COPY_ALLOWLIST"
+    return True, ""
+
+
+def live_small_buy_check(amount_usdc: float, open_cost_basis_usdc: float, realized_today_usdc: float) -> tuple:
+    """Pure check of the live-small rails for a BUY. Returns (ok, clamped_amount, reason)."""
+    if REAL_KILL_SWITCH:
+        return False, 0.0, "REAL_KILL_SWITCH is on — no new real buys"
+    if REAL_DAILY_LOSS_CAP_USDC is not None and realized_today_usdc <= -abs(REAL_DAILY_LOSS_CAP_USDC):
+        return False, 0.0, f"daily real loss cap hit ({realized_today_usdc:.2f} <= -{abs(REAL_DAILY_LOSS_CAP_USDC):.2f} USDC)"
+    amt = amount_usdc
+    if REAL_MAX_TRADE_USDC is not None:
+        amt = min(amt, REAL_MAX_TRADE_USDC)
+    if REAL_BUDGET_USDC is not None:
+        room = REAL_BUDGET_USDC - open_cost_basis_usdc
+        if room <= 0:
+            return False, 0.0, f"REAL_BUDGET_USDC {REAL_BUDGET_USDC:.2f} fully committed"
+        amt = min(amt, room)
+    return True, amt, ""
+
+
 MIN_REAL_TICKET_USDC = float(os.environ.get("MIN_REAL_TICKET_USDC", "1.00"))
 # Jupiter Ultra reports `priceImpact` as a SIGNED percent — adverse impact
 # is NEGATIVE (verified live 2026-10-09: a large USDC->BONK order quoted
@@ -544,6 +601,12 @@ def execute_real_trade(token: str, amount_usdc: float, side: str, max_price_impa
             return _result("blocked", reason=f"wallet SOL balance ({sol_balance:.4f}) is below MIN_SOL_FOR_GAS ({MIN_SOL_FOR_GAS}) — refusing rather than risk a mid-transaction failure for lack of gas")
 
         if side == "buy":
+            positions = _load_real_positions()
+            open_basis = sum(p.get("cost_basis_usdc", 0.0) for k, p in positions.items()
+                             if k != "_meta" and p.get("raw_amount", 0) > 0)
+            ok, amount_usdc, why = live_small_buy_check(amount_usdc, open_basis, get_realized_pnl_today_usdc())
+            if not ok:
+                return _result("blocked", reason=why)
             return _execute_buy(token, amount_usdc)
         return _execute_sell(token, amount_usdc, max_price_impact_pct_override=max_price_impact_pct_override)
     except RuntimeError as e:

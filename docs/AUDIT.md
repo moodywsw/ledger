@@ -341,3 +341,16 @@ PnL is not copy edge. Size, holding conviction and our fill delay all
 differ. The bot seeds these wallets into **shadow** in copy-score order
 (`LEARNING_SEED_FILE`). They are promoted only after their own shadow
 results clear `LEARNING_PROMOTE_MIN_R` over `LEARNING_PROMOTE_MIN_TRADES`.
+
+### DegenCapitalLLC (added 2026-10-10, paper-only candidate)
+
+- **Wallet:** `4CRX74nxAdmFY4Eh1WhTrmYqHoxwxGzwXfgzTWvhUfFn`. The trader described it as "my public fomo wallet" on X; Fomo has not verified it.
+- **Data:** 158 buys across 94 tokens, 2026-09-28 to 2026-10-09.
+
+| Copy setup | Copies | Win rate | Mean / copy | Shrunk R |
+|---|---|---|---|---|
+| scalper @15 s | 83 | 47% | **+1.8%** | +0.17 |
+| scalper @45 s | 81 | 43% | −3.1% | −0.29 |
+| degen @45 s | 81 | 38% | −15.0% | −0.47 |
+
+- **Forward returns after their buys:** median −8.7% at +5 min and −45% at +30 min. They win by exiting fast. A copy only works if it is just as fast.

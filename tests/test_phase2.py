@@ -390,3 +390,28 @@ def test_scalper_profile_is_fast_and_tight(monkeypatch):
     assert c.sizing_mode == "edge" and c.stop_loss_pct == pytest.approx(0.10)
     assert c.max_signal_age_seconds <= 45 and c.max_hold_hours <= 0.5 and c.time_stop_minutes <= 5
     assert c.tp_ladder[0][0] <= 0.15 and not c.rails_applied
+
+
+def test_live_small_rails(monkeypatch):
+    import importlib, real_trading as rt
+    monkeypatch.setenv("REAL_BUDGET_USDC", "300")
+    monkeypatch.setenv("REAL_MAX_TRADE_USDC", "9")
+    monkeypatch.setenv("REAL_DAILY_LOSS_CAP_USDC", "45")
+    monkeypatch.setenv("REAL_COPY_ALLOWLIST", "WalletA")
+    monkeypatch.setenv("REAL_SNIPER_ENABLED", "false")
+    rt = importlib.reload(rt)
+    assert rt.REAL_TRADING_ENABLED is False
+    assert rt.live_small_buy_check(50, 0, 0) == (True, 9, "")
+    assert rt.live_small_buy_check(50, 295, 0)[1] == 5
+    assert not rt.live_small_buy_check(5, 300, 0)[0]
+    assert not rt.live_small_buy_check(5, 0, -45)[0]
+    assert rt.real_entry_allowed("priority_copy", "WalletA")[0]
+    assert not rt.real_entry_allowed("priority_copy", "WalletB")[0]
+    assert not rt.real_entry_allowed("sniper", "creator")[0]
+    monkeypatch.setenv("REAL_KILL_SWITCH", "true")
+    rt = importlib.reload(rt)
+    assert not rt.live_small_buy_check(5, 0, 0)[0]
+    assert rt.execute_real_trade("x", 5, "buy")["status"] == "unarmed"
+    for k in ("REAL_BUDGET_USDC", "REAL_MAX_TRADE_USDC", "REAL_DAILY_LOSS_CAP_USDC", "REAL_COPY_ALLOWLIST", "REAL_SNIPER_ENABLED", "REAL_KILL_SWITCH"):
+        monkeypatch.delenv(k, raising=False)
+    importlib.reload(rt)

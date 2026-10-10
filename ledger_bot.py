@@ -90,7 +90,7 @@ from risk_engine import (
     evaluate_exit, score_wallets, consecutive_losses, utc_day,
     wallet_edge, size_for_signal, fit_size_to_impact,
 )
-from real_trading import get_realized_pnl_today_usdc
+from real_trading import get_realized_pnl_today_usdc, real_entry_allowed
 
 # ── Risk desk (see risk_engine.py) ───────────────────────────────────
 # Every threshold is env-driven with conservative defaults; RISK.as_dict()
@@ -2495,6 +2495,11 @@ def open_paper_position(
     # above; it's recorded and the bot keeps running on paper for this
     # token either way.
     if mirror_real:
+        _ok, _why = real_entry_allowed(source, opened_by)
+        if not _ok:
+            print(f"  [REAL] {token[:6]}: not mirrored ({_why})")
+            mirror_real = False
+    if mirror_real:
         real_symbol = symbol or token[:6]
         amount_usdc = _sol_to_usdc(size_sol)
         if amount_usdc is None:
@@ -2531,6 +2536,10 @@ def open_real_only_position(
     real_trading.py's own caps, is read back from real_result below).
     """
     real_symbol = symbol or token[:6]
+    _ok, _why = real_entry_allowed(source, opened_by)
+    if not _ok:
+        print(f"  [REAL] {real_symbol}: not traded ({_why})")
+        return
     real_result = execute_real_trade(token, amount_usdc, "buy")
     _report_real_result(real_result, real_symbol, token, "buy", ctx={
         "price": entry_price, "mcap": entry_mcap, "source": source, "opened_by": opened_by,
