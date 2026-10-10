@@ -578,7 +578,7 @@ def api_owner_llm_health():
     from persona.voice import GEMINI_MODELS, _gem_ok
     return jsonify({"chain": ["deepseek-reasoner"] * bool(os.environ.get("DEEPSEEK_API_KEY")) + ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"],
                     "deepseek": bool(os.environ.get("DEEPSEEK_API_KEY")), "gemini": bool(os.environ.get("GEMINI_API_KEY")),
-                    "gemini_last_ok": _gem_ok["model"], "gemini_models": GEMINI_MODELS})
+                    "gemini_last_ok": _gem_ok["model"], "gemini_models": GEMINI_MODELS, "llm": __import__("llm").providers()})
 
 
 @app.route("/admin")
