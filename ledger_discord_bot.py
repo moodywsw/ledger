@@ -36,7 +36,9 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 MODEL = "claude-sonnet-5"
 
-LEDGER_STATE_FILE = Path("ledger_state.json")
+# Must match ledger_bot.py (DATA_DIR volume on Railway) — reading the repo-root
+# copy meant the Discord bot always answered from an empty, stale state.
+LEDGER_STATE_FILE = Path(os.environ.get("DATA_DIR", ".")) / "ledger_state.json"
 MARKET_INTEL_FILE = Path("market_intel.json")
 TRADING_PLAYBOOK_FILE = Path("trading_playbook.md")
 
@@ -107,6 +109,16 @@ def load_context() -> str:
                 context_parts.append(f"Your recent market research:\n{notes}")
         except (json.JSONDecodeError, OSError) as e:
             print(f"[WARN] couldn't load market intel: {e}")
+
+    try:
+        import learning
+        lj = learning.summary_for_discord(8)
+        if lj:
+            context_parts.append(
+                "Your learning journal (what you've measured and changed — cite it when asked how "
+                "you're improving; it's measured paper results, not promises):\n" + lj)
+    except Exception as e:
+        print(f"[WARN] couldn't load learning journal: {e}")
 
     return "\n\n".join(context_parts) if context_parts else "No trading state or research data available yet."
 

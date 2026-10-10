@@ -35,7 +35,7 @@ from pathlib import Path
 # to "." for local dev, where no volume is mounted.
 JOURNAL_FILE = Path(os.environ.get("DATA_DIR", ".")) / "journal.jsonl"
 
-VALID_KINDS = {"read", "did", "did_real", "refused", "commentary"}
+VALID_KINDS = {"read", "did", "did_real", "refused", "commentary", "learning"}
 
 
 def log_journal(kind: str, text: str, token_ticker: str = None, meta: dict = None):

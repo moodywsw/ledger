@@ -68,6 +68,7 @@ set explicitly.
 | `HELIUS_API_KEY` | `test_wallet_feed.py` only | From https://helius.dev — no longer used by `ledger_bot.py` (migrated to Alchemy) |
 | `DISCORD_WEBHOOK_URL` | `ledger_bot.py` (optional) | Ledger's public voice; leave unset to run silently |
 | `LEDGER_AVATAR_URL` | `ledger_bot.py` (optional) | Avatar for the Discord webhook posts |
+| `DISCORD_TRADE_FORMAT` | `ledger_bot.py` (optional) | `embed` (default) posts every ENTRY / TRIM / EXIT as a short embed card (scale-ins are not posted) (`trade_cards.py`, see `docs/DISCORD_CARDS.md`); `text` posts the same card as plain markdown. |
 | `DISCORD_BOT_TOKEN` | `ledger_discord_bot.py` | Needs the "Message Content" privileged intent enabled |
 | `ANTHROPIC_API_KEY` | `ledger_discord_bot.py`, `market_intel.py` | Powers conversational replies and market research |
 | `REAL_TRADING_ENABLED` | `real_trading.py` (optional) | `"true"` to arm real execution. Defaults to unarmed (`false`) — paper trading is unaffected either way. |
@@ -75,10 +76,139 @@ set explicitly.
 | `SOLANA_PRIVATE_KEY` | `real_trading.py`, only if armed | Base58 secret key of a dedicated trading wallet. Never written to a file, logged, or committed — env var only. |
 | `SOLANA_WALLET_ADDRESS` | `real_trading.py` (optional) | Pins the expected public key; if `SOLANA_PRIVATE_KEY` derives a different address, loading fails loudly instead of trading from an unexpected wallet. |
 | `JUPITER_API_KEY` | `real_trading.py`, only if armed | From https://developers.jup.ag/portal — required by Jupiter's Ultra Swap API (`x-api-key`). |
-| `MAX_REAL_POSITION_PCT` | `real_trading.py` (optional) | Per-position ceiling as a fraction of the CURRENT live on-chain USDC balance, recomputed on every buy — not a fixed dollar figure. Default `0.30` (30%). |
-| `MAX_TOTAL_EXPOSURE_PCT` | `real_trading.py` (optional) | Ceiling on total USDC value across every open real position combined (existing + new), as a fraction of total balance (liquid + committed), confirmed against the chain. Stops Sniper Mode's rapid-fire entries from committing the whole wallet even though each individual buy respects `MAX_REAL_POSITION_PCT`. Default `0.85` (85%, leaving a 15% floor always liquid). |
+| `MAX_REAL_POSITION_PCT` | `real_trading.py` (optional) | Per-position ceiling as a fraction of the CURRENT live on-chain USDC balance, recomputed on every buy — not a fixed dollar figure. Default `0.10` (10%; was 0.30 before the audit-hardening branch). |
+| `MAX_TOTAL_EXPOSURE_PCT` | `real_trading.py` (optional) | Ceiling on total USDC value across every open real position combined (existing + new), as a fraction of total balance (liquid + committed), confirmed against the chain. Stops Sniper Mode's rapid-fire entries from committing the whole wallet even though each individual buy respects `MAX_REAL_POSITION_PCT`. Default `0.40` (40%; was 0.85 before the audit-hardening branch). |
 | `MIN_REAL_TICKET_USDC` | `real_trading.py` (optional) | Real buys below this size are skipped (mostly fees at that point). Default `1.00`. |
 | `MIN_SOL_FOR_GAS` | `real_trading.py` (optional) | Trades are in USDC, but every Solana transaction still costs SOL for network fees — below this SOL balance, a real trade is refused outright instead of failing mid-transaction. Default `0.01`. |
+| `MAX_ENTRY_PRICE_IMPACT_PCT` | `real_trading.py` (optional) | Refuse a real buy whose Jupiter quote shows a larger \|price impact\| (percent). Default `3.0`. Jupiter reports adverse impact as a negative number, so the absolute value is used. |
+| `MAX_EXIT_PRICE_IMPACT_PCT` | `real_trading.py` (optional) | Same guard on normal sells. Default `8.0`. |
+| `STUCK_POSITION_FORCED_MAX_PRICE_IMPACT_PCT` | `real_trading.py` (optional) | Ceiling for the forced-exit path on stuck positions. Default `20`. |
+| `EXIT_ENGINE` | `ledger_bot.py` (optional) | `v2` (default, risk_engine exits) or `legacy` (pre-audit LLM/Cupsey exits, kept as a rollback). |
+| `POSITION_CHECK_SECONDS` | `ledger_bot.py` (optional) | How often open positions are re-priced and exit rules evaluated. Default `15`. |
+| `WALLET_MAX_PAGES` | `ledger_bot.py` (optional) | Pages of signatures fetched per tracked wallet per poll, so bursts of buys aren't lost. Default `3`. |
+
+### Risk engine (`risk_engine.py`)
+
+All thresholds are env-driven; defaults are deliberately conservative. Bad
+values fall back to the default. The full resolved config is printed at boot
+as `[RISK] ...`.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RISK_PER_TRADE_PCT` | `0.01` | Equity risked per trade (size = equity × risk ÷ (stop × gap buffer)). |
+| `RISK_MAX_POSITION_PCT` | `0.05` | Hard cap on a single position as a fraction of equity. |
+| `RISK_STOP_GAP_BUFFER` | `1.5` | Memecoins gap through stops; sizing assumes the realised loss is 1.5× the stop. |
+| `RISK_MIN_POSITION_SOL` | `0.01` | Below this the trade is skipped. |
+| `RISK_MAX_CONCURRENT_POSITIONS` | `4` | Open positions at once. |
+| `RISK_MAX_TOTAL_EXPOSURE_PCT` | `0.20` | Total open cost basis as a fraction of equity. |
+| `RISK_DAILY_LOSS_LIMIT_PCT` | `0.05` | Stop opening trades once today's (UTC) realised loss reaches this fraction of the day-start equity. |
+| `RISK_MAX_CONSECUTIVE_LOSSES` | `3` | Loss streak that triggers the cooldown. |
+| `RISK_LOSS_COOLDOWN_MINUTES` | `60` | Pause after the loss streak. |
+| `RISK_TOKEN_REENTRY_COOLDOWN_MINUTES` | `240` | No re-buying a token soon after exiting it. |
+| `RISK_MAX_TRADES_PER_HOUR` | `6` | Entry rate limit. |
+| `FILTER_MIN_LIQUIDITY_USD` | `15000` | Minimum pool liquidity. |
+| `FILTER_MIN_MARKET_CAP_USD` / `FILTER_MAX_MARKET_CAP_USD` | `25000` / `5000000` | Market-cap band (floor not applied to sniper candidates). |
+| `FILTER_MAX_TOP10_HOLDER_PCT` | `35` | Max supply held by the 10 largest accounts. |
+| `FILTER_REQUIRE_MINT_AUTHORITY_REVOKED` / `FILTER_REQUIRE_FREEZE_AUTHORITY_REVOKED` | `true` / `true` | Reject tokens whose creator can still mint or freeze. Dangerous Token-2022 extensions (transfer fee, transfer hook, permanent delegate, non-transferable, pausable, default account state) are always rejected. |
+| `FILTER_MAX_ENTRY_PRICE_IMPACT_PCT` | `2.0` | Estimated impact of our size against pool liquidity. |
+| `FILTER_MAX_SIGNAL_AGE_SECONDS` | `120` | Don't copy a wallet buy older than this. |
+| `FILTER_MAX_CHASE_PCT` | `0.25` | Don't copy if price already ran this much above the wallet's fill. |
+| `FILTER_FAIL_CLOSED` | `true` | Missing data (API down) = reject, not pass. |
+| `EXIT_STOP_LOSS_PCT` | `0.20` | Hard stop from entry. |
+| `EXIT_TP_LADDER` | `0.25:0.5,0.6:0.25` | `gain:fraction_of_original_size` rungs: sell half at +25%, a quarter at +60%, trail the rest. |
+| `EXIT_BREAKEVEN_AFTER_TP1` | `true` | Stop moves to entry after the first take-profit. |
+| `EXIT_TRAILING_ACTIVATION_PCT` / `EXIT_TRAILING_STOP_PCT` / `EXIT_TRAILING_STOP_TIGHT_PCT` | `0.30` / `0.25` / `0.20` | Trailing stop arms at +30%, trails 25% from peak, tightens to 20% once +100%. |
+| `EXIT_TIME_STOP_MINUTES` / `EXIT_TIME_STOP_MIN_GAIN_PCT` | `30` / `0.10` | Exit if not up 10% after 30 min. |
+| `EXIT_MAX_HOLD_HOURS` | `24` | Absolute max hold. |
+| `EXIT_NO_PRICE_WRITEOFF_MINUTES` | `60` | Close (write off) a position with no price quote for this long. |
+| `PAPER_COST_PER_SIDE_PCT` | `0.015` | Fees + slippage charged to paper fills per side, so paper PnL is realistic. |
+| `WALLET_SCORE_MIN_TRADES` / `WALLET_SCORE_MIN_EXPECTANCY_PCT` / `WALLET_SCORE_LOOKBACK_DAYS` | `5` / `0.0` / `30` | Minimum sample before a wallet's edge is trusted; lookback window (benching now uses the edge tiers below). |
+| `ALLOW_LLM_DIP_BUYS` / `MAX_DIP_BUYS` | `false` / `1` | Legacy engine only: LLM averaging down is off by default. |
+
+### Risk profiles, per-trader sizing and hard rails
+
+`RISK_PROFILE` picks a preset; any explicit variable above still overrides
+it. Load order: profile < learned `tuned_params.json` (exit params only) <
+env < **hard rails** (clamped in every profile, reported at boot as
+`rails_applied`).
+
+| | `conservative` (default) | `balanced` | `degen` | `scalper` |
+|---|---|---|---|---|
+| Sizing | 1% risk/trade, ≤5% | per-wallet edge | per-wallet edge | per-wallet edge |
+| Unknown wallet / weak / base → max / top | — | 1.5% / 0.75% / 2→4% / 5% | 2% / 1% / 3→8% / **10%** | 2% / 1% / 3→6% / 8% |
+| Sniper / own thesis size | 1% / 0.5% | 1.5% / 1% | 3% / 2% | 2% / 1% |
+| Max concurrent / exposure / daily loss | 4 / 20% / 5% | 6 / 30% / 8% | 10 / 50% / 15% | 8 / 40% / 12% |
+| Stop / TP ladder | 20% / +25%:½, +60%:¼ | 25% / +30%:40%, +80%:30% | 30% / +40%:35%, +100%:25%, +300%:15% | 10% / +12%:½, +25%:30% |
+| Trailing / time stop / max hold | +30% arms, 25% / 30 min / 24 h | +40%, 25% / 45 min / 24 h | +50%, 30% / 60 min / 48 h | +15%, 8% / 5 min / 30 min |
+| Max signal age / chase | 120 s / 25% | 150 s / 35% | 180 s / 50% | **45 s / 15%** |
+| Min liquidity (copies / sniper) | $15K / $5K | $10K / $4K | $8K / $2.5K | $10K / $4K |
+| Sniper age window | 2–45 min | 1–30 min | 30 s–15 min | 15 s–5 min |
+
+`scalper` needs fast detection: `WALLET_POLL_SECONDS` defaults to 15 for it
+(60 otherwise). Each poll is one `getSignaturesForAddress` per tracked
+wallet, so it costs RPC credits.
+
+**Per-trader edge**: every closed copy (and every shadow trade) gives
+`R = pnl% / stop%`. A wallet's score is the recency-weighted (half-life
+`EDGE_HALF_LIFE_DAYS`=7) mean R, shrunk toward 0 with
+`EDGE_PRIOR_TRADES`=5 pseudo-trades so a lucky streak doesn't earn full
+size. Tiers: `unknown` (< `WALLET_SCORE_MIN_TRADES`) → small size;
+`benched` (shrunk R < `EDGE_BENCH_R`) → not copied, shadow-traded only;
+`weak` → `EDGE_WEAK_WALLET_PCT`; `core` → linear from `EDGE_BASE_PCT` to
+`EDGE_MAX_PCT` as R approaches `EDGE_TARGET_R`; `top` (R ≥ 2×target with ≥ 2×min
+trades) → `EDGE_TOP_PCT`. Sizes are then shrunk (not refused) to fit the
+price-impact cap.
+
+**Hard rails (every profile, env can't exceed):** daily loss ≤ 20%,
+exposure ≤ 60%, any single position ≤ 10%, unknown/weak wallet ≤ 5%, sniper
+≤ 5%, own thesis ≤ 3%, price impact ≤ 5%, ≤ 15 concurrent, ≤ 30 trades/h,
+stop 5–50%; mint + freeze authority revoked and dangerous Token-2022
+extensions are always enforced. `REAL_TRADING_ENABLED` still defaults to
+`false`; real orders also stay under `real_trading.py`'s own caps.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RISK_PROFILE` | `conservative` | `conservative` \| `balanced` \| `degen`. |
+| `RISK_SIZING_MODE` | per profile | `risk` (fixed-fractional) or `edge` (per-wallet). |
+| `EDGE_UNKNOWN_WALLET_PCT`, `EDGE_WEAK_WALLET_PCT`, `EDGE_BASE_PCT`, `EDGE_MAX_PCT`, `EDGE_TOP_PCT` | per profile | Equity fraction per tier (see above). |
+| `EDGE_TARGET_R` / `EDGE_BENCH_R` / `EDGE_PRIOR_TRADES` / `EDGE_HALF_LIFE_DAYS` | `0.5` / `-0.25` / `5` / `7` | Edge scoring knobs. |
+| `SNIPER_POSITION_PCT`, `SNIPER_MIN_LIQUIDITY_USD`, `SNIPER_AGE_MIN_SECONDS`, `SNIPER_AGE_MAX_SECONDS` | per profile | Sniper sizing / liquidity floor / age window. |
+| `OWN_THESIS_POSITION_PCT` | per profile | Paper size of Ledger's own calls. |
+
+### Sniper
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SNIPER_MODE_ENABLED` | `true` | pump.fun launch feed (pumpdev WS) + migrations. |
+| `SNIPER_MIN_CONFIDENCE` | `0` | Optional LLM gate (old hard-coded 2.0 blocked every snipe without an Anthropic key). `0` = off. |
+| `SNIPER_REQUIRE_SOCIALS` | `true` | Socials are read from the launch's IPFS metadata (the WS event has none). |
+| `SNIPER_MIN_DEV_BUY_SOL` | `0.5` | Minimum creator buy (launches only). |
+| `SNIPER_MIGRATIONS_ENABLED` / `SNIPER_MIGRATION_POLL_SECONDS` | `true` / `60` | Snipe fresh pump.fun graduations (pumpswap/raydium/meteora pools of `…pump` mints) found via GeckoTerminal `new_pools`. |
+| `GT_MIN_INTERVAL_SECONDS` / `GT_CACHE_SECONDS` | `2.1` / `20` | GeckoTerminal throttle (free tier ≈ 30 req/min) and cache. GeckoTerminal is the fallback whenever DexScreener has no pair (all bonding-curve tokens). |
+
+### Learning loop, own theses, Fomo
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `LEARNING_ENABLED` | `true` | Scoring, roster promote/demote, discovery, shadow book, tuning. |
+| `LEARNING_PROMOTE_TO_REAL` | `false` | Promoted (discovered) wallets are copied on paper only unless this is `true`. |
+| `LEARNING_MAX_SHADOW_WALLETS` | `10` | Discovered wallets shadow-traded at once (each is polled like a tracked wallet: RPC cost). |
+| `LEARNING_PROMOTE_MIN_TRADES` / `LEARNING_PROMOTE_MIN_R` / `LEARNING_DROP_MAX_R` | `8` / `0.25` / `-0.10` | Shadow → active / dropped thresholds (shrunk R). |
+| `LEARNING_REINSTATE_MIN_NEW` | `5` | Benched wallet needs this many new shadow trades with R ≥ 0 to come back. |
+| `LEARNING_DISCOVERY_EVERY_MIN` / `LEARNING_DISCOVERY_MIN_PROFIT_USD` | `240` / `1000` | Discovery cadence; min realized profit on a winning token's visible trades. |
+| `LEARNING_TUNE_EVERY_HOURS` / `LEARNING_TUNE_MIN_SIGNALS` / `LEARNING_APPLY_TUNED` | `24` / `60` / `true` | Walk-forward exit tuning (`tuning.py`); accepted only if it beats current params out of sample. |
+| `TUNE_MIN_IMPROVEMENT` / `TUNE_MIN_OOS` | `0.01` / `20` | Acceptance bar: +1pp/trade over ≥ 20 out-of-sample trades. |
+| `OWN_THESIS_ENABLED` / `OWN_THESIS_EVERY_MIN` / `OWN_THESIS_MAX_PER_DAY` | `true` / `240` / `3` | Cadence of Ledger's own 🧠 THESIS cards. |
+| `OWN_THESIS_MIN_SCORE` / `OWN_THESIS_PAPER_TRADE` | `4` / `true` | Confluence bar; also open a small paper position tagged `own_thesis` (never mirrored to real). |
+| `FOMO_API_KEY` | unset | ⚠️ fomo.family's Terms forbid automated/third-party data extraction; fomoapi.io is unofficial. Preferred: track a Fomo account's public **Solana wallet address** on-chain via `wallets.json` instead. |
+| `FOMO_API_KEY` (cont.) | unset | Unofficial fomoapi.io key (free: https://fomoapi.io/dashboard). Unset = Fomo inputs disabled. |
+| `LEARNING_SEED_FILE` | `backtest/data/fomo_candidates.json` | Seed wallets (Fomo leaderboard traders) queued into shadow on boot, ordered by replay copy-score. |
+| `FOMO_HANDLES` | unset | Comma-separated public Fomo handles (e.g. your own) whose Solana wallet is resolved via the API and shadow-traded/scored like any discovered wallet. |
+| `FOMO_LEADERBOARD_PERIOD` / `FOMO_LEADERBOARD_LIMIT` / `FOMO_TRADERS_EVERY_MIN` / `FOMO_TRENDING_EVERY_MIN` | `7d` / `10` / `180` / `120` | ≈ 600 calls/month, inside the free 1,000. |
+
+Files written under `DATA_DIR`: `wallet_roster.json`, `shadow_book.json`,
+`signals.jsonl`, `learning_scores.json`, `learning_journal.jsonl`,
+`tuned_params.json` / `tuning_last_attempt.json`, `fomo_cache.json`.
 
 ## Run it
 
@@ -124,6 +254,22 @@ Pass `--wallet` more than once to inspect multiple custom wallets. Each run
 also saves the filtered data to `wallet_feed_output.json` (override with
 `--json-output PATH`).
 
+## Tests & backtest
+
+```bash
+pip install pytest
+python -m pytest -q                       # risk engine + paper engine unit tests
+python -m backtest.collect_wallet_buys     # tracked-wallet buys from RPC -> backtest/data/
+python -m backtest.fetch_prices            # GeckoTerminal minute candles + mint facts
+python -m backtest.replay                  # old vs new rules + each RISK_PROFILE, with risk of ruin
+python -m tuning --profile degen          # walk-forward exit tuning on the same data
+python -m backtest.copy_score --buys backtest/data/fomo_buys.json --prices backtest/data/fomo_prices.json \
+    --profile scalper --latency 15         # re-rank wallets by what copying them made
+python -m backtest.replay --trade-log path/to/ledger_state.json   # stats from a real state file
+```
+
+See `docs/AUDIT.md` for the audit and results.
+
 ## Status
 
 Real trade execution exists, wired to Sniper Mode and priority-copy
@@ -141,9 +287,9 @@ is denominated in; a live SOL balance below `MIN_SOL_FOR_GAS` refuses the
 trade outright (logged as a `refused` journal entry) rather than letting a
 transaction fail midway for lack of gas. Position sizing is dynamic, not a
 fixed dollar amount: every real buy is capped at `MAX_REAL_POSITION_PCT`
-(30% by default) of the current live USDC balance, recomputed fresh on every
+(10% by default) of the current live USDC balance, recomputed fresh on every
 call — never a stored number. A second, independent ceiling,
-`MAX_TOTAL_EXPOSURE_PCT` (85% by default), caps the combined USDC value
+`MAX_TOTAL_EXPOSURE_PCT` (40% by default), caps the combined USDC value
 across every open real position at once, confirmed against the chain — this
 exists because Sniper Mode can open several positions in quick succession,
 and the per-position cap alone wouldn't stop that sequence from eventually

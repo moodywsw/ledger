@@ -1,0 +1,684 @@
+{
+ "_source": "Fomo leaderboard handles: user screenshots (ALL, 30D, 2026-10-09) + public pages of unofficial trackers fomo-api.com (24h/7d/30d top 10 with wallets) and fomoindex.xyz (ALL-time wallets). Third-party handle->wallet mappings, not verified by fomo.family; verified on-chain activity by backtest/collect_wallet_buys.",
+ "_weights": "prior_weight = sum(board_weight * (11-rank)/10), board weights 7d=3, 30d=2, all=1, 24h=0.5. Prior only orders shadow slots; promotion needs our own copy-score.",
+ "candidates": [
+  {
+   "handle": "end837",
+   "solana_wallets": [
+    "5DBkonys2H4qHr5x9CCeXPLSWEFbnnLFP1RdfxjJgzvy"
+   ],
+   "boards": {
+    "24h": {
+     "rank": 10,
+     "pnl_usd": 67673
+    },
+    "7d": {
+     "rank": 2,
+     "pnl_usd": 218492
+    },
+    "30d": {
+     "rank": 8,
+     "pnl_usd": 360318
+    }
+   },
+   "prior_weight": 3.35
+  },
+  {
+   "handle": "fxcxc",
+   "solana_wallets": [],
+   "boards": {
+    "7d": {
+     "rank": 1,
+     "pnl_usd": 246763
+    }
+   },
+   "prior_weight": 3.0
+  },
+  {
+   "handle": "Iri0o",
+   "solana_wallets": [
+    "83Y8aqfDxz8XSerVACBubyinHm8rQ6REg9j5YXvT8b57"
+   ],
+   "boards": {
+    "7d": {
+     "rank": 3,
+     "pnl_usd": 202276
+    }
+   },
+   "prior_weight": 2.4,
+   "copy_score": -0.305,
+   "copy_stats": {
+    "n": 24,
+    "win_rate": 0.5416666666666666,
+    "mean_ret": -0.03685778551380258,
+    "fwd5_median": -0.006706905018046272,
+    "fwd30_median": -0.1476354474502598
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
+  },
+  {
+   "handle": "000000",
+   "solana_wallets": [
+    "5XUNoSihvRq8Crj2FbPfB5bvBHhfWoxwy8ZTH7djSroE"
+   ],
+   "boards": {
+    "7d": {
+     "rank": 4,
+     "pnl_usd": 182024
+    }
+   },
+   "prior_weight": 2.1,
+   "copy_score": -0.119,
+   "copy_stats": {
+    "n": 5,
+    "win_rate": 0.2,
+    "mean_ret": -0.023824205770083207,
+    "fwd5_median": -0.006864643082783173,
+    "fwd30_median": 0.06564809039810449
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
+  },
+  {
+   "handle": "ExactTallTakin",
+   "solana_wallets": [
+    "AGdtsMmphhymH5wYW3dWKSkAxpLYRrNDCTFAfuq8ii9v"
+   ],
+   "boards": {
+    "30d": {
+     "rank": 1,
+     "pnl_usd": 795082
+    }
+   },
+   "prior_weight": 2.0,
+   "copy_score": -1.067,
+   "copy_stats": {
+    "n": 21,
+    "win_rate": 0.3333333333333333,
+    "mean_ret": -0.13211575749409238,
+    "fwd5_median": -0.11571150340913472,
+    "fwd30_median": -0.3033032286725702
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
+  },
+  {
+   "handle": "Adolf",
+   "solana_wallets": [],
+   "boards": {
+    "7d": {
+     "rank": 5,
+     "pnl_usd": 172541
+    }
+   },
+   "prior_weight": 1.8
+  },
+  {
+   "handle": "OmakaseOnly",
+   "solana_wallets": [
+    "F5MYbjEATQFD6rxwdS2zXzEHBGuUhSGvJkUhLFAcr4hv"
+   ],
+   "boards": {
+    "30d": {
+     "rank": 2,
+     "pnl_usd": 591258
+    }
+   },
+   "prior_weight": 1.8,
+   "copy_score": 0.507,
+   "copy_stats": {
+    "n": 11,
+    "win_rate": 0.36363636363636365,
+    "mean_ret": 0.07368045811247577,
+    "fwd5_median": 0.011680595922028303,
+    "fwd30_median": -0.06290665602874324
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
+  },
+  {
+   "handle": "bystevenr",
+   "solana_wallets": [
+    "AH75Bn6QHSt5K2Ad4p1otns3JTwpSJWZTwiwKWNhmnKx"
+   ],
+   "boards": {
+    "30d": {
+     "rank": 3,
+     "pnl_usd": 530244
+    }
+   },
+   "prior_weight": 1.6,
+   "copy_score": 0.015,
+   "copy_stats": {
+    "n": 15,
+    "win_rate": 0.26666666666666666,
+    "mean_ret": 0.0019713600539903414,
+    "fwd5_median": -0.02594358528691515,
+    "fwd30_median": -0.19911172003381006
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
+  },
+  {
+   "handle": "Hifive_07",
+   "solana_wallets": [],
+   "boards": {
+    "7d": {
+     "rank": 6,
+     "pnl_usd": 143725
+    }
+   },
+   "prior_weight": 1.5
+  },
+  {
+   "handle": "DonnyDicey",
+   "solana_wallets": [
+    "2ZXtcsDXkDnWsCgBGd6zbn2TigkDBxT5uLhEGpmz37sc"
+   ],
+   "boards": {
+    "7d": {
+     "rank": 7,
+     "pnl_usd": 140089
+    },
+    "30d": {
+     "rank": 10,
+     "pnl_usd": 352372
+    }
+   },
+   "prior_weight": 1.4
+  },
+  {
+   "handle": "bigbabba",
+   "solana_wallets": [
+    "mDR91ufq4S2uSHa9E2PYL7xg4LwcQXaQFP7YK864a1z"
+   ],
+   "boards": {
+    "30d": {
+     "rank": 4,
+     "pnl_usd": 520673
+    }
+   },
+   "prior_weight": 1.4,
+   "copy_score": -0.448,
+   "copy_stats": {
+    "n": 13,
+    "win_rate": 0.23076923076923078,
+    "mean_ret": -0.061965424725308485,
+    "fwd5_median": -0.07491912924763766,
+    "fwd30_median": -0.15535441989654886
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
+  },
+  {
+   "handle": "GenerationalFumbler",
+   "solana_wallets": [
+    "Gxir4qAwqMh96gUskLkAct3fmWpdDDuwFHfwThPLofoV"
+   ],
+   "boards": {
+    "30d": {
+     "rank": 5,
+     "pnl_usd": 481673
+    }
+   },
+   "prior_weight": 1.2,
+   "copy_score": 0.104,
+   "copy_stats": {
+    "n": 1,
+    "win_rate": 1.0,
+    "mean_ret": 0.06260870340787184,
+    "fwd5_median": -0.12457615790909671,
+    "fwd30_median": 0.9709484696173531
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
+  },
+  {
+   "handle": "leo",
+   "solana_wallets": [
+    "3qBVJLMAWXCbW3nhz99T99in82zZeUHkbDeSDJThbN4Z",
+    "9LF3d3fxAbeabsxn2GLzMKqNbS1MUMtKvMcNLjTPbDNo"
+   ],
+   "boards": {
+    "30d": {
+     "rank": 6,
+     "pnl_usd": 416295
+    }
+   },
+   "prior_weight": 1.0
+  },
+  {
+   "handle": "unipcs",
+   "solana_wallets": [
+    "2heJbC32Tpfcb3nbUb5ER61K11FGZVfVGtVnDm6LDogF"
+   ],
+   "boards": {
+    "all": {
+     "rank": 1,
+     "pnl_usd": 6100000.0
+    }
+   },
+   "prior_weight": 1.0
+  },
+  {
+   "handle": "frankdegods",
+   "solana_wallets": [
+    "498g1rVnFcnjBjpfw1xyqA1WvgQXUU8RWuELjxkjAayQ"
+   ],
+   "boards": {
+    "24h": {
+     "rank": 5,
+     "pnl_usd": 84542
+    },
+    "all": {
+     "rank": 5,
+     "pnl_usd": 3200000.0
+    }
+   },
+   "prior_weight": 0.9,
+   "copy_score": 0.059,
+   "copy_stats": {
+    "n": 1,
+    "win_rate": 1.0,
+    "mean_ret": 0.03522215040378862,
+    "fwd5_median": -0.15708236189455427,
+    "fwd30_median": -0.32878081071959286
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
+  },
+  {
+   "handle": "jxnwa",
+   "solana_wallets": [],
+   "boards": {
+    "7d": {
+     "rank": 8,
+     "pnl_usd": 139142
+    }
+   },
+   "prior_weight": 0.9
+  },
+  {
+   "handle": "pointfarmcap",
+   "solana_wallets": [
+    "Beqv6dzTcjV2eodo8RRXCiCcnSYrS1vkQKhfqwHXqeit"
+   ],
+   "boards": {
+    "all": {
+     "rank": 2,
+     "pnl_usd": 3980000.0
+    }
+   },
+   "prior_weight": 0.9,
+   "copy_score": 0.098,
+   "copy_stats": {
+    "n": 3,
+    "win_rate": 0.6666666666666666,
+    "mean_ret": 0.026119647318349037,
+    "fwd5_median": 0.08140208470661536,
+    "fwd30_median": -0.030390131315781888
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
+  },
+  {
+   "handle": "USronaldcarter",
+   "solana_wallets": [
+    "6CpipySaXTAiUKDyyhWeCfYSMQLCiHrbCN1WvRv5s8kF"
+   ],
+   "boards": {
+    "30d": {
+     "rank": 7,
+     "pnl_usd": 368213
+    }
+   },
+   "prior_weight": 0.8,
+   "copy_score": -0.125,
+   "copy_stats": {
+    "n": 1,
+    "win_rate": 0.0,
+    "mean_ret": -0.07476295963966817,
+    "fwd5_median": 0.022996123036903793,
+    "fwd30_median": -0.04678797108842481
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
+  },
+  {
+   "handle": "DumbCrayonEater",
+   "solana_wallets": [
+    "5FGoPPj1nL8LCnfVnpTmreqQtqLuMXXAwuS1uahMrp8V"
+   ],
+   "boards": {
+    "all": {
+     "rank": 3,
+     "pnl_usd": 3350000.0
+    }
+   },
+   "prior_weight": 0.8,
+   "copy_score": 0.356,
+   "copy_stats": {
+    "n": 1,
+    "win_rate": 1.0,
+    "mean_ret": 0.21387761707186026,
+    "fwd5_median": 0.07646238275243045,
+    "fwd30_median": -0.21126955635770672
+   },
+   "copy_score_basis": "scalper exits @ 15s latency",
+   "source": "user request 2026-10-10: promoted to wallets.json copy list"
+  },
+  {
+   "handle": "The__Solstice",
+   "solana_wallets": [
+    "4ugDhHJ8XDXAeABmrNmGffFaLbJb9BkPyiFGVSV9ocwo"
+   ],
+   "boards": {
+    "all": {
+     "rank": 4,
+     "pnl_usd": 3300000.0
+    }
+   },
+   "prior_weight": 0.7,
+   "copy_score": -0.076,
+   "copy_stats": {
+    "n": 2,
+    "win_rate": 0.0,
+    "mean_ret": -0.026685211448265855,
+    "fwd5_median": 0.0029633628229952524,
+    "fwd30_median": -0.04336856798732558
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
+  },
+  {
+   "handle": "hitscanr",
+   "solana_wallets": [],
+   "boards": {
+    "7d": {
+     "rank": 9,
+     "pnl_usd": 137912
+    }
+   },
+   "prior_weight": 0.6
+  },
+  {
+   "handle": "ThePumponomics",
+   "solana_wallets": [
+    "3zs5nZyqTZmjvvaNTRnfNZyhNzuu7WW9BrJL31gGyPVY"
+   ],
+   "boards": {
+    "24h": {
+     "rank": 1,
+     "pnl_usd": 299879
+    }
+   },
+   "prior_weight": 0.5,
+   "copy_score": -0.255,
+   "copy_stats": {
+    "n": 1,
+    "win_rate": 0.0,
+    "mean_ret": -0.15293143581487467,
+    "fwd5_median": -0.12178019669112017,
+    "fwd30_median": 0.5466868315694526
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
+  },
+  {
+   "handle": "Salem1299534",
+   "solana_wallets": [
+    "2yXwy5Dsa1XtEXcsrkFVRJeyuWD3qKkMN3pP3p5VTW3V"
+   ],
+   "boards": {
+    "all": {
+     "rank": 6,
+     "pnl_usd": 2910000.0
+    }
+   },
+   "prior_weight": 0.5
+  },
+  {
+   "handle": "jelitics",
+   "solana_wallets": [
+    "mXvJVLBBVyi9o7E2rUAdnNzUyA7gFtabEjdKfCWRTtj"
+   ],
+   "boards": {
+    "24h": {
+     "rank": 2,
+     "pnl_usd": 107902
+    }
+   },
+   "prior_weight": 0.45,
+   "copy_score": 0.051,
+   "copy_stats": {
+    "n": 1,
+    "win_rate": 1.0,
+    "mean_ret": 0.030601276587504167,
+    "fwd5_median": 0.09373488628499027,
+    "fwd30_median": -0.18855842789341382
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
+  },
+  {
+   "handle": "inyourwalls",
+   "solana_wallets": [
+    "CBKJmhjDp7mxBYGAFWxCaPjD2BSJWpb4nQqnLd7rhSaM"
+   ],
+   "boards": {
+    "24h": {
+     "rank": 3,
+     "pnl_usd": 99200
+    }
+   },
+   "prior_weight": 0.4,
+   "copy_score": -0.095,
+   "copy_stats": {
+    "n": 3,
+    "win_rate": 0.3333333333333333,
+    "mean_ret": -0.025361301577571254,
+    "fwd5_median": -0.010882898565793053,
+    "fwd30_median": 0.2100975061029018
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
+  },
+  {
+   "handle": "0xstanczyk",
+   "solana_wallets": [
+    "EjhX8RakDRQzxg8YHAPDvVNPp2eog8bWX26KDmhivBhf"
+   ],
+   "boards": {
+    "30d": {
+     "rank": 9,
+     "pnl_usd": 356757
+    }
+   },
+   "prior_weight": 0.4
+  },
+  {
+   "handle": "theveeman",
+   "solana_wallets": [
+    "F5hkYsi8JxjyA2JHN5CA7MbnnhWubkXB2ZQB7Gkaxqs6"
+   ],
+   "boards": {
+    "all": {
+     "rank": 7,
+     "pnl_usd": 2760000.0
+    }
+   },
+   "prior_weight": 0.4,
+   "copy_score": -0.211,
+   "copy_stats": {
+    "n": 3,
+    "win_rate": 0.3333333333333333,
+    "mean_ret": -0.056301533319231635,
+    "fwd5_median": 0.03373430840432934,
+    "fwd30_median": 0.013174502804029542
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
+  },
+  {
+   "handle": "Quanterty",
+   "solana_wallets": [
+    "8f39XhhZoRD8sYb6K5K9N7iSHXkL7BDmFFQNDF3TtsEr"
+   ],
+   "boards": {
+    "24h": {
+     "rank": 4,
+     "pnl_usd": 86946
+    }
+   },
+   "prior_weight": 0.35,
+   "copy_score": -0.098,
+   "copy_stats": {
+    "n": 2,
+    "win_rate": 0.0,
+    "mean_ret": -0.0343652056439222,
+    "fwd5_median": -0.004955008861503685,
+    "fwd30_median": -0.042294125418512796
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
+  },
+  {
+   "handle": "uncsnipes",
+   "solana_wallets": [
+    "navoLmYzqYeawqsHedm5CZLAP5YXhwGW3xDchYsWqBT"
+   ],
+   "boards": {
+    "7d": {
+     "rank": 10,
+     "pnl_usd": 136330
+    }
+   },
+   "prior_weight": 0.3
+  },
+  {
+   "handle": "AvgJoesCrypto",
+   "solana_wallets": [
+    "H2QSGECp13sFLJgdTsDtayX3dk18Dm6sQMSQKcew7Xzk"
+   ],
+   "boards": {
+    "all": {
+     "rank": 8,
+     "pnl_usd": 2710000.0
+    }
+   },
+   "prior_weight": 0.3,
+   "copy_score": 0.143,
+   "copy_stats": {
+    "n": 1,
+    "win_rate": 1.0,
+    "mean_ret": 0.0857453028374372,
+    "fwd5_median": 0.08760213055407129,
+    "fwd30_median": 0.11147113032187717
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
+  },
+  {
+   "handle": "domain0X",
+   "solana_wallets": [
+    "EFeexw9qnf6Q9oTRQy3ZFTb86RJz33cT81deMBKiViSA"
+   ],
+   "boards": {
+    "24h": {
+     "rank": 6,
+     "pnl_usd": 78855
+    }
+   },
+   "prior_weight": 0.25,
+   "copy_score": -1.008,
+   "copy_stats": {
+    "n": 14,
+    "win_rate": 0.14285714285714285,
+    "mean_ret": -0.1368294002136853,
+    "fwd5_median": -0.016315455508026433,
+    "fwd30_median": -0.06347861376197717
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
+  },
+  {
+   "handle": "TradBengal",
+   "solana_wallets": [],
+   "boards": {
+    "24h": {
+     "rank": 7,
+     "pnl_usd": 78127
+    }
+   },
+   "prior_weight": 0.2
+  },
+  {
+   "handle": "Burgz",
+   "solana_wallets": [],
+   "boards": {
+    "all": {
+     "rank": 9,
+     "pnl_usd": null
+    }
+   },
+   "prior_weight": 0.2
+  },
+  {
+   "handle": "UsedFaintHare",
+   "solana_wallets": [
+    "7WvuAt8ZKmEpqNukntbiybZh352QC3XqNbDCPZQzzxZR"
+   ],
+   "boards": {
+    "24h": {
+     "rank": 8,
+     "pnl_usd": 68693
+    }
+   },
+   "prior_weight": 0.15,
+   "copy_score": -0.11,
+   "copy_stats": {
+    "n": 4,
+    "win_rate": 0.0,
+    "mean_ret": -0.0246791600021887,
+    "fwd5_median": 0.006758812603096076,
+    "fwd30_median": 0.04804162794895617
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
+  },
+  {
+   "handle": "Retirement",
+   "solana_wallets": [
+    "5MGvPrQy6ui4vFFdHp81JyVetXdhk5Sh2EvkYGe2Fgi3"
+   ],
+   "boards": {
+    "24h": {
+     "rank": 9,
+     "pnl_usd": 68329
+    }
+   },
+   "prior_weight": 0.1,
+   "copy_score": -0.37,
+   "copy_stats": {
+    "n": 7,
+    "win_rate": 0.2857142857142857,
+    "mean_ret": -0.06349190670294551,
+    "fwd5_median": -0.0025718695090707344,
+    "fwd30_median": -0.006699897182938341
+   },
+   "copy_score_basis": "scalper exits @ 15s latency"
+  },
+  {
+   "handle": "DegenCapitalLLC",
+   "solana_wallets": [
+    "4CRX74nxAdmFY4Eh1WhTrmYqHoxwxGzwXfgzTWvhUfFn"
+   ],
+   "boards": {},
+   "prior_weight": 2.0,
+   "source": "user request 2026-10-10; wallet self-described as 'my public fomo wallet' by @DegenCapitalLLC on X (via mirror zamantika.com), unverified by Fomo",
+   "paper_only": true,
+   "copy_score": 0.17,
+   "copy_score_basis": "scalper@15s, 83 copies, 2026-09-28..10-09, win 47%, +1.8%/copy after costs; @45s -3.1%/copy"
+  },
+  {
+   "handle": "OuterHeavyBat",
+   "solana_wallets": [
+    "49nvFkUxnxd4wXY5W9XygB93rzDUvugaxK5AkMqqxmgS"
+   ],
+   "evm_wallets_partial": [
+    "0x4f\u20264c55 (BNB/Robinhood Chain, full address not public)"
+   ],
+   "boards": {
+    "24h": {
+     "rank": 33,
+     "pnl_usd": 89889.0
+    }
+   },
+   "prior_weight": 1.0,
+   "source": "user request 2026-10-10 (unipcs alt); Solana wallet verified by Provadata on-chain match",
+   "copy_score_basis": "not backtested"
+  }
+ ]
+}
