@@ -93,7 +93,7 @@ def gemini_call(body: dict, key: str, timeout: int = 25) -> dict:
         except Exception:
             em = {}
         why = f"{em.get('status', '')} {str(em.get('message', ''))[:70]}".strip()
-        if r.status_code in (404, 400) and ("not found" in why.lower() or "not supported" in why.lower()):
+        if r.status_code == 404 or (r.status_code == 400 and ("not found" in why.lower() or "not supported" in why.lower() or "model" in why.lower())):
             last = f"{m}:{r.status_code} {why}"; continue
         if r.status_code != 200:
             print(f"[LLM] gemini {m} HTTP {r.status_code} {why}")
