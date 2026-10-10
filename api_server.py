@@ -128,6 +128,13 @@ def api_state():
             "avg_entry": entry_price,
             "pnl_current_sol": pnl_current,
             "thesis": pos.get("thesis", ""),
+            # additive display fields (dashboard v2)
+            "current_price": current_price,
+            "pnl_pct": ((current_price - entry_price) / entry_price) if (current_price is not None and entry_price) else None,
+            "opened_by": pos.get("opened_by", ""),
+            "source": pos.get("source", ""),
+            "opened_at": pos.get("opened_at"),
+            "moonbag": bool(pos.get("moonbag")),
         })
 
     return jsonify({
@@ -218,6 +225,99 @@ def api_journal():
 def api_theses():
     active = get_theses(statuses={"stalking", "holding"})
     return jsonify(active)
+
+
+# ── Dashboard v2: read-only aggregate endpoint ───────────────────────
+WALLETS_FILE = Path(__file__).resolve().parent / "wallets.json"
+
+
+def _parse_ts(iso):
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat(str(iso).replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
+
+
+def build_overview(state: dict, journal: list, now: float = None) -> dict:
+    """Pure function (testable): closed trades, PnL windows, equity curve,
+    per-trader stats, and the bot's own theses — all from data already on disk."""
+    import time as _t
+    now = now or _t.time()
+    log = state.get("trade_log", []) or []
+    symbols = {e.get("token"): e.get("symbol") for e in log if e.get("action") == "open" and e.get("symbol")}
+    for m, p in (state.get("open_positions") or {}).items():
+        if p.get("symbol"):
+            symbols.setdefault(m, p["symbol"])
+    closes = [e for e in log if e.get("action") in ("close", "partial_close") and isinstance(e.get("pnl_sol"), (int, float))]
+    closes.sort(key=lambda e: _parse_ts(e.get("at")) or 0)
+
+    def window(sec):
+        return sum(e["pnl_sol"] for e in closes if sec is None or (now - (_parse_ts(e.get("at")) or 0)) <= sec)
+
+    equity, cum = [], 0.0
+    for e in closes:
+        cum += e["pnl_sol"]
+        equity.append({"t": e.get("at"), "v": round(cum, 6)})
+
+    recent = [{
+        "token": e.get("token"), "symbol": symbols.get(e.get("token")) or (e.get("token") or "")[:6],
+        "action": e.get("action"), "pnl_sol": e.get("pnl_sol"), "reason": e.get("reason", ""),
+        "opened_by": e.get("opened_by", ""), "at": e.get("at"), "fraction_sold": e.get("fraction_sold"),
+    } for e in reversed(closes[-30:])]
+
+    by_trader = {}
+    for e in closes:
+        if e.get("action") != "close":
+            continue
+        k = (e.get("opened_by") or "").lower()
+        d = by_trader.setdefault(k, {"n": 0, "wins": 0, "pnl": 0.0})
+        d["n"] += 1; d["wins"] += e["pnl_sol"] >= 0; d["pnl"] += e["pnl_sol"]
+
+    traders = []
+    try:
+        wl = json.loads(WALLETS_FILE.read_text()).get("wallets", [])
+    except Exception:
+        wl = []
+    for w in wl:
+        h = w.get("handle", "")
+        st = by_trader.get(h.lower()) or by_trader.get((w.get("address") or "").lower()) or {"n": 0, "wins": 0, "pnl": 0.0}
+        chains = [c for c, a in (w.get("chains") or {}).items() if a and c in ("solana", "base", "bsc", "robinhood")] or (["solana"] if w.get("address") else [])
+        traders.append({
+            "handle": h, "active": bool(w.get("active", True)), "chains": chains,
+            "trades": st["n"], "hit_rate": (st["wins"] / st["n"]) if st["n"] else None, "pnl_sol": round(st["pnl"], 6),
+        })
+
+    own = []
+    for e in journal or []:
+        m = e.get("meta") or {}
+        if m.get("own_thesis"):
+            own.append({"symbol": e.get("token_ticker"), "at": e.get("timestamp"), "score": m.get("score"),
+                        "conviction": m.get("conviction"), "why": m.get("why") or [], "regime": m.get("regime")})
+    return {
+        "pnl_sol": {"today": window(86400), "d7": window(7 * 86400), "all": state.get("realized_pnl_sol", window(None))},
+        "equity": equity[-300:], "closed_trades": recent, "traders": traders, "own_theses": own[:20],
+        "wins": sum(1 for e in closes if e.get("action") == "close" and e["pnl_sol"] >= 0),
+        "losses": sum(1 for e in closes if e.get("action") == "close" and e["pnl_sol"] < 0),
+    }
+
+
+@app.route("/api/overview")
+def api_overview():
+    return jsonify(build_overview(load_state(), get_recent_journal(limit=500)))
+
+
+@app.route("/api/fomo_theses")
+def api_fomo_theses():
+    """Fomo theses by tracked traders (empty when no FOMO API key is configured)."""
+    try:
+        import fomo, fomo_theses
+        if not fomo.enabled():
+            return jsonify({"enabled": False, "theses": []})
+        handles = {w.get("handle", "") for w in json.loads(WALLETS_FILE.read_text()).get("wallets", []) if w.get("active", True)}
+        return jsonify({"enabled": True, "theses": fomo_theses.recent_tracked(handles)})
+    except Exception as e:
+        return jsonify({"enabled": False, "theses": [], "error": str(e)[:200]})
 
 
 def start_api_server():

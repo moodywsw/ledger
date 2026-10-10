@@ -1,313 +1,48 @@
-:root {
-  --bg: #0a0d10;
-  --panel: #10151a;
-  --border: #1f2933;
-  --text: #d6dee5;
-  --text-dim: #6b7885;
-  --accent: #3b82f6;
-  --green: #34d399;
-  --red: #f87171;
-  --amber: #f59e0b;
-  /* Trade-state palette — shared with ledger_bot.py's COLOR_BUY/PROFIT/LOSS
-     and the leading square emoji (🟦/🟢/🔴) on Discord OPENED/CLOSED
-     titles, so "open/profit/loss" reads the same color everywhere. --open
-     is dedicated to this (not reusing --accent) so it doesn't also shift
-     the brand/ticker/paper-filter accent color. --green/--red above serve
-     double duty as the same trade-profit/trade-loss colors. */
-  --open: #60a5fa;
-  /* Same magenta as COLOR_REAL in ledger_bot.py — one color means "real
-     money" everywhere in the system, not just here. */
-  --real: #ec4899;
-  --mono: "SF Mono", "Cascadia Code", "Consolas", "Menlo", monospace;
-}
-
-* { box-sizing: border-box; }
-
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--mono);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.topbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 16px;
-  padding: 16px 24px;
-  border-bottom: 1px solid var(--border);
-  background: var(--panel);
-}
-
-.brand {
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: 2px;
-  color: var(--accent);
-}
-
-.brand-sub {
-  font-weight: 400;
-  font-size: 11px;
-  letter-spacing: 0.5px;
-  color: var(--text-dim);
-  margin-left: 10px;
-}
-
-.stats-row {
-  display: flex;
-  gap: 28px;
-  flex-wrap: wrap;
-  align-items: center;
-}
-
-.stats-group {
-  display: flex;
-  gap: 20px;
-  align-items: center;
-  padding: 6px 14px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-}
-
-.group-badge {
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  padding: 3px 7px;
-  border-radius: 3px;
-}
-
-.badge-real { background: rgba(236,72,153,0.18); color: var(--real); }
-.badge-paper { background: rgba(107,120,133,0.18); color: var(--text-dim); }
-
-.badge-real.unarmed { background: rgba(107,120,133,0.18); color: var(--text-dim); }
-
-.stat {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.stat-label {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  color: var(--text-dim);
-}
-
-.stat-value {
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.conn .stat-value {
-  font-size: 13px;
-  color: var(--amber);
-}
-
-.conn .stat-value.ok { color: var(--green); }
-.conn .stat-value.err { color: var(--red); }
-
-.columns {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 1px;
-  background: var(--border);
-}
-
-@media (max-width: 800px) {
-  .columns { grid-template-columns: 1fr; }
-}
-
-.panel {
-  background: var(--panel);
-  padding: 16px 20px 20px;
-}
-
-#panel-trades .panel-body {
-  max-height: 480px;
-  overflow-y: auto;
-}
-
-.panel h2 {
-  margin: 0 0 12px;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 1.5px;
-  color: var(--text-dim);
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 8px;
-}
-
-.panel-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 10px;
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 8px;
-  margin-bottom: 12px;
-}
-
-.panel-header h2 {
-  margin: 0;
-  border-bottom: none;
-  padding-bottom: 0;
-}
-
-.panel-header-note {
-  text-transform: none;
-  letter-spacing: normal;
-  font-weight: 400;
-}
-
-/* Filters both Live Thoughts and Trades at once — one control, one
-   consistent lens, so the two panels can never disagree about which
-   mode is being viewed. */
-.filter-toggle {
-  display: flex;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  overflow: hidden;
-}
-
-.filter-btn {
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  padding: 5px 12px;
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-}
-
-.filter-btn + .filter-btn { border-left: 1px solid var(--border); }
-
-.filter-btn.filter-real.active { background: rgba(236,72,153,0.18); color: var(--real); }
-.filter-btn.filter-paper.active { background: rgba(59,130,246,0.15); color: var(--accent); }
-
-.panel-wide {
-  border-bottom: 1px solid var(--border);
-  max-height: 320px;
-  overflow-y: auto;
-}
-
-.empty {
-  color: var(--text-dim);
-  font-style: italic;
-  padding: 8px 0;
-}
-
-.card {
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 10px 12px;
-  margin-bottom: 8px;
-}
-
-.card-title {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  font-weight: 700;
-  margin-bottom: 4px;
-}
-
-.ticker { color: var(--accent); }
-
-.pnl-pos { color: var(--green); }
-.pnl-neg { color: var(--red); }
-.pnl-zero { color: var(--text-dim); }
-
-.card-meta {
-  color: var(--text-dim);
-  font-size: 11px;
-  margin-bottom: 6px;
-}
-
-.card-thesis {
-  color: var(--text);
-  font-size: 12px;
-}
-
-.status-badge {
-  display: inline-block;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  padding: 2px 6px;
-  border-radius: 3px;
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-}
-
-.status-holding { color: var(--green); border-color: var(--green); }
-.status-stalking { color: var(--amber); border-color: var(--amber); }
-
-.journal-entry {
-  display: flex;
-  gap: 10px;
-  padding: 6px 0 6px 8px;
-  border-bottom: 1px solid var(--border);
-  border-left: 3px solid transparent;
-}
-
-.journal-entry:last-child { border-bottom: none; }
-
-/* Trades panel only (see classifyEntry/tradeClass in app.js) — position
-   opened (or added to: TOPPED UP, a real buy) vs. a close's realized
-   pnl sign. Same palette as ledger_bot.py's COLOR_BUY/PROFIT/LOSS and
-   Discord's leading 🟦/🟢/🔴 title emoji. */
-.journal-entry.trade-open { border-left-color: var(--open); }
-.journal-entry.trade-profit { border-left-color: var(--green); }
-.journal-entry.trade-loss { border-left-color: var(--red); }
-
-.journal-entry.trade-open .journal-text strong { color: var(--open); }
-.journal-entry.trade-profit .journal-text strong { color: var(--green); }
-.journal-entry.trade-loss .journal-text strong { color: var(--red); }
-
-.journal-time {
-  color: var(--text-dim);
-  white-space: nowrap;
-  font-size: 11px;
-}
-
-.journal-kind {
-  white-space: nowrap;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  padding: 2px 6px;
-  border-radius: 3px;
-  height: fit-content;
-}
-
-.kind-did { background: rgba(59,130,246,0.15); color: var(--accent); }
-.kind-did_real { background: rgba(236,72,153,0.18); color: var(--real); }
-.kind-refused { background: rgba(239,68,68,0.15); color: var(--red); }
-.kind-read { background: rgba(245,158,11,0.15); color: var(--amber); }
-.kind-commentary { background: rgba(107,120,133,0.15); color: var(--text-dim); }
-
-.journal-text {
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-/* ── ON/OFF kill switch ── */
-.switch-panel{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
-.switch-status{font-size:20px;font-weight:700}
-.switch-note{display:block;font-size:12px;font-weight:400;opacity:.7;margin-top:4px}
-.switch-state.on{color:#2ecc71}.switch-state.off{color:#e74c3c}
-.switch-btn{font-size:24px;font-weight:800;padding:18px 48px;border:none;border-radius:12px;cursor:pointer;color:#fff;min-width:260px}
-.switch-btn.turn-off{background:#e74c3c}.switch-btn.turn-on{background:#2ecc71}
-.switch-btn:disabled{opacity:.5;cursor:wait}
+:root{--bg:#07090d;--card:#0e1218;--card2:#121821;--line:#1c2430;--txt:#e6edf6;--mut:#7d8a9c;--pos:#22d39b;--neg:#ff5c7a;--acc:#7c8cff;--warn:#f5b84b;--r:16px}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.5 Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.bg-glow{position:fixed;inset:-20% -10% auto;height:520px;background:radial-gradient(600px 300px at 20% 0,rgba(124,140,255,.16),transparent 70%),radial-gradient(500px 260px at 85% 10%,rgba(34,211,155,.10),transparent 70%);pointer-events:none;z-index:0}
+.mono{font-family:"JetBrains Mono",ui-monospace,monospace}.muted{color:var(--mut);font-size:12px}
+.topbar{position:sticky;top:0;z-index:5;display:flex;justify-content:space-between;align-items:center;padding:14px 22px;background:rgba(7,9,13,.75);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.brand{display:flex;gap:12px;align-items:center}.logo{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;font-weight:800;background:linear-gradient(135deg,var(--acc),var(--pos));color:#05070a}
+.brand-name{font-weight:700;font-size:16px}.brand-sub{color:var(--mut);font-size:12px}
+.conn{display:flex;gap:8px;align-items:center;font-size:12px}.dot{width:8px;height:8px;border-radius:50%;background:var(--mut)}.dot.ok{background:var(--pos);box-shadow:0 0 10px var(--pos)}.dot.err{background:var(--neg)}
+.wrap{position:relative;z-index:1;max-width:1180px;margin:0 auto;padding:22px;display:flex;flex-direction:column;gap:18px}
+.card{background:linear-gradient(180deg,var(--card2),var(--card));border:1px solid var(--line);border-radius:var(--r);padding:18px}
+.card-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}h2{margin:0;font-size:15px;font-weight:600}
+.label{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:600}.label.pad{margin:0 0 8px}
+.hero{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:26px}
+.status-line{display:flex;align-items:center;gap:14px;margin:6px 0}.switch-state{font-size:44px;font-weight:800;letter-spacing:-.02em}
+.switch-state.on{color:var(--pos)}.switch-state.off{color:var(--neg)}
+.pulse{width:14px;height:14px;border-radius:50%;background:var(--mut)}.pulse.on{background:var(--pos);animation:p 1.8s infinite}.pulse.off{background:var(--neg)}
+@keyframes p{0%{box-shadow:0 0 0 0 rgba(34,211,155,.6)}100%{box-shadow:0 0 0 16px rgba(34,211,155,0)}}
+.hero-note{color:var(--mut);max-width:460px}.chips{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.chip{font-size:11px;font-weight:600;padding:4px 10px;border-radius:999px;border:1px solid var(--line);background:#0a0e14;color:var(--mut)}.chip.real{color:var(--pos);border-color:rgba(34,211,155,.4)}.chip.warn{color:var(--warn);border-color:rgba(245,184,75,.4)}
+.hero-right{text-align:center}.switch{width:110px;height:56px;border-radius:999px;border:1px solid var(--line);background:#1a202b;position:relative;cursor:pointer;transition:.25s}
+.switch .knob{position:absolute;top:5px;left:5px;width:44px;height:44px;border-radius:50%;background:#e6edf6;transition:.25s;box-shadow:0 4px 14px rgba(0,0,0,.5)}
+.switch.on{background:linear-gradient(90deg,#16a37a,var(--pos))}.switch.on .knob{left:59px}.switch:disabled{opacity:.6;cursor:wait}
+.switch-caption{margin-top:8px;font-size:12px;color:var(--mut)}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.kpi .big{font-size:24px;font-weight:600;margin:6px 0 2px}.kpi .sub{color:var(--mut);font-size:12px}
+.pos{color:var(--pos)}.neg{color:var(--neg)}.zero{color:var(--txt)}
+.chart{height:200px}.chart svg{width:100%;height:100%;display:block}.chart .empty{height:100%;display:grid;place-items:center}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}.grid2.inner{gap:14px}
+.count{background:#0a0e14;border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:12px}
+.pos-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.pcard{border:1px solid var(--line);border-radius:12px;padding:14px;background:#0a0e14}
+.pcard .top{display:flex;justify-content:space-between;align-items:baseline}.tk{font-weight:700;font-size:16px}.pp{font-size:18px;font-weight:600}
+.pcard .rows{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;margin-top:8px;font-size:12px}.pcard .rows span:nth-child(odd){color:var(--mut)}.pcard .rows span:nth-child(even){text-align:right}
+.tag{font-size:10px;font-weight:700;padding:2px 7px;border-radius:6px;margin-left:6px;vertical-align:middle}.tag.moon{background:rgba(124,140,255,.15);color:var(--acc)}
+.list{display:flex;flex-direction:column;gap:6px}.feed{max-height:380px;overflow:auto}
+.row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;background:#0a0e14;border:1px solid transparent}.row:hover{border-color:var(--line)}
+.row .l{min-width:0}.row .t{font-weight:600}.row .m{color:var(--mut);font-size:12px;overflow:hidden;text-overflow:ellipsis}
+.empty{color:var(--mut);padding:18px;text-align:center;border:1px dashed var(--line);border-radius:12px;font-size:13px}
+.traders{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px}
+.tr{padding:12px;border-radius:12px;background:#0a0e14;border:1px solid var(--line)}.tr.off{opacity:.45}.tr .h{display:flex;justify-content:space-between;gap:6px;font-weight:600;word-break:break-word}.tr .h .st{flex-shrink:0;align-self:flex-start}
+.st{font-size:10px;font-weight:700;padding:2px 7px;border-radius:6px}.st.on{background:rgba(34,211,155,.12);color:var(--pos)}.st.off{background:#1a202b;color:var(--mut)}
+.chains{display:flex;gap:4px;margin:8px 0;flex-wrap:wrap}.cn{font-size:10px;padding:1px 6px;border-radius:5px;background:#151b25;color:var(--mut)}
+.bar{height:4px;background:#1a202b;border-radius:4px;overflow:hidden;margin-top:6px}.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--acc),var(--pos))}
+.tabs{display:flex;background:#0a0e14;border:1px solid var(--line);border-radius:10px;padding:3px}.tab{border:0;background:none;color:var(--mut);font:600 12px Inter;padding:6px 12px;border-radius:7px;cursor:pointer}.tab.active{background:#1a2230;color:var(--txt)}
+.thesis{padding:14px;border-radius:12px;background:#0a0e14;border-left:3px solid var(--acc)}.thesis .m{color:var(--mut);font-size:12px;margin-bottom:4px}.thesis ul{margin:6px 0 0;padding-left:18px;color:#c9d3e0}
+.jt{font-size:11px;color:var(--mut);white-space:nowrap}.jtrade-profit{border-left:3px solid var(--pos)}.jtrade-loss{border-left:3px solid var(--neg)}.jtrade-open{border-left:3px solid var(--acc)}
+.foot{text-align:center;color:var(--mut);font-size:12px;padding:10px}
+@media(max-width:900px){.kpis{grid-template-columns:1fr 1fr}.grid2{grid-template-columns:1fr}}
+@media(max-width:560px){.wrap{padding:14px}.hero{flex-direction:column;align-items:flex-start}.hero-right{align-self:stretch;display:flex;align-items:center;gap:12px}.switch-state{font-size:36px}.kpi .big{font-size:19px}.brand-sub{display:none}}

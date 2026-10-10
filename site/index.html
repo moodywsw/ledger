@@ -1,98 +1,83 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Ledger — Live Dashboard</title>
+<meta name="theme-color" content="#07090d">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<div class="bg-glow"></div>
 <header class="topbar">
-  <div class="brand">LEDGER<span class="brand-sub">// paper + real trading, live</span></div>
-  <div class="stats-row">
-    <div class="stats-group">
-      <span class="group-badge badge-real" id="real-armed-badge">REAL</span>
-      <div class="stat">
-        <span class="stat-label">USDC Balance</span>
-        <span class="stat-value" id="stat-real-balance">—</span>
-      </div>
-      <div class="stat">
-        <span class="stat-label">Real PnL</span>
-        <span class="stat-value" id="stat-real-pnl">—</span>
-      </div>
-      <div class="stat">
-        <span class="stat-label">Real Positions</span>
-        <span class="stat-value" id="stat-real-open-count">—</span>
-      </div>
-      <div class="stat">
-        <span class="stat-label">Gas (SOL)</span>
-        <span class="stat-value" id="stat-real-gas">—</span>
-      </div>
-    </div>
-    <div class="stats-group">
-      <span class="group-badge badge-paper">PAPER</span>
-      <div class="stat">
-        <span class="stat-label">Balance</span>
-        <span class="stat-value" id="stat-balance">—</span>
-      </div>
-      <div class="stat">
-        <span class="stat-label">Realized PnL</span>
-        <span class="stat-value" id="stat-pnl">—</span>
-      </div>
-      <div class="stat">
-        <span class="stat-label">Open Positions</span>
-        <span class="stat-value" id="stat-open-count">—</span>
-      </div>
-    </div>
-    <div class="stat conn">
-      <span class="stat-label">Status</span>
-      <span class="stat-value" id="conn-status">connecting…</span>
-    </div>
-  </div>
+  <div class="brand"><div class="logo">L</div><div><div class="brand-name">Ledger</div><div class="brand-sub">Copy-trading agent · Solana</div></div></div>
+  <div class="conn"><span class="dot" id="conn-dot"></span><span id="conn-status">connecting…</span><span class="muted" id="last-update"></span></div>
 </header>
 
-<section class="panel panel-wide switch-panel" id="panel-switch">
-  <div class="switch-status">Bot: <span id="switch-state" class="switch-state">…</span>
-    <span class="switch-note">OFF = no new buys; open positions keep their stops/exits</span></div>
-  <button id="switch-btn" class="switch-btn" type="button" disabled>…</button>
-</section>
-
-<section class="panel panel-wide" id="panel-live-thoughts">
-  <div class="panel-header">
-    <h2>Live Thoughts <span class="panel-header-note">&amp; Trades</span></h2>
-    <div class="filter-toggle" id="activity-filter">
-      <button class="filter-btn filter-real active" data-filter="real" type="button">REAL</button>
-      <button class="filter-btn filter-paper" data-filter="paper" type="button">PAPER</button>
+<main class="wrap">
+  <!-- HERO: status + switch -->
+  <section class="hero card">
+    <div class="hero-left">
+      <div class="label">Bot status</div>
+      <div class="status-line"><span class="pulse" id="status-pulse"></span><span id="switch-state" class="switch-state">…</span></div>
+      <div class="hero-note" id="switch-note">Checking…</div>
+      <div class="chips"><span class="chip" id="real-armed-badge">REAL</span><span class="chip" id="chip-open">0 open</span><span class="chip" id="chip-wl">—</span></div>
     </div>
+    <div class="hero-right">
+      <button id="switch-btn" class="switch" type="button" disabled aria-label="Toggle bot"><span class="knob"></span></button>
+      <div class="switch-caption" id="switch-caption">…</div>
+    </div>
+  </section>
+
+  <!-- KPIs -->
+  <section class="kpis">
+    <div class="card kpi"><div class="label">Wallet (USDC)</div><div class="big mono" id="stat-real-balance">—</div><div class="sub">Gas <span class="mono" id="stat-real-gas">—</span></div></div>
+    <div class="card kpi"><div class="label">Real realized PnL</div><div class="big mono" id="stat-real-pnl">—</div><div class="sub">Exposure <span class="mono" id="stat-exposure">—</span></div></div>
+    <div class="card kpi"><div class="label">Engine PnL · today</div><div class="big mono" id="pnl-today">—</div><div class="sub">7d <span class="mono" id="pnl-7d">—</span> · all <span class="mono" id="pnl-all">—</span></div></div>
+    <div class="card kpi"><div class="label">Win / loss</div><div class="big mono" id="winloss">—</div><div class="sub">Paper balance <span class="mono" id="stat-balance">—</span></div></div>
+  </section>
+
+  <section class="card chart-card">
+    <div class="card-head"><h2>Equity curve</h2><span class="muted">cumulative realized PnL (SOL)</span></div>
+    <div id="equity-chart" class="chart"></div>
+  </section>
+
+  <div class="grid2">
+    <section class="card">
+      <div class="card-head"><h2>Open positions</h2><span class="count" id="stat-open-count">0</span></div>
+      <div id="positions-body" class="pos-grid"></div>
+    </section>
+    <section class="card">
+      <div class="card-head"><h2>Recent closed trades</h2></div>
+      <div id="closed-body" class="list"></div>
+    </section>
   </div>
-  <div class="panel-body" id="live-thoughts-body">
-    <div class="empty">No live thoughts yet.</div>
-  </div>
-</section>
 
-<main class="columns">
-  <section class="panel" id="panel-positions">
-    <h2>Open Positions</h2>
-    <div class="panel-body" id="positions-body">
-      <div class="empty">No open positions.</div>
-    </div>
+  <section class="card">
+    <div class="card-head"><h2>Copied traders</h2><span class="muted" id="traders-sum"></span></div>
+    <div id="traders-body" class="traders"></div>
   </section>
 
-  <section class="panel" id="panel-theses">
-    <h2>Active Theses</h2>
-    <div class="panel-body" id="theses-body">
-      <div class="empty">No active theses.</div>
+  <section class="card">
+    <div class="card-head"><h2>Theses</h2>
+      <div class="tabs" id="thesis-tabs"><button class="tab active" data-t="fomo">Fomo traders</button><button class="tab" data-t="own">Ledger's own</button><button class="tab" data-t="active">Active</button></div>
     </div>
+    <div id="theses-body" class="list"></div>
   </section>
 
-  <section class="panel" id="panel-trades">
-    <h2>Trades</h2>
-    <div class="panel-body" id="trades-body">
-      <div class="empty">No trades yet.</div>
+  <section class="card">
+    <div class="card-head"><h2>Live activity</h2>
+      <div class="tabs" id="activity-filter"><button class="tab filter-btn active" data-filter="real">Real</button><button class="tab filter-btn" data-filter="paper">Paper</button></div>
+    </div>
+    <div class="grid2 inner">
+      <div><div class="label pad">Trades</div><div id="trades-body" class="list feed"></div></div>
+      <div><div class="label pad">Thoughts</div><div id="live-thoughts-body" class="list feed"></div></div>
     </div>
   </section>
+  <footer class="foot">Ledger · read-only dashboard · auto-refresh every 10s</footer>
 </main>
-
 <script src="app.js"></script>
 </body>
 </html>

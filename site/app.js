@@ -1,289 +1,172 @@
-// ── Config ──────────────────────────────────────────────────────────
-// Empty string: the dashboard is now served by the same Flask process
-// as the API (api_server.py), on the same origin, so fetch("/api/...")
-// already resolves correctly without a host to specify.
+// Ledger dashboard v2 — vanilla JS, no build step. Same-origin API.
 const API_BASE_URL = "";
-
 const POLL_INTERVAL_MS = 10_000;
+const $ = id => document.getElementById(id);
 
-// ── Helpers ─────────────────────────────────────────────────────────
+function esc(s) { const d = document.createElement("div"); d.textContent = s ?? ""; return d.innerHTML; }
+function num(v, d = 4) { return (v === null || v === undefined || isNaN(v)) ? "—" : Number(v).toFixed(d); }
+function sol(v, d = 4) { return v == null ? "—" : `${v > 0 ? "+" : ""}${num(v, d)} SOL`; }
+function solPlain(v, d = 3) { return v == null ? "—" : `${num(v, d)} SOL`; }
+function usd(v, signed = false) { if (v == null) return "—"; const s = signed && v > 0 ? "+" : ""; return `${s}${v < 0 ? "-" : ""}$${Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
+function pct(v) { return v == null ? "—" : `${v > 0 ? "+" : ""}${(v * 100).toFixed(1)}%`; }
+function cls(v) { return v == null || v === 0 ? "zero" : v > 0 ? "pos" : "neg"; }
+function price(v) { if (v == null) return "—"; return v < 0.001 ? Number(v).toExponential(2) : Number(v).toPrecision(4); }
+function ago(iso) { const t = new Date(iso).getTime(); if (!t) return ""; const s = (Date.now() - t) / 1000;
+  if (s < 60) return `${Math.floor(s)}s ago`; if (s < 3600) return `${Math.floor(s / 60)}m ago`; if (s < 86400) return `${Math.floor(s / 3600)}h ago`; return `${Math.floor(s / 86400)}d ago`; }
+function setVal(id, text, c) { const el = $(id); el.textContent = text; if (c !== undefined) el.className = `${el.className.replace(/\b(pos|neg|zero)\b/g, "").trim()} ${c}`; }
+async function fetchJson(path) { const r = await fetch(`${API_BASE_URL}${path}`); if (!r.ok) throw new Error(`${path} → HTTP ${r.status}`); return r.json(); }
+const empty = t => `<div class="empty">${t}</div>`;
 
-function fmtSol(value, decimals = 4) {
-  if (value === null || value === undefined) return "—";
-  return `${value.toFixed(decimals)} SOL`;
-}
-
-function fmtUsdc(value, decimals = 2) {
-  if (value === null || value === undefined) return "—";
-  return `$${value.toFixed(decimals)}`;
-}
-
-function pnlClass(value) {
-  if (value === null || value === undefined) return "pnl-zero";
-  if (value > 0) return "pnl-pos";
-  if (value < 0) return "pnl-neg";
-  return "pnl-zero";
-}
-
-function fmtTime(isoString) {
-  try {
-    const d = new Date(isoString);
-    return d.toLocaleString(undefined, {
-      month: "short", day: "numeric",
-      hour: "2-digit", minute: "2-digit", second: "2-digit",
-    });
-  } catch {
-    return isoString;
-  }
-}
-
-function escapeHtml(str) {
-  const div = document.createElement("div");
-  div.textContent = str ?? "";
-  return div.innerHTML;
-}
-
-async function fetchJson(path) {
-  const resp = await fetch(`${API_BASE_URL}${path}`);
-  if (!resp.ok) throw new Error(`${path} → HTTP ${resp.status}`);
-  return resp.json();
+// ── Equity chart (inline SVG) ───────────────────────────────────────
+function renderEquity(points) {
+  const el = $("equity-chart");
+  if (!points || points.length < 2) { el.innerHTML = empty("The curve appears after the first closed trades."); return; }
+  const W = 1000, H = 200, P = 8, vs = points.map(p => p.v), vals = [0, ...vs];
+  const min = Math.min(...vals), max = Math.max(...vals), span = (max - min) || 1;
+  const x = i => P + (i / (vals.length - 1)) * (W - 2 * P), y = v => H - P - ((v - min) / span) * (H - 2 * P);
+  const line = vals.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("");
+  const up = vals[vals.length - 1] >= 0, col = up ? "#22d39b" : "#ff5c7a";
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+    <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${col}" stop-opacity=".35"/><stop offset="1" stop-color="${col}" stop-opacity="0"/></linearGradient></defs>
+    <line x1="0" x2="${W}" y1="${y(0)}" y2="${y(0)}" stroke="#2a3342" stroke-dasharray="4 6"/>
+    <path d="${line}L${x(vals.length - 1)},${H}L${x(0)},${H}Z" fill="url(#g)"/>
+    <path d="${line}" fill="none" stroke="${col}" stroke-width="2.5" vector-effect="non-scaling-stroke"/></svg>`;
 }
 
 // ── Renderers ───────────────────────────────────────────────────────
-
 function renderState(state) {
-  document.getElementById("stat-balance").textContent = fmtSol(state.balance_sol);
-  const pnlEl = document.getElementById("stat-pnl");
-  pnlEl.textContent = fmtSol(state.realized_pnl_sol, 4);
-  pnlEl.className = `stat-value ${pnlClass(state.realized_pnl_sol)}`;
+  setVal("stat-balance", solPlain(state.balance_sol, 2));
+  const ps = state.open_positions || [];
+  $("stat-open-count").textContent = ps.length; $("chip-open").textContent = `${ps.length} open`;
+  $("positions-body").innerHTML = ps.length ? ps.map(p => `
+    <div class="pcard">
+      <div class="top"><span class="tk">${esc(p.ticker)}${p.moonbag ? '<span class="tag moon">🌙 MOONBAG</span>' : ""}</span>
+        <span class="pp mono ${cls(p.pnl_pct)}">${pct(p.pnl_pct)}</span></div>
+      <div class="rows mono">
+        <span>Entry</span><span>$${price(p.avg_entry)}</span>
+        <span>Now</span><span>$${price(p.current_price)}</span>
+        <span>Size</span><span>${solPlain(p.size_sol, 3)}</span>
+        <span>PnL</span><span class="${cls(p.pnl_current_sol)}">${sol(p.pnl_current_sol)}</span>
+        <span>Copied</span><span>${esc(p.opened_by || p.source || "—")}</span>
+      </div>
+    </div>`).join("") : empty("No open positions — waiting for a signal.");
+}
 
-  const positions = state.open_positions || [];
-  document.getElementById("stat-open-count").textContent = positions.length;
+function renderRealState(r) {
+  const b = $("real-armed-badge"); b.textContent = r.armed ? "REAL MONEY · ARMED" : "REAL · UNARMED"; b.className = `chip ${r.armed ? "real" : "warn"}`;
+  setVal("stat-real-balance", usd(r.balance_usdc));
+  setVal("stat-real-gas", solPlain(r.balance_sol, 3));
+  setVal("stat-real-pnl", usd(r.realized_pnl_usdc, true), cls(r.realized_pnl_usdc));
+  setVal("stat-exposure", usd(r.exposure_usdc));
+}
 
-  const body = document.getElementById("positions-body");
-  if (positions.length === 0) {
-    body.innerHTML = `<div class="empty">No open positions.</div>`;
-    return;
+let overview = null, fomoTheses = { enabled: false, theses: [] }, activeTheses = [], thesisTab = "fomo";
+function renderOverview(o) {
+  overview = o;
+  setVal("pnl-today", sol(o.pnl_sol.today, 3), cls(o.pnl_sol.today));
+  setVal("pnl-7d", sol(o.pnl_sol.d7, 3), cls(o.pnl_sol.d7));
+  setVal("pnl-all", sol(o.pnl_sol.all, 3), cls(o.pnl_sol.all));
+  const tot = o.wins + o.losses;
+  $("winloss").textContent = tot ? `${o.wins} / ${o.losses} · ${Math.round(o.wins / tot * 100)}%` : "—";
+  renderEquity(o.equity);
+  $("closed-body").innerHTML = o.closed_trades.length ? o.closed_trades.slice(0, 12).map(t => `
+    <div class="row"><div class="l"><div class="t">${esc(t.symbol)} <span class="muted">${t.action === "partial_close" ? "partial" : ""}</span></div>
+      <div class="m">${esc(t.reason || "exit")} · ${esc(t.opened_by || "—")} · ${ago(t.at)}</div></div>
+      <div class="mono ${cls(t.pnl_sol)}">${sol(t.pnl_sol)}</div></div>`).join("") : empty("No closed trades yet.");
+  const tr = [...o.traders].sort((a, b) => (b.active - a.active) || (b.trades - a.trades));
+  $("traders-sum").textContent = `${tr.filter(t => t.active).length} active · ${tr.filter(t => !t.active).length} paused`;
+  $("chip-wl").textContent = `${tr.filter(t => t.active).length} traders copied`;
+  $("traders-body").innerHTML = tr.map(t => `
+    <div class="tr ${t.active ? "" : "off"}"><div class="h"><span>${esc(t.handle.replace(/^fomo:/i, ""))}</span><span class="st ${t.active ? "on" : "off"}">${t.active ? "ACTIVE" : "PAUSED"}</span></div>
+      <div class="chains">${t.chains.map(c => `<span class="cn">${esc(c)}</span>`).join("")}</div>
+      <div class="muted">${t.trades ? `${t.trades} trades · hit ${Math.round(t.hit_rate * 100)}% · <span class="${cls(t.pnl_sol)}">${sol(t.pnl_sol, 3)}</span>` : "No trades yet"}</div>
+      <div class="bar"><i style="width:${t.hit_rate == null ? 0 : Math.round(t.hit_rate * 100)}%"></i></div></div>`).join("") || empty("No traders configured.");
+  renderTheses();
+}
+
+function renderTheses() {
+  const body = $("theses-body");
+  if (thesisTab === "fomo") {
+    const ts = fomoTheses.theses || [];
+    body.innerHTML = ts.length ? ts.map(t => `<div class="thesis"><div class="m">@${esc(t.handle)} · ${esc(t.symbol || (t.mint || "").slice(0, 6))} · score ${num(t.score, 2)} · ${t.ts ? ago(new Date(t.ts * 1000)) : ""}</div>${esc(t.text)}</div>`).join("")
+      : empty(fomoTheses.enabled ? "No fresh theses from tracked traders right now." : "Fomo theses will appear here once a fomoapi.io key is configured.");
+  } else if (thesisTab === "own") {
+    const ts = (overview && overview.own_theses) || [];
+    body.innerHTML = ts.length ? ts.map(t => `<div class="thesis"><div class="m">${esc(t.symbol)} · ${esc(t.conviction || "")} conviction · score ${esc(t.score)} · ${esc(t.regime || "")} · ${ago(t.at)}</div><ul>${(t.why || []).map(w => `<li>${esc(w)}</li>`).join("")}</ul></div>`).join("")
+      : empty("Ledger hasn't formed its own thesis yet.");
+  } else {
+    body.innerHTML = activeTheses.length ? activeTheses.map(t => `<div class="thesis"><div class="m">${esc(t.token_ticker)} · ${esc(t.status)}${t.risk_score != null ? ` · risk ${t.risk_score}/10` : ""} · ${ago(t.updated_at)}</div>${esc(t.thesis_text)}</div>`).join("")
+      : empty("No active theses.");
   }
-
-  body.innerHTML = positions.map(pos => `
-    <div class="card">
-      <div class="card-title">
-        <span class="ticker">${escapeHtml(pos.ticker)}</span>
-        <span class="${pnlClass(pos.pnl_current_sol)}">${fmtSol(pos.pnl_current_sol)}</span>
-      </div>
-      <div class="card-meta">
-        size ${fmtSol(pos.size_sol)} · avg entry ${pos.avg_entry ?? "—"} · ${escapeHtml(pos.mint)}
-      </div>
-      ${pos.thesis ? `<div class="card-thesis">${escapeHtml(pos.thesis)}</div>` : ""}
-    </div>
-  `).join("");
 }
+$("thesis-tabs").addEventListener("click", e => { const b = e.target.closest(".tab"); if (!b) return; thesisTab = b.dataset.t;
+  document.querySelectorAll("#thesis-tabs .tab").forEach(x => x.classList.toggle("active", x === b)); renderTheses(); });
 
-function renderRealState(realState) {
-  const badge = document.getElementById("real-armed-badge");
-  badge.textContent = realState.armed ? "REAL" : "REAL (unarmed)";
-  badge.classList.toggle("unarmed", !realState.armed);
-
-  document.getElementById("stat-real-balance").textContent = fmtUsdc(realState.balance_usdc);
-  document.getElementById("stat-real-gas").textContent = fmtSol(realState.balance_sol, 4);
-
-  const pnlEl = document.getElementById("stat-real-pnl");
-  pnlEl.textContent = fmtUsdc(realState.realized_pnl_usdc);
-  pnlEl.className = `stat-value ${pnlClass(realState.realized_pnl_usdc)}`;
-
-  const positions = realState.open_real_positions || [];
-  document.getElementById("stat-real-open-count").textContent = positions.length;
-}
-
-function renderTheses(theses) {
-  const body = document.getElementById("theses-body");
-  if (!theses || theses.length === 0) {
-    body.innerHTML = `<div class="empty">No active theses.</div>`;
-    return;
-  }
-
-  body.innerHTML = theses.map(t => `
-    <div class="card">
-      <div class="card-title">
-        <span class="ticker">${escapeHtml(t.token_ticker)}</span>
-        <span class="status-badge status-${escapeHtml(t.status)}">${escapeHtml(t.status)}</span>
-      </div>
-      <div class="card-meta">
-        ${t.risk_score !== null && t.risk_score !== undefined ? `risk ${t.risk_score}/10 · ` : ""}
-        updated ${fmtTime(t.updated_at)}
-      </div>
-      <div class="card-thesis">${escapeHtml(t.thesis_text)}</div>
-    </div>
-  `).join("");
-}
-
-// Two independent questions about every journal entry:
-//
-//   isReal — did this entry come from the real-money path? kind
-//   "did_real" covers every real-trading outcome (armed success,
-//   unarmed, blocked, failed) by design — see real_trading.py. The one
-//   exception is the gas-reserve refusal, which deliberately logs as
-//   kind "refused" (its own record, distinct from a guard rail simply
-//   not liking a trade) but still carries meta.min_sol_for_gas, which
-//   is what identifies it as real-money-related here.
-//
-//   isTrade — did this entry represent an actual completed action
-//   (opened/closed/topped up), vs. Ledger's reasoning about one? A
-//   paper "did" always is. A real "did_real" only is when it actually
-//   filled (meta.status === "success") — an unarmed/blocked/failed
-//   did_real entry is Ledger explaining why nothing happened, which
-//   belongs in Live Thoughts, not Trades.
-//
-// New kinds default to both false — safer to under-classify into Live
-// Thoughts / Paper than to silently miscount a real fill as paper or
-// bury an actual trade among reasoning.
+// ── Journal (same classification logic as v1) ───────────────────────
 function classifyEntry(e) {
-  const isReal =
-    e.kind === "did_real" ||
-    (e.kind === "refused" && e.meta && Object.prototype.hasOwnProperty.call(e.meta, "min_sol_for_gas"));
-  const isTrade =
-    e.kind === "did" ||
-    (e.kind === "did_real" && e.meta && e.meta.status === "success");
+  const isReal = e.kind === "did_real" || (e.kind === "refused" && e.meta && Object.prototype.hasOwnProperty.call(e.meta, "min_sol_for_gas"));
+  const isTrade = e.kind === "did" || (e.kind === "did_real" && e.meta && e.meta.status === "success");
   return { isReal, isTrade };
 }
-
-// Trade color scheme (Trades panel only) — light blue for a position
-// opened or added to, green/red for a close by realized pnl sign. Same
-// palette as ledger_bot.py's COLOR_BUY/PROFIT/LOSS and Discord's leading
-// 🟦/🟢/🔴 title emoji. Driven by the pnl fields already present in
-// journal_meta (pnl_sol for a paper close, realized_pnl_usdc for a real
-// sell) rather than parsing message text, so it doesn't depend on title
-// wording. An open/topup/real-buy entry carries neither field and falls
-// through to "trade-open".
-function tradeClass(e) {
-  const meta = e.meta || {};
-  if (typeof meta.pnl_sol === "number") {
-    return meta.pnl_sol >= 0 ? "trade-profit" : "trade-loss";
-  }
-  if (typeof meta.realized_pnl_usdc === "number") {
-    return meta.realized_pnl_usdc >= 0 ? "trade-profit" : "trade-loss";
-  }
-  return "trade-open";
+function tradeClass(e) { const m = e.meta || {};
+  if (typeof m.pnl_sol === "number") return m.pnl_sol >= 0 ? "jtrade-profit" : "jtrade-loss";
+  if (typeof m.realized_pnl_usdc === "number") return m.realized_pnl_usdc >= 0 ? "jtrade-profit" : "jtrade-loss";
+  return "jtrade-open"; }
+let lastJournal = [], activityFilter = "real";
+function renderEntries(id, es, txt) {
+  $(id).innerHTML = es.length ? es.slice(0, 60).map(e => `<div class="row ${classifyEntry(e).isTrade ? tradeClass(e) : ""}"><div class="l">
+    <div class="t">${e.token_ticker ? esc(e.token_ticker) : esc(e.kind)}</div><div class="m">${esc(e.text)}</div></div><span class="jt">${ago(e.timestamp)}</span></div>`).join("") : empty(txt);
 }
-
-let lastJournalEntries = [];
-let activityFilter = "real"; // "real" | "paper" — starts on "real" now that REAL_TRADING_ENABLED is armed
-
-function renderJournalEntries(containerId, entries, emptyText) {
-  const body = document.getElementById(containerId);
-  if (!entries || entries.length === 0) {
-    body.innerHTML = `<div class="empty">${emptyText}</div>`;
-    return;
-  }
-
-  body.innerHTML = entries.map(e => {
-    const tradeCls = classifyEntry(e).isTrade ? ` ${tradeClass(e)}` : "";
-    return `
-    <div class="journal-entry${tradeCls}">
-      <span class="journal-time">${fmtTime(e.timestamp)}</span>
-      <span class="journal-kind kind-${escapeHtml(e.kind)}">${escapeHtml(e.kind)}</span>
-      <span class="journal-text">${e.token_ticker ? `<strong>${escapeHtml(e.token_ticker)}</strong> — ` : ""}${escapeHtml(e.text)}</span>
-    </div>
-  `;
-  }).join("");
-}
-
 function renderJournal(entries) {
-  if (entries) lastJournalEntries = entries; // cache so the filter toggle can re-render without a re-fetch
-  entries = lastJournalEntries || [];
-
-  const wantReal = activityFilter === "real";
-  const filtered = entries.filter(e => classifyEntry(e).isReal === wantReal);
-  const trades = filtered.filter(e => classifyEntry(e).isTrade);
-  const liveThoughts = filtered.filter(e => !classifyEntry(e).isTrade);
-
-  const noun = wantReal ? "real" : "paper";
-  renderJournalEntries("live-thoughts-body", liveThoughts, `No ${noun} activity yet.`);
-  renderJournalEntries("trades-body", trades, `No ${noun} trades yet.`);
+  if (entries) lastJournal = entries;
+  const want = activityFilter === "real", f = lastJournal.filter(e => classifyEntry(e).isReal === want);
+  renderEntries("trades-body", f.filter(e => classifyEntry(e).isTrade), `No ${activityFilter} trades yet.`);
+  renderEntries("live-thoughts-body", f.filter(e => !classifyEntry(e).isTrade), `No ${activityFilter} activity yet.`);
 }
+$("activity-filter").addEventListener("click", e => { const b = e.target.closest(".filter-btn"); if (!b) return; activityFilter = b.dataset.filter;
+  document.querySelectorAll("#activity-filter .tab").forEach(x => x.classList.toggle("active", x === b)); renderJournal(); });
 
-function setActivityFilter(filter) {
-  activityFilter = filter;
-  document.querySelectorAll("#activity-filter .filter-btn").forEach(btn => {
-    btn.classList.toggle("active", btn.dataset.filter === filter);
-  });
-  renderJournal(); // re-render from the cache — no need to wait for the next poll
-}
-
-document.getElementById("activity-filter").addEventListener("click", (event) => {
-  const btn = event.target.closest(".filter-btn");
-  if (btn) setActivityFilter(btn.dataset.filter);
-});
-
-function setConnStatus(ok) {
-  const el = document.getElementById("conn-status");
-  el.textContent = ok ? "live" : "unreachable";
-  el.className = `stat-value ${ok ? "ok" : "err"}`;
-}
-
-// ── Poll loop ───────────────────────────────────────────────────────
+function setConn(ok) { $("conn-dot").className = `dot ${ok ? "ok" : "err"}`; $("conn-status").textContent = ok ? "Live" : "Unreachable";
+  if (ok) $("last-update").textContent = `· ${new Date().toLocaleTimeString()}`; }
 
 async function pollOnce() {
-  try {
-    const [state, realState, theses, journal] = await Promise.all([
-      fetchJson("/api/state"),
-      fetchJson("/api/real_state"),
-      fetchJson("/api/theses"),
-      fetchJson("/api/journal?limit=150"),
-    ]);
-    renderState(state);
-    renderRealState(realState);
-    renderTheses(theses);
-    renderJournal(journal);
-    setConnStatus(true);
-  } catch (err) {
-    console.error("Poll failed:", err);
-    setConnStatus(false);
-  }
+  const jobs = {
+    state: fetchJson("/api/state").then(renderState),
+    real: fetchJson("/api/real_state").then(renderRealState),
+    theses: fetchJson("/api/theses").then(t => { activeTheses = t || []; }),
+    journal: fetchJson("/api/journal?limit=150").then(renderJournal),
+    fomo: fetchJson("/api/fomo_theses").then(f => { fomoTheses = f; }).catch(() => {}),
+    overview: fetchJson("/api/overview").then(renderOverview).catch(e => console.error(e)),
+  };
+  const res = await Promise.allSettled(Object.values(jobs));
+  renderTheses();
+  setConn(res.slice(0, 2).some(r => r.status === "fulfilled"));
 }
+pollOnce(); setInterval(pollOnce, POLL_INTERVAL_MS);
 
-pollOnce();
-setInterval(pollOnce, POLL_INTERVAL_MS);
-
-// ── ON/OFF kill switch ──────────────────────────────────────────────
-// Toggling needs the admin token (LEDGER_ADMIN_TOKEN, or the one printed
-// in the Railway boot log as "[SWITCH] ... token=..."). Asked once and
-// kept in this browser's localStorage.
+// ── ON/OFF kill switch (unchanged auth: Bearer admin token, cached in localStorage) ──
 let switchEnabled = null;
 function renderSwitch(st) {
   switchEnabled = !!st.enabled;
-  const s = document.getElementById("switch-state");
-  s.textContent = switchEnabled ? "ON" : "OFF";
-  s.className = `switch-state ${switchEnabled ? "on" : "off"}`;
-  const b = document.getElementById("switch-btn");
-  b.disabled = false;
-  b.textContent = switchEnabled ? "TURN OFF" : "TURN ON";
-  b.className = `switch-btn ${switchEnabled ? "turn-off" : "turn-on"}`;
+  const s = $("switch-state"); s.textContent = switchEnabled ? "ON" : "OFF"; s.className = `switch-state ${switchEnabled ? "on" : "off"}`;
+  $("status-pulse").className = `pulse ${switchEnabled ? "on" : "off"}`;
+  $("switch-note").textContent = switchEnabled ? "Ledger is watching traders and can open new positions." : "Paused — no new buys. Open positions are still managed (exits keep running).";
+  const b = $("switch-btn"); b.disabled = false; b.className = `switch ${switchEnabled ? "on" : ""}`;
+  $("switch-caption").textContent = switchEnabled ? "Tap to pause" : "Tap to resume";
 }
-async function pollSwitch() {
-  try { renderSwitch(await fetchJson("/api/bot_switch")); } catch (e) { console.error(e); }
-}
-document.getElementById("switch-btn").addEventListener("click", async () => {
+async function pollSwitch() { try { renderSwitch(await fetchJson("/api/bot_switch")); } catch (e) { console.error(e); } }
+$("switch-btn").addEventListener("click", async () => {
   let token = localStorage.getItem("ledgerAdminToken");
-  if (!token) {
-    token = prompt("Admin token (from Railway boot log line [SWITCH] ... token=...):");
-    if (!token) return;
-  }
+  if (!token) { token = prompt("Admin token (from Railway boot log line [SWITCH] ... token=...):"); if (!token) return; }
   const target = !switchEnabled;
   if (!confirm(target ? "Turn the bot ON (allow new buys)?" : "Turn the bot OFF (no new buys)?")) return;
-  const b = document.getElementById("switch-btn");
-  b.disabled = true;
+  const b = $("switch-btn"); b.disabled = true;
   try {
-    const r = await fetch(`${API_BASE_URL}/api/bot_switch`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token.trim()}` },
-      body: JSON.stringify({ enabled: target }),
-    });
+    const r = await fetch(`${API_BASE_URL}/api/bot_switch`, { method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token.trim()}` }, body: JSON.stringify({ enabled: target }) });
     if (r.status === 401) { localStorage.removeItem("ledgerAdminToken"); alert("Wrong admin token."); }
     else if (!r.ok) alert(`Failed: HTTP ${r.status}`);
     else { localStorage.setItem("ledgerAdminToken", token.trim()); renderSwitch(await r.json()); }
   } finally { b.disabled = false; pollSwitch(); }
 });
-pollSwitch();
-setInterval(pollSwitch, POLL_INTERVAL_MS);
+pollSwitch(); setInterval(pollSwitch, POLL_INTERVAL_MS);
