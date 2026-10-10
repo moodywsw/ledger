@@ -181,7 +181,7 @@ async function loadMarket() {
         <span class="ic-risk" title="Risk score 0-10">${riskEmo(i.risk)} ${i.risk ?? "–"}<small>/10</small></span></header>
       <dl class="ic-kv mono"><dt>Entry</dt><dd>${fp(i.entry_lo)} – ${fp(i.entry_hi)}</dd><dt>Stop</dt><dd class="neg">${fp(i.stop)}</dd>
         <dt>Target</dt><dd class="pos">${fp(i.t1)}${i.t2 ? ` → ${fp(i.t2)}` : ""}</dd>${i.mcap ? `<dt>Mcap</dt><dd>${big(i.mcap)}</dd>` : ""}</dl>
-      ${i.thesis ? `<dl class="ic-th"><dt>Why</dt><dd>${esc(i.thesis.why)}</dd><dt>Trigger</dt><dd>${esc(i.thesis.trigger)}</dd><dt>Target</dt><dd>${esc(i.thesis.target)}</dd><dt>Invalid</dt><dd>${esc(i.thesis.invalid)}</dd></dl>` : i.why ? `<p class="ic-why">${esc(i.why)}</p>` : ""}</article>`);
+      ${i.thesis ? `<dl class="ic-th"><dt>Why</dt><dd>${esc(i.thesis.why)}</dd><dt>Trigger</dt><dd>${esc(i.thesis.trigger)}</dd><dt>Invalid</dt><dd>${esc(i.thesis.invalid)}</dd></dl>` : i.why ? `<p class="ic-why">${esc(i.why)}</p>` : ""}</article>`);
   const col = (xs, msg) => xs.length ? xs.map(idea).join("") : `<div class="empty sm">${msg}</div>`;
   $("mt-maj").innerHTML = col(m.trade_ideas || [], "No clean setup on the majors.");
   $("mt-mid").innerHTML = col(m.mid_caps || [], "No mid cap is accumulating cleanly.");

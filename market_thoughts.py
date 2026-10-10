@@ -872,7 +872,7 @@ def _with_radar(t: dict) -> dict:
         hot = next((l for l in r["lines"] if l.startswith("hottest launchpad")), None)
         if hot:
             t["take"] = (t.get("take") or "").rstrip() + " " + hot[0].upper() + hot[1:] + "."
-    grads = r["pump"].get("graduated") or []
+    grads = [g for g in (r["pump"].get("graduated") or []) if g["mc"] < 5e6 and not str(g["sym"]).upper().startswith("USD")]
     if grads:
         g = max(grads, key=lambda x: x["mc"])
         t.setdefault("could_pump", [])
