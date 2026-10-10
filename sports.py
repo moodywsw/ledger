@@ -779,7 +779,7 @@ def build_botd(b, now):
         d, via = llm.reason_json("You are Mirko, a sharp, honest sports bettor. Short punchy reasoning, digits, no hype.",
                                  "Write a 1-2 sentence reason for each slip (why these legs, what could break it). Slips: "
                                  + json.dumps([{"type": s["type"], "legs": [{k: l[k] for k in ("title", "pick", "odds", "p")} for l in s["legs"]]} for s in slips])
-                                 + '\nJSON: {"reasons": ["...", "..."]}', 800)
+                                 + '\nJSON: {"reasons": ["...", "..."]}', 4000)
         for sl, r in zip(slips, (d or {}).get("reasons") or []):
             if isinstance(r, str) and len(r) > 20:
                 sl["reason"] = r[:400]

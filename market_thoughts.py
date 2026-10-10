@@ -431,7 +431,7 @@ def trade_ideas(assets, hl):
     return out
 
 
-SCHEMA = 10
+SCHEMA = 11
 BOOM_DEFAULT = {"theme": "AI infrastructure", "emoji": "🤖", "thesis": "Compute, power and data centres keep absorbing capital; the picks-and-shovels trade is the patient one.",
                 "boom_window": "Nov 2026 – Dec 2027", "why_now": ["Hyperscaler capex guidance keeps rising", "Power and cooling are the new bottleneck"],
                 "crypto": ["TAO", "RENDER", "FET"], "stocks": ["NVDA", "AVGO", "VRT", "CEG"], "invalidation": "Capex cuts from two or more hyperscalers."}
@@ -660,7 +660,7 @@ def smart_money_rules(reads, dex, lows=None) -> dict:
             add(r["name"], 1 if tl > rl else -1, f"Binance top traders {tl:.0%} long vs retail {rl:.0%}")
     try:
         import eyes
-        e = eyes.cached()
+        e = eyes.cached(12 * 3600) or {}
         for k in ("etf_btc", "etf_eth", "etf_sol"):
             x = e.get(k)
             if x and abs(x.get("sum5") or 0) >= 10:
@@ -1008,7 +1008,9 @@ def frontrun(max_age_h: float = 6) -> list:
     d, _ = llm.reason_json("You are Mirko, a degen narrative trader who front-runs events with memecoins/narrative tokens.",
                            f"Today is {today}. From these headlines pick the 5 best UPCOMING events (next 3-45 days, any domain: tech launches, politics, sports, culture, crypto unlocks/listings, macro) "
                            "that crypto traders could front-run with narrative tokens. For each give 1-2 short DexScreener search keywords for tokens likely named after it (e.g. 'GTA6', 'grok', 'starship').\n"
-                           + "\n".join(heads[:70]) + '\nJSON: {"events": [{"event": "...", "date": "YYYY-MM-DD or month", "domain": "tech|politics|sports|culture|crypto|macro", "why": "1 sentence why tokens could run", "keywords": ["..."]}]}', 1500)
+                           + "\n".join(heads[:70]) + '\nJSON: {"events": [{"event": "...", "date": "YYYY-MM-DD or month", "domain": "tech|politics|sports|culture|crypto|macro", "why": "1 sentence why tokens could run", "keywords": ["..."]}]}', 6000)
+    if not d:
+        log(f"frontrun: llm gave nothing ({_}), {len(heads)} headlines")
     items = []
     for ev in ((d or {}).get("events") or [])[:5]:
         toks, seen = [], set()
@@ -1045,7 +1047,8 @@ def frontrun(max_age_h: float = 6) -> list:
                 t["holders"] = None
         items.append({"event": ev.get("event"), "date": ev.get("date"), "domain": ev.get("domain"), "why": ev.get("why"), "tokens": pick})
     try:
-        _fr_path().write_text(json.dumps({"ts": time.time(), "items": items}))
+        if items:
+            _fr_path().write_text(json.dumps({"ts": time.time(), "items": items}))
     except Exception:
         pass
     return items
