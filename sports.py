@@ -284,6 +284,7 @@ def football_pick(ev: dict, lg: str) -> dict | None:
         a_ = ml_prob(o["total"]["over"]["close"]["odds"]); b_ = ml_prob(o["total"]["under"]["close"]["odds"]); po = a_ / (a_ + b_)
     except Exception:
         pass
+    gline = line
     lam = line + (0.35 if po > .5 else -0.25)
     lh, la = lam * (ph + pd / 2) / (ph + pa + pd), lam * (pa + pd / 2) / (ph + pa + pd)
     side = [leg(f"{'Over' if po >= .5 else 'Under'} {line} goals", max(po, 1 - po) + .03, max(po, 1 - po), 5, f"ou:{line}:{'o' if po >= .5 else 'u'}")]
@@ -294,10 +295,10 @@ def football_pick(ev: dict, lg: str) -> dict | None:
     cor = pg.get("corners") or []
     if cor:
         cand = [r for r in cor if 7.5 <= r[0] <= 12.5 and .3 <= r[1] <= .7] or [r for r in cor if 7.5 <= r[0] <= 12.5] or cor
-        line, po_c = min(cand, key=lambda r: abs(r[0] - 9.5) + abs(r[1] - .5) * 4)
+        cline, po_c = min(cand, key=lambda r: abs(r[0] - 9.5) + abs(r[1] - .5) * 4)
         over = max(ph, pa) > .5   # a dominant favourite camps in the box → more corners
         qc = po_c if over else 1 - po_c
-        side.append(leg(f"{'Over' if over else 'Under'} {line} corners", qc + .04, qc, 5, f"corners:{'o' if over else 'u'}{line}", why="Polymarket corners line"))
+        side.append(leg(f"{'Over' if over else 'Under'} {cline} corners", qc + .04, qc, 5, f"corners:{'o' if over else 'u'}{cline}", why="Polymarket corners line"))
     elif max(ph, pa) > .55:
         side.append(leg("Over 8.5 corners", .57, .52, 5, "corners:o8.5"))
     ht = pg.get("ht") or {}
@@ -340,7 +341,7 @@ def football_pick(ev: dict, lg: str) -> dict | None:
     read = (f"{src} has {hn} {round(qh * 100)}% · draw {round(qd * 100)}% · {an} {round(qa * 100)}%. "
             f"Form {fh_ or '—'} vs {fa_ or '—'} moves me {'towards ' + hn if tilt > .015 else 'towards ' + an if tilt < -.015 else 'nowhere'}. "
             f"My main bet: {main['pick']} at @{main['odds']} because I make it {round(main['p'] * 100)}% vs the market's {round(main['q'] * 100)}%. "
-            f"Expected goals ~{lh:.1f}–{la:.1f}, so I lean {'over' if po >= .5 else 'under'} on goals" + (f" and {'over' if max(ph, pa) > .5 else 'under'} on corners." if pg.get('corners') else ".")
+            f"Expected goals ~{lh:.1f}–{la:.1f}, so I lean {'over' if po >= .5 else 'under'} {gline} goals" + (f" and {'over' if max(ph, pa) > .5 else 'under'} on corners." if pg.get('corners') else ".")
             + (f" Played at {tv['venue']}." if tv and tv.get('venue') else ""))
     return {"read": read,"id": f"espn:{lg}:{ev['id']}", "sport": "soccer", "cat": cat, "league": name, "lg": lg, "event_id": ev["id"],
             "title": f"{hn} vs {an}", "kickoff": ev["date"], "ref": src, "main": main, "side": side}
@@ -705,12 +706,12 @@ def tick(now: float | None = None, force=False):
         byid = {p["id"]: p for p in fresh}
         for x in b["bets"]:   # backfill Mirko's read on picks made before it existed
             fr = byid.get(x["id"], {})
-            if fr.get("read") and (not x.get("read") or x.get("read_fix") != 2):
+            if fr.get("read") and (not x.get("read") or x.get("read_fix") != 3):
                 m = x["main"]
                 x["read"] = re.sub(r"My main bet: .*? vs the market's \d+%\.|I add ~2% for home court and back .*?\)\.",
-                                   f"My bet: {m.get('pick') or m.get('market')} at @{m.get('odds')}, I make it {round(m.get('p', 0) * 100)}% vs the market's {round(m.get('q', 0) * 100)}%.",
+                                   f"My bet: {m.get('pick') or m.get('market')} at @{m.get('odds')}, I make it {round(m.get('p', 0) * 100)}%" + (f" vs the market's {round(m['q'] * 100)}%." if m.get('q') else "."),
                                    fr["read"])
-                x["read_fix"] = 2
+                x["read_fix"] = 3
         new = sorted((p for p in fresh if p["id"] not in have), key=lambda p: -(p["main"]["p"] - p["main"]["q"]))
         for p in new:
             p["stake"] = round(p["main"]["stake"] + sum(x["stake"] for x in p["side"]), 2)
@@ -763,8 +764,8 @@ def start():
         first = True
         while True:
             try:
-                tick(force=first and not load().get("v10c")) ; first = False
-                b = load(); b["v10c"] = True; save(b)
+                tick(force=first and not load().get("v10d")) ; first = False
+                b = load(); b["v10d"] = True; save(b)
             except Exception as e:
                 print(f"[SPORTS] error: {type(e).__name__}")
             time.sleep(1800)
