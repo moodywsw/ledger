@@ -534,3 +534,4 @@ body{line-height:1.5;-webkit-font-smoothing:antialiased;text-rendering:optimizeL
 @keyframes sheen{0%,100%{left:14%;opacity:.85}50%{left:24%;opacity:1}}
 @media (prefers-reduced-motion:reduce){.t-glass::before{animation:none}}
 .bet-money.lean{grid-template-columns:auto auto 1fr}.lean-t b{color:#ffd166;white-space:normal!important;font-size:12px}
+.ta-attr{margin-left:auto;color:#5d6b80;font-size:10px;text-decoration:none}

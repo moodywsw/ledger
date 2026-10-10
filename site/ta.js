@@ -4,7 +4,7 @@
   const fp = x => x == null ? "–" : x >= 100 ? "$" + x.toLocaleString("en-US", { maximumFractionDigits: 2 }) : x >= 0.01 ? "$" + x.toFixed(4) : "$" + x.toPrecision(3);
   let chart, rsiChart, inited = false, busy = false;
   const LW = () => window.LightweightCharts;
-  const opts = h => ({ height: h, layout: { background: { color: "transparent" }, textColor: "#8fa0b8", fontFamily: "ui-monospace, monospace" },
+  const opts = h => ({ height: h, layout: { background: { color: "transparent" }, textColor: "#8fa0b8", fontFamily: "ui-monospace, monospace", attributionLogo: false },
     grid: { vertLines: { color: "rgba(255,255,255,.04)" }, horzLines: { color: "rgba(255,255,255,.04)" } },
     rightPriceScale: { borderColor: "rgba(255,255,255,.08)" }, timeScale: { borderColor: "rgba(255,255,255,.08)", timeVisible: true }, crosshair: { mode: 0 } });
   function build() {
