@@ -704,8 +704,13 @@ def tick(now: float | None = None, force=False):
         fresh = scan(now)
         byid = {p["id"]: p for p in fresh}
         for x in b["bets"]:   # backfill Mirko's read on picks made before it existed
-            if not x.get("read") and byid.get(x["id"], {}).get("read"):
-                x["read"] = byid[x["id"]]["read"]
+            fr = byid.get(x["id"], {})
+            if fr.get("read") and (not x.get("read") or x.get("read_fix") != 2):
+                m = x["main"]
+                x["read"] = re.sub(r"My main bet: .*? vs the market's \d+%\.|I add ~2% for home court and back .*?\)\.",
+                                   f"My bet: {m.get('pick') or m.get('market')} at @{m.get('odds')}, I make it {round(m.get('p', 0) * 100)}% vs the market's {round(m.get('q', 0) * 100)}%.",
+                                   fr["read"])
+                x["read_fix"] = 2
         new = sorted((p for p in fresh if p["id"] not in have), key=lambda p: -(p["main"]["p"] - p["main"]["q"]))
         for p in new:
             p["stake"] = round(p["main"]["stake"] + sum(x["stake"] for x in p["side"]), 2)
@@ -758,8 +763,8 @@ def start():
         first = True
         while True:
             try:
-                tick(force=first and not load().get("v10b")) ; first = False
-                b = load(); b["v10b"] = True; save(b)
+                tick(force=first and not load().get("v10c")) ; first = False
+                b = load(); b["v10c"] = True; save(b)
             except Exception as e:
                 print(f"[SPORTS] error: {type(e).__name__}")
             time.sleep(1800)
