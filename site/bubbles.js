@@ -22,8 +22,8 @@
   function size() { dpr = Math.min(2, devicePixelRatio || 1); W = cv.clientWidth; H = W < 500 ? 300 : 320; cv.width = W * dpr; cv.height = H * dpr; cv.style.height = H + "px"; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); build(); }
   function build() {
     const items = (data[src] || {}).items || []; if (!items.length || !W) return;
-    const v = items.map(i => Math.abs(i[tf] ?? 0)), mx = Math.max(1, ...v);
-    const raw = v.map(x => .35 + Math.sqrt(x / mx)), sum = raw.reduce((a, r) => a + r * r, 0), k = Math.sqrt(W * H * .38 / (Math.PI * sum));
+    const v = items.map(i => Math.log1p(Math.abs(i[tf] ?? 0))), mx = Math.max(.5, ...v);
+    const raw = v.map(x => .35 + x / mx), sum = raw.reduce((a, r) => a + r * r, 0), k = Math.sqrt(W * H * .38 / (Math.PI * sum));
     const old = Object.fromEntries(B.map(b => [b.id, b]));
     B = items.map((it, n) => { const o = old[it.id], r = Math.max(9, Math.min(H * .22, raw[n] * k)), c = it[tf] ?? 0;
       return { id: it.id, s: it.s, c, r, m: r * r, img: sprite(r, c >= 0, Math.abs(c) / 12, it.t, it.s, c), a: Math.random() * 6.28,
@@ -85,6 +85,7 @@
   function tfButtons() { tfBox.innerHTML = TF[src].map(([k, l]) => `<button data-tf="${k}" class="${k === tf ? "on" : ""}">${l}</button>`).join(""); }
   tfBox.addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return; tf = b.dataset.tf; tfButtons(); build(); start(); });
   srcBox && srcBox.addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return; src = b.dataset.src; srcBox.querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b)); tf = "d1"; tfButtons(); B = [];
+    const lab = document.querySelector("#bub-card .label"); if (lab) lab.textContent = src === "dex" ? "DEX flows · GeckoTerminal trending pools · Solana · Base · BSC · ETH · tap to open" : "Top 50 · CoinGecko · trending ★ · drag, throw, tap a bubble";
     if (data[src] && Date.now() - data[src].at < 3e5) { build(); start(); } else load(src); });
   new ResizeObserver(() => { if (cv.clientWidth && Math.abs(cv.clientWidth - W) > 1) size(); }).observe(cv);
   document.addEventListener("visibilitychange", () => { if (!document.hidden && visible) start(); });
