@@ -40,7 +40,7 @@ def params_for(wallet: str) -> dict:
 
 
 def classify_token(pair: dict | None, top10_pct: float | None = None, entry_liq_usd: float | None = None,
-                   smart_holding: bool | None = None) -> tuple[str, list]:
+                   smart_holding: bool | None = None, thesis_score: float = 0.0) -> tuple[str, list]:
     """pair = DexScreener-shaped dict. Returns ('gem'|'pump'|'neutral', reasons)."""
     if not pair:
         return "neutral", ["no pair data"]
@@ -64,6 +64,8 @@ def classify_token(pair: dict | None, top10_pct: float | None = None, entry_liq_
     if liq and (vol.get("h24") or 0) / liq < 30: gem.append("volume/liquidity sane (not wash)")
     if smart_holding: gem.append("tracked wallet still holding")
     if top10_pct is not None and top10_pct < 30: gem.append("holders spread")
+    if thesis_score >= 0.5: gem.append(f"Fomo thesis {thesis_score:.2f}")
+    if thesis_score >= 0.75: gem.append("strong Fomo thesis")
     if pump:
         return "pump", pump
     if len(gem) >= 3:
@@ -71,7 +73,7 @@ def classify_token(pair: dict | None, top10_pct: float | None = None, entry_liq_
     return "neutral", gem
 
 
-def timing_exit(pos: dict, price: float | None, now: float, pair_fn=None, top10_fn=None) -> tuple[list, dict]:
+def timing_exit(pos: dict, price: float | None, now: float, pair_fn=None, top10_fn=None, thesis_fn=None) -> tuple[list, dict]:
     """Per-trader layer run BEFORE risk_engine.evaluate_exit. Returns (actions, updates)."""
     if not ENABLED or price is None or not pos.get("opened_by") or not pos.get("entry_price"):
         return [], {}
@@ -91,7 +93,10 @@ def timing_exit(pos: dict, price: float | None, now: float, pair_fn=None, top10_
         top10 = None
         try: top10 = top10_fn(pos["mint"]) if top10_fn else None
         except Exception: pass
-        kind, why = classify_token(pair, top10, pos.get("entry_liq_usd"))
+        ts = 0.0
+        try: ts = thesis_fn(pos["mint"]) if thesis_fn else 0.0
+        except Exception: pass
+        kind, why = classify_token(pair, top10, pos.get("entry_liq_usd"), thesis_score=ts)
         if kind == "gem":
             return [{"fraction": 1 - MOONBAG_FRACTION, "reason": "first_tp_gem"}], {"moonbag": True, "moon_peak": price, "gem_why": why}
         return [{"fraction": 1.0, "reason": f"first_tp_{kind}"}], {"exit_why": why}

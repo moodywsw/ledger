@@ -80,6 +80,7 @@ from real_trading import (
 )
 import real_only_positions
 import trader_profile
+import fomo_theses
 import trade_cards
 import learning
 import market_data
@@ -3160,7 +3161,7 @@ def manage_paper_positions_v2(state: LedgerState):
             "tp_rungs_hit": pos.get("tp_rungs_hit") or [], "last_price_ts": pos.get("last_price_ts") or _opened_ts(pos),
         }
         _tv = dict(pos, mint=mint, opened_ts_x=_opened_ts(pos))
-        actions, updates = trader_profile.timing_exit(_tv, price, now, _dexscreener_best_pair, get_top10_holder_pct)
+        actions, updates = trader_profile.timing_exit(_tv, price, now, _dexscreener_best_pair, get_top10_holder_pct, fomo_theses.token_best_score)
         if not actions and not pos.get("moonbag"):
             actions, updates2 = evaluate_exit(view, price, now, RISK)
             updates = {**updates, **updates2}
@@ -3200,7 +3201,7 @@ def manage_real_only_positions_v2():
             "tp_rungs_hit": pos.get("tp_rungs_hit") or [], "last_price_ts": pos.get("last_price_ts") or _opened_ts(pos),
         }
         _tv = dict(pos, mint=mint, opened_ts_x=_opened_ts(pos))
-        actions, updates = trader_profile.timing_exit(_tv, price, now, _dexscreener_best_pair, get_top10_holder_pct)
+        actions, updates = trader_profile.timing_exit(_tv, price, now, _dexscreener_best_pair, get_top10_holder_pct, fomo_theses.token_best_score)
         if not actions and not pos.get("moonbag"):
             actions, updates2 = evaluate_exit(view, price, now, RISK)
             updates = {**updates, **updates2}
@@ -5140,6 +5141,31 @@ def run_learning(state: LedgerState):
     learning.periodic(closed_trades_for_scoring(state), RISK, dict(_LEARNING_TRACKED))
 
 
+_THESIS_SEEN: set = set()
+
+
+def run_fomo_theses(state: LedgerState):
+    """Fresh public Fomo thesis from a tracked KOL -> re-entry / buy-the-dip copy (rule-based)."""
+    if not fomo_theses.fomo.enabled():
+        return
+    by_handle = {h.lower().replace("fomo:", "").split(" ")[0]: a for a, h in WALLET_HANDLES.items()}
+    for t in fomo_theses.recent_tracked(set(WALLET_HANDLES.values())):
+        key = t.get("id") or (t["handle"], t["mint"])
+        if key in _THESIS_SEEN or t["score"] < fomo_theses.MIN_SCORE:
+            continue
+        _THESIS_SEEN.add(key)
+        wallet = by_handle.get(t["handle"])
+        if not wallet:
+            continue
+        print(f"[FOMO THESIS] {t['handle']} on {t['symbol'] or t['mint'][:6]} score {t['score']} -> re-entry check")
+        try:
+            meta = get_token_metadata(t["mint"]) or {}
+            copy_priority_wallet_entry(t["mint"], wallet, WALLET_HANDLES[wallet], "Fomo thesis", meta, state,
+                                       signal_block_time=time.time())
+        except Exception as e:
+            print(f"[WARN] thesis re-entry failed: {e}")
+
+
 def run_own_thesis(state: LedgerState):
     if not own_thesis.due():
         return
@@ -5193,6 +5219,7 @@ def _run_housekeeping(state: LedgerState):
     _safe("manage_positions", manage_positions, state)
     _safe("learning", run_learning, state)
     _safe("own_thesis", run_own_thesis, state)
+    _safe("fomo_theses", run_fomo_theses, state)
     _safe("sweep_stuck_real_positions", sweep_stuck_real_positions, state)
     if PAPER_TRADING_ENABLED:
         _safe("roll_day", _roll_day, state)
