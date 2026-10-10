@@ -9,7 +9,7 @@ import requests
 
 from . import mood as moodmod
 
-TOPICS = ["world", "world_markets", "market_read", "market", "culture", "narratives", "kols", "macro", "ai", "bot_life", "lessons", "headline", "trending"]
+TOPICS = ["reading", "world", "world_markets", "market_read", "market", "culture", "narratives", "kols", "macro", "ai", "bot_life", "lessons", "headline", "trending"]
 RSS = [u.strip() for u in os.environ.get("PERSONA_RSS_FEEDS",
        "https://www.coindesk.com/arc/outboundfeeds/rss/,https://decrypt.co/feed,https://www.theblock.co/rss.xml").split(",") if u.strip()]
 UA = {"User-Agent": "LedgerBot/1.0 (+persona)"}
@@ -75,7 +75,16 @@ def market_read() -> dict | None:
 
 def gather() -> dict:
     return {"fng": fear_greed(), "trending": trending(), "headlines": headlines(), "market_read": market_read(),
-            "world": headlines(8, WORLD_RSS)}
+            "world": headlines(8, WORLD_RSS), "reading": _reading()}
+
+
+def _reading() -> list:
+    try:
+        import insights
+        d = insights.cached(max_age_h=36)
+        return (d or {}).get("beliefs") or []
+    except Exception:
+        return []
 
 
 def market_hook(h: str) -> str | None:
@@ -95,6 +104,11 @@ def pick_world(ctx: dict, rng=random) -> tuple:
 
 
 T = {
+    "reading": [
+        "Daily reading done. {rd}",
+        "From this morning's homework (funds, central banks, tech): {rd}",
+        "What I learned today, outside my own charts: {rd}",
+    ],
     "world": [
         "World news check: \"{wh}\". My honest take: the loudest headline is rarely the one that matters a month from now. Watching what governments do, not what they say.",
         "Reading \"{wh}\". Politics is a long game played in short news cycles. I try to keep my opinions slow and my stops fast.",
@@ -185,6 +199,8 @@ def choose_topic(recent: list, ctx: dict, rng=random) -> str:
         avail = [t for t in avail if t not in ("world", "world_markets")]
     elif not any(market_hook(h) for h in ctx.get("world") or []):
         avail = [t for t in avail if t != "world_markets"]
+    if not ctx.get("reading"):
+        avail = [t for t in avail if t != "reading"]
     if not ctx.get("market_read"):
         avail = [t for t in avail if t != "market_read"]
     if not ctx.get("beliefs"):
@@ -201,7 +217,7 @@ def template(topic: str, ctx: dict, recent_texts: list, rng=random) -> str:
             "fng": fng.get("value", "?"), "fngl": fng.get("label", "?"), "fngl_low": str(fng.get("label", "uncertain")).lower(),
             "fng_take": _fng_take(fng.get("value")), "trend": ", ".join(ctx.get("trending") or [])[:90],
             "hl": rng.choice(hl), "belief": rng.choice(ctx.get("beliefs") or ["size small, think big."]),
-            "lessons": ctx.get("lessons_count", 0), **_mr_vals(ctx.get("market_read")), "mood": moodmod.label(m), "em": moodmod.emoji(m)}
+            "lessons": ctx.get("lessons_count", 0), "rd": rng.choice(ctx.get("reading") or ["patience pays."]), **_mr_vals(ctx.get("market_read")), "mood": moodmod.label(m), "em": moodmod.emoji(m)}
     opts = T.get(topic, T["culture"])
     fresh = [o for o in opts if o.split("{")[0][:40] not in " ".join(recent_texts)] or opts
     try:

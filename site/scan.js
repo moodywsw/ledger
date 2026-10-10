@@ -38,8 +38,9 @@
         x.fillStyle = Math.random() < .12 ? "rgba(255,150,200,.55)" : `rgba(${arm},${rnd(.15, .55)})`; x.fillRect(cx + Math.cos(th) * r + rnd(-1.5, 1.5), cy + Math.sin(th) * r + rnd(-1.5, 1.5), rnd(.5, 1.4), rnd(.5, 1.4)); } }
     x.restore();
   }
+  let ready = false;
   function layout() {
-    const r = cv.getBoundingClientRect(); W = r.width; H = r.height; cv.width = W * DPR; cv.height = H * DPR; ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    const r = cv.getBoundingClientRect(); if (r.width < 20 || r.height < 20) { ready = false; return; } W = r.width; H = r.height; cv.width = W * DPR; cv.height = H * DPR; ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     const fw = W + PAD * 2, fh = H + PAD * 2; let fx, mx2;
     [far, fx] = off(fw, fh); fx.fillStyle = "#03040a"; fx.fillRect(0, 0, fw, fh); nebula(fx, fw, fh); starfield(fx, fw, fh, Math.min(2600, fw * fh / (mobile ? 420 : 260)), 1.4);
     [mid, mx2] = off(fw, fh); starfield(mx2, fw, fh, mobile ? 120 : 260, 2.2);
@@ -54,30 +55,32 @@
     stars = Array.from({ length: mobile ? 25 : 60 }, () => ({ x: rnd(0, W), y: rnd(0, H), s: rnd(1, 2.2), tw: rnd(0, 6) }));
     spider.x = spider.tx = W / 2; spider.y = spider.ty = H / 2;
     spider.legs = Array.from({ length: 16 }, (_, i) => ({ a: i / 16 * 6.283, len: rnd(16, 30), ph: rnd(0, 6) }));
+    ready = true; spider.target = Math.min(spider.target, gal.length - 1); nextTarget();
   }
   cv.addEventListener("pointermove", e => { const r = cv.getBoundingClientRect(); mx = ((e.clientX - r.left) / r.width - .5) * 2; my = ((e.clientY - r.top) / r.height - .5) * 2; });
   cv.addEventListener("pointerleave", () => { mx = my = 0; });
 
   // ── real-data tags per domain ──
   function facts(id) {
-    const L = window.LEDGER || {}, m = L.market, out = [];
+    const L = window.LEDGER || {}, m = L.market && L.market.regime && Array.isArray(L.market.assets) ? L.market : null, out = [];
     if (id === "market" && m) { m.assets.forEach(a => out.push(`${a.name} · ${a.bias.split(" ·")[0].toLowerCase()}`)); out.push(`regime · ${m.regime.label.toLowerCase()}`); if (m.fng) out.push(`F&G · ${m.fng.v}`); }
-    if (id === "smart" && m) { const hl = m.hyperliquid; if (hl) Object.entries(hl.coins).forEach(([c, h]) => out.push(`whales · ${c} ${Math.round((h.long_share || 0) * 100)}% long`));
+    if (id === "smart" && m) { const hl = m.hyperliquid; if (hl && hl.coins) Object.entries(hl.coins).forEach(([c, h]) => out.push(`whales · ${c} ${Math.round((h.long_share || 0) * 100)}% long`));
       (m.dex_flows || []).slice(0, 3).forEach(d => out.push(`${d.pair} · ${d.buy_share > .55 ? "whale buy" : "flow"} ${Math.round(d.buy_share * 100)}%`)); }
     if (id === "kols") { (m && m.trending || []).slice(0, 4).forEach(t => out.push(`trending · ${t.symbol}`)); out.push("wallets · watching"); }
     if (id === "risk") { (L.journal || []).filter(e => e.kind === "refused").slice(0, 4).forEach(e => out.push(`${e.token_ticker || "token"} · ${/rug|honeypot|bundle|scam/i.test(e.text) ? "rug · flagged" : "skipped"}`));
       if (m) out.push(m.size_scale < 1 ? `size ×${m.size_scale}` : "size · full"); }
     if (id === "memory") { const md = L.mood; if (md) out.push(`mood · ${md.label}`); (L.posts || []).filter(p => p.kind === "exit_win" || p.kind === "exit_loss").slice(0, 3).forEach(p => out.push(p.kind === "exit_win" ? "lesson · win" : "lesson · loss")); }
-    if (id === "news") { (L.posts || []).filter(p => p.kind === "musing").slice(0, 3).forEach(p => out.push(`${(p.topic || "thought").replace("_", " ")} · ${p.text.split(" ").slice(0, 3).join(" ")}…`)); }
+    if (id === "news") { (L.posts || []).filter(p => p.kind === "musing" && p.text).slice(0, 3).forEach(p => out.push(`${(p.topic || "thought").replace("_", " ")} · ${p.text.split(" ").slice(0, 3).join(" ")}…`)); }
     return out.length ? out : [`${id} · scanning`];
   }
-  function heat(g) { const L = window.LEDGER || {}, m = L.market;
+  function heat(g) { const L = window.LEDGER || {}, m = L.market && L.market.regime ? L.market : null;
     if (g.id === "market" && m) return Math.min(1, Math.abs(m.regime.score) / 4 + .3);
     if (g.id === "risk") return m && m.regime.key === "risk_off" ? .9 : .4;
     if (g.id === "memory" && L.mood) return .3 + (L.mood.confidence || .5) * .6;
     return .45; }
 
-  function pushLog(t) { logLines.unshift(t); logLines.length = Math.min(logLines.length, 7); events++;
+  const evts = [];
+  function pushLog(t) { logLines.unshift(t); logLines.length = Math.min(logLines.length, 7); evts.push(Date.now());
     const el = document.getElementById("scan-log"); if (el) el.innerHTML = logLines.map((l, i) => `<div style="opacity:${1 - i * .12}">${l.replace(/</g, "&lt;")}</div>`).join(""); }
 
   function nextTarget() {
@@ -91,7 +94,7 @@
     tags = tags.slice(-6);
     const w = document.getElementById("wolf"), dr = document.getElementById("dream");  // his breathing glow follows the scan
     if (w) w.style.setProperty("--dream", (0.25 + g.heat * 0.75).toFixed(2));
-    if (dr) dr.textContent = `asleep · dreaming of ${g.label}`;
+    if (dr) dr.textContent = `dreaming of ${g.label}`;
     pushLog(`read  ${g.label.padEnd(11)} ${pick[0] || ""}`);
   }
 
@@ -134,8 +137,9 @@
   // ── mini panels ──
   const radar = document.getElementById("radar"), gauge = document.getElementById("gauge");
   function minis() {
-    const L = window.LEDGER || {}, m = L.market;
-    if (radar) { const c = radar.getContext("2d"), w = radar.width = radar.clientWidth * DPR, h = radar.height = radar.clientHeight * DPR, cx = w / 2, cy = h / 2, R = Math.min(w, h) * .38;
+    if (!ready) return;
+    const L = window.LEDGER || {}, m = L.market && L.market.regime && Array.isArray(L.market.assets) ? L.market : null;
+    if (radar && radar.clientWidth > 10) { const c = radar.getContext("2d"), w = radar.width = radar.clientWidth * DPR, h = radar.height = radar.clientHeight * DPR, cx = w / 2, cy = h / 2, R = Math.min(w, h) * .38;
       c.clearRect(0, 0, w, h); c.strokeStyle = "rgba(125,138,156,.25)";
       for (let k = 1; k <= 3; k++) { c.beginPath(); gal.forEach((g, i) => { const a = i / gal.length * 6.283 - 1.57; c[i ? "lineTo" : "moveTo"](cx + Math.cos(a) * R * k / 3, cy + Math.sin(a) * R * k / 3); }); c.closePath(); c.stroke(); }
       c.beginPath(); gal.forEach((g, i) => { const a = i / gal.length * 6.283 - 1.57, v = R * (.25 + g.heat * .75); c[i ? "lineTo" : "moveTo"](cx + Math.cos(a) * v, cy + Math.sin(a) * v); }); c.closePath();
@@ -160,22 +164,24 @@
         d.textContent = `${what} · ${m.regime.key === "risk_off" ? "defensive size" : m.regime.key === "risk_on" ? "full size" : "normal size"}`;
       }
     }
-    const rate = document.getElementById("scan-rate"); if (rate) rate.textContent = `${(events / 10).toFixed(1)} ev/s`; events = 0;
-    const sub = document.getElementById("scan-sub"); if (sub && m) sub.textContent = `regime · ${m.regime.label.toLowerCase()} · ${L.mood ? "mood · " + L.mood.label : ""}`;
+    const rate = document.getElementById("scan-rate"); while (evts.length && evts[0] < Date.now() - 60000) evts.shift(); if (rate) rate.textContent = `${evts.length} reads/min`;
     gal.forEach(g => { g.heat = heat(g); });
   }
 
   function loop(t) {
-    if (!visible) return;
-    if (!mobile || t - last > 33) { draw(t); last = t; }  // ~30fps cap on phones
+    if (!visible) { running = false; return; }
+    if (!ready) layout();
+    if (ready && (!mobile || t - last > 33)) { try { draw(t); } catch (e) { errs++; if (errs % 50 === 1) console.warn("brain draw", e); tags = []; } last = t; }  // never let one bad frame kill the loop
     requestAnimationFrame(loop);
   }
-  function start() { if (reduce) { draw(0); return; } requestAnimationFrame(loop); }
-  const onVis = () => { const v = !document.hidden && !document.getElementById("view-dash").classList.contains("hidden") && inView; if (v && !visible) { visible = true; start(); } else visible = v; };
+  let running = false, errs = 0;
+  function start() { if (reduce) { if (!ready) layout(); if (ready) try { draw(0); } catch (e) {} return; } if (!running) { running = true; requestAnimationFrame(loop); } }
+  const onVis = () => { const v = !document.hidden && !document.getElementById("view-dash").classList.contains("hidden") && inView; visible = v; if (v) { if (!ready || Math.abs(cv.getBoundingClientRect().width - W) > 2) layout(); start(); } };
   let inView = true;
   new IntersectionObserver(es => { inView = es[0].isIntersecting; onVis(); }).observe(cv);
   document.addEventListener("visibilitychange", onVis); window.addEventListener("ledger:view", onVis);
-  let rt; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { layout(); if (reduce) draw(0); }, 200); });
-  layout(); nextTarget(); pushLog("boot  mind online"); start(); minis(); setInterval(() => { if (!document.hidden) minis(); }, 10_000); window.addEventListener("ledger:data", minis);
-  if (reduce) setInterval(() => { if (!document.hidden) { spider.x = spider.tx; spider.y = spider.ty; arrive(); nextTarget(); spider.x = spider.tx; spider.y = spider.ty; draw(0); } }, 6000);
+  let rt; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { layout(); if (reduce && ready) draw(0); }, 200); });
+  const safeMinis = () => { try { minis(); } catch (e) { console.warn("brain minis", e); } };
+  layout(); pushLog("boot  mind online"); start(); safeMinis(); setInterval(() => { if (!document.hidden) safeMinis(); }, 10_000); window.addEventListener("ledger:data", safeMinis);
+  if (reduce) setInterval(() => { if (!document.hidden && ready) { spider.x = spider.tx; spider.y = spider.ty; arrive(); nextTarget(); spider.x = spider.tx; spider.y = spider.ty; draw(0); } }, 6000);
 })();

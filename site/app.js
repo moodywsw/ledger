@@ -16,6 +16,7 @@ function ago(iso) { const t = new Date(iso).getTime(); if (!t) return ""; const 
 function setVal(id, text, c) { const el = $(id); el.textContent = text; if (c !== undefined) el.className = `${el.className.replace(/\b(pos|neg|zero)\b/g, "").trim()} ${c}`; }
 async function fetchJson(path) { const r = await fetch(`${API_BASE_URL}${path}`); if (!r.ok) throw new Error(`${path} → HTTP ${r.status}`); return r.json(); }
 const store = { get: k => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} }, del: k => { try { localStorage.removeItem(k); } catch {} } };
+const empty = t => `<div class="empty">${t}</div>`;
 window.LEDGER = { mood: null, posts: [], market: null, journal: [], overview: null };
 
 // ── Views (Dashboard / Market Thoughts / Owner) ─────────────────────
@@ -29,12 +30,16 @@ function showView(v) {
 $("nav").addEventListener("click", e => { const b = e.target.closest(".nav-btn"); if (b) showView(b.dataset.view); });
 
 // ── Collapsible panels ──────────────────────────────────────────────
-document.querySelectorAll(".collapsible").forEach(c => {
-  const k = `ledgerFold:${c.dataset.key}`, btn = c.querySelector(".fold");
-  const set = f => { c.classList.toggle("folded", f); btn.textContent = f ? "+" : "–"; btn.setAttribute("aria-label", f ? "Expand" : "Minimize"); };
-  set(store.get(k) === "1");
-  c.querySelector(".card-head").addEventListener("click", () => { const f = !c.classList.contains("folded"); set(f); store.set(k, f ? "1" : "0"); });
-});
+function initFold(root) {
+  root.querySelectorAll(".collapsible:not([data-fi])").forEach(c => {
+    c.dataset.fi = "1";
+    const k = `ledgerFold:${c.dataset.key}`, btn = c.querySelector(".fold");
+    const set = f => { c.classList.toggle("folded", f); btn.textContent = f ? "+" : "–"; btn.setAttribute("aria-label", f ? "Expand" : "Minimize"); };
+    const sv = store.get(k); set(sv == null ? c.dataset.fold === "1" : sv === "1");
+    c.querySelector(".card-head").addEventListener("click", () => { const f = !c.classList.contains("folded"); set(f); store.set(k, f ? "1" : "0"); });
+  });
+}
+initFold(document);
 
 // ── Equity chart: small square + crosshair tooltip ──────────────────
 let eqPts = [];
@@ -138,35 +143,14 @@ const big = v => v == null ? "—" : v >= 1e9 ? `$${(v / 1e9).toFixed(2)}B` : v 
 async function loadMarket() {
   let m; try { m = await fetchJson("/api/market_thoughts"); } catch { return; }
   if (!m.ready) { $("mt-regime").textContent = m.message || "Preparing…"; return; }
+  m.assets = (m.assets || []).map(a => ({ support: [], resistance: [], notes: [], ...a }));
+  m.regime = m.regime || { label: "Unknown", key: "chop", score: 0 };
   LEDGER.market = m;
   $("mt-regime").textContent = m.regime.label; $("mt-summary").textContent = m.summary;
   $("mt-stance").textContent = m.stance; $("mt-time").textContent = `updated ${ago(m.generated_at)}`;
   $("mt-scale").textContent = m.size_scale < 1 ? `memecoin size ×${m.size_scale}` : "full size allowed";
   $("mt-stance").className = `chip ${m.regime.key === "risk_off" ? "warn" : m.regime.key === "risk_on" ? "real" : ""}`;
   if (m.fng) { $("fng-v").textContent = m.fng.v; $("fng-l").textContent = `${m.fng.cls} · yesterday ${m.fng.prev}`; drawFng(m.fng.v); }
-  $("mt-assets").innerHTML = m.assets.map(a => `<div class="card asset t-${a.tone}">
-    <div class="a-head"><div><div class="a-name">${a.name}</div><div class="a-px mono">${fp(a.price)}</div></div>
-      <div class="a-right"><span class="bias b-${a.tone}">${esc(a.bias)}</span><div class="mono muted">24h <span class="${cls(a.chg24)}">${pc(a.chg24)}</span> · 7d <span class="${cls(a.chg7)}">${pc(a.chg7)}</span></div></div></div>
-    ${levelBar(a)}
-    <p class="a-struct">${esc(a.structure)}</p>
-    <div class="cases"><div><b class="pos">Bull</b> ${esc(a.bull_case)}</div><div><b class="neg">Bear</b> ${esc(a.bear_case)}</div></div>
-    ${a.notes.length ? `<div class="a-notes">⚙️ ${esc(a.notes.join(" · "))}</div>` : ""}
-    <div class="plan">🎯 ${esc(a.plan)}</div></div>`).join("");
-  const hl = m.hyperliquid;
-  $("hl-sub").textContent = hl ? `${hl.accounts} profitable accounts > $1M` : "unavailable";
-  $("mt-hl").innerHTML = hl ? Object.entries(hl.coins).map(([c, h]) => { const ls = h.long_share == null ? 0.5 : h.long_share;
-    return `<div class="row col"><div class="hl-top"><b>${c}</b><span class="mono muted">${h.longs}L / ${h.shorts}S · net ${big(h.long_ntl - h.short_ntl).replace("$-", "-$")}</span></div>
-      <div class="lsbar"><i style="width:${Math.round(ls * 100)}%"></i></div>
-      <div class="mono muted sm">${Math.round(ls * 100)}% long by notional · avg long ${fp(h.long_entry)} · avg short ${fp(h.short_entry)}</div></div>`; }).join("") : empty("Hyperliquid data unavailable this round.");
-  $("mt-deriv").innerHTML = m.assets.map(a => `<div class="row"><div class="l"><div class="t">${a.name}</div>
-      <div class="m mono">OI ${big(a.oi_total)} ${a.oi_chg24 != null ? `(${pc(a.oi_chg24)})` : ""}</div>
-      <div class="m mono">top traders ${a.top_long != null ? Math.round(a.top_long * 100) + "% long" : "—"} · retail ${a.retail_long != null ? Math.round(a.retail_long * 100) + "% long" : "—"} · taker ${a.taker ? a.taker.toFixed(2) : "—"}</div></div></div>`).join("")
-    + (m.coinbase_premium != null ? `<div class="row"><div class="l"><div class="t">Coinbase premium</div><div class="m mono ${cls(m.coinbase_premium)}">${pc(m.coinbase_premium, 3)}</div></div></div>` : "")
-    + (m.global ? `<div class="row"><div class="l"><div class="t">Total market</div><div class="m mono">${big(m.global.mcap)} · ${pc(m.global.mcap_chg)} · BTC dom ${m.global.btc_dom.toFixed(1)}%</div></div></div>` : "");
-  $("mt-dex").innerHTML = (m.dex_flows || []).length ? m.dex_flows.map(d => `<div class="row"><div class="l"><div class="t">${esc(d.pair)} <span class="cn">${esc(d.chain)}</span></div>
-      <div class="lsbar thin"><i style="width:${Math.round(d.buy_share * 100)}%"></i></div><div class="m mono">vol ${big(d.vol24)} · liq ${big(d.liq)}</div></div>
-      <div class="mono ${cls(d.chg24)}">${pc(d.chg24, 0)}</div></div>`).join("") : empty("No DEX flow data this round.");
-  $("mt-trend").innerHTML = (m.trending || []).map(t => `<div class="tchip"><b>${esc(t.symbol)}</b><span class="mono ${cls(t.chg24)}">${pc(t.chg24, 0)}</span></div>`).join("") || empty("—");
   const idea = i => `<div class="idea ${i.side === "Long" ? "long" : "short"}">
       <div class="i-h"><b>${i.side} ${esc(i.name)}</b><span class="cn">${esc(i.venue)}</span>${i.tier ? `<span class="tier ${i.tier}">${i.tier === "low" ? "low cap" : "mid cap"}</span>` : ""}${i.chain ? `<span class="cn">${esc(i.chain)}</span>` : ""}<span class="mono muted">R:R ${i.rr ?? "—"}</span></div>
       <div class="i-g mono"><span>Entry</span><b>${fp(i.entry_lo)}–${fp(i.entry_hi)}</b><span>Stop</span><b class="neg">${fp(i.stop)}</b><span>Target</span><b class="pos">${fp(i.t1)}${i.t2 ? ` → ${fp(i.t2)}` : ""}</b>${i.mcap ? `<span>Mcap</span><b>${big(i.mcap)}</b>` : ""}</div>
@@ -190,6 +174,33 @@ async function loadMarket() {
       <div><div class="label pad">Crypto</div><div class="trend">${(b.crypto || []).map(c => `<span class="tchip"><b>$${esc(String(c).replace(/^\$/, ""))}</b></span>`).join("") || '<span class="muted">no clean crypto proxy, equities lead this one</span>'}</div>
       <div class="label pad" style="margin-top:10px">Stocks</div><div class="trend">${(b.stocks || []).map(s => `<span class="tchip"><b>${esc(s)}</b></span>`).join("") || '<span class="muted">—</span>'}</div>
       ${b.invalidation ? `<div class="label pad" style="margin-top:12px">Invalidation</div><div class="muted">${md(b.invalidation)}</div>` : ""}</div></div>` : empty("No theme in rotation.");
+  try {
+  $("mt-assets").innerHTML = m.assets.map(a => `<div class="card asset t-${a.tone}">
+    <div class="a-head"><div><div class="a-name">${a.name}</div><div class="a-px mono">${fp(a.price)}</div></div>
+      <div class="a-right"><span class="bias b-${a.tone}">${esc(a.bias)}</span><div class="mono muted">24h <span class="${cls(a.chg24)}">${pc(a.chg24)}</span> · 7d <span class="${cls(a.chg7)}">${pc(a.chg7)}</span></div></div></div>
+    ${levelBar(a)}
+    <p class="a-struct">${esc(a.structure)}</p>
+    <div class="cases"><div><b class="pos">Bull</b> ${esc(a.bull_case)}</div><div><b class="neg">Bear</b> ${esc(a.bear_case)}</div></div>
+    ${a.notes.length ? `<div class="a-notes">⚙️ ${esc(a.notes.join(" · "))}</div>` : ""}
+    <div class="plan">🎯 ${esc(a.plan)}</div></div>`).join("");
+  const hl = m.hyperliquid;
+  $("hl-sub").textContent = hl ? `${hl.accounts} profitable accounts > $1M` : "unavailable";
+  $("mt-hl").innerHTML = hl ? Object.entries(hl.coins).map(([c, h]) => { const ls = h.long_share == null ? 0.5 : h.long_share;
+    return `<div class="row col"><div class="hl-top"><b>${c}</b><span class="mono muted">${h.longs}L / ${h.shorts}S · net ${big(h.long_ntl - h.short_ntl).replace("$-", "-$")}</span></div>
+      <div class="lsbar"><i style="width:${Math.round(ls * 100)}%"></i></div>
+      <div class="mono muted sm">${Math.round(ls * 100)}% long by notional · avg long ${fp(h.long_entry)} · avg short ${fp(h.short_entry)}</div></div>`; }).join("") : empty("Hyperliquid data unavailable this round.");
+  $("mt-deriv").innerHTML = ""
+    + (m.coinbase_premium != null ? `<div class="row"><div class="l"><div class="t">Coinbase premium</div><div class="m mono ${cls(m.coinbase_premium)}">${pc(m.coinbase_premium, 3)}</div></div></div>` : "")
+    + (m.global ? `<div class="row"><div class="l"><div class="t">Total market</div><div class="m mono">${big(m.global.mcap)} · ${pc(m.global.mcap_chg)} · BTC dom ${m.global.btc_dom.toFixed(1)}%</div></div></div>` : "");
+  $("mt-dex").innerHTML = (m.dex_flows || []).length ? m.dex_flows.map(d => `<div class="row"><div class="l"><div class="t">${esc(d.pair)} <span class="cn">${esc(d.chain)}</span></div>
+      <div class="lsbar thin"><i style="width:${Math.round(d.buy_share * 100)}%"></i></div><div class="m mono">vol ${big(d.vol24)} · liq ${big(d.liq)}</div></div>
+      <div class="mono ${cls(d.chg24)}">${pc(d.chg24, 0)}</div></div>`).join("") : empty("No DEX flow data this round.");
+  $("mt-trend").innerHTML = (m.trending || []).map(t => `<div class="tchip"><b>${esc(t.symbol)}</b><span class="mono ${cls(t.chg24)}">${pc(t.chg24, 0)}</span></div>`).join("") || empty("—");
+  } catch (e) { console.warn("market lower", e); }
+  try { const I = m.insights || {}; const it = I.items || [];
+    $("mt-insights").innerHTML = (I.beliefs || []).map(b => `<div class="row"><div class="l"><div class="t">💡 ${esc(b)}</div></div></div>`).join("")
+      + it.slice(0, 12).map(x => `<div class="row"><div class="l"><div class="m"><span class="cn">${esc(x.cat)}</span> ${esc(x.title)}</div></div></div>`).join("") || empty("Today's reading list is being collected.");
+  } catch (e) { console.warn("insights", e); }
 }
 const md = t => esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/\*/g, "");
 function levelBar(a) {
@@ -222,22 +233,38 @@ async function loadPortfolio() {
     const d = vs.map((v, i) => `${i ? "L" : "M"}${(i / (vs.length - 1) * Wd).toFixed(1)},${(Hh - 6 - (v - mn) / sp * (Hh - 12)).toFixed(1)}`).join("");
     const col = vs[vs.length - 1] >= 3000 ? "#22d39b" : "#ff5c7a";
     $("pf-chart").innerHTML = `<svg viewBox="0 0 ${Wd} ${Hh}" preserveAspectRatio="none"><path d="${d}" fill="none" stroke="${col}" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>`; }
-  else $("pf-chart").innerHTML = `<div class="empty sm">Value curve builds over the first hours.</div>`;
-  $("pf-sleeves").innerHTML = sl.map(([k, v]) => `<div class="card sleeve"><div class="label"><span class="sw" style="background:${SLV[k][1]}"></span>${SLV[k][0]}</div>
-    <div class="big mono">${eur(v.value_eur)} <span class="${cls(v.pnl_pct)}" style="font-size:14px">${pc(v.pnl_pct, 2)}</span></div>
-    <div class="muted">cash ${eur(v.cash_eur)} · ${v.positions.length} positions${v.last_decision ? ` · decided ${ago(new Date(v.last_decision * 1000))}` : ""}</div></div>`).join("");
-  const pos = sl.flatMap(([k, v]) => v.positions.map(p => ({ ...p, sleeve: k })));
-  $("pf-pos").innerHTML = pos.length ? pos.map(p => `<div class="row col"><div class="pfpos"><div><b>${esc(p.sym)}</b> <span class="cn">${SLV[p.sleeve][0]}</span>${p.side !== "Spot" ? ` <span class="cn">${esc(p.side)} ${p.lev}x</span>` : ""}</div>
-      <div class="mono"><span class="${cls(p.pnl_pct)}">${pc(p.pnl_pct, 1)}</span> · ${eur(p.value_eur)}</div>
-      <div class="mono muted sm">entry $${price(p.entry_usd)} · now $${price(p.last_usd)}${p.stop_usd ? ` · stop $${price(p.stop_usd)}` : ""}${p.target_usd ? ` · target $${price(p.target_usd)}` : ""}</div><div></div>
-      <div class="why">💭 ${esc(p.why)}</div></div></div>`).join("") : empty("Ledger hasn't opened anything yet — first decisions within a few hours.");
+  else $("pf-chart").innerHTML = `<div class="empty sm">The chart starts with the next 15-minute snapshot.</div>`;
+  const book = b => b ? `<span class="tier">${esc(b)}</span>` : "";
+  $("pf-sleeves").innerHTML = sl.map(([k, v]) => `<div class="card sleeve collapsible" data-key="pf-${k}" data-fold="1">
+    <div class="card-head"><div><div class="label"><span class="sw" style="background:${SLV[k][1]}"></span>${SLV[k][0]}</div>
+      <div class="big mono">${eur(v.value_eur)} <span class="${cls(v.pnl_pct)}" style="font-size:14px">${pc(v.pnl_pct, 2)}</span></div>
+      <div class="muted">cash ${eur(v.cash_eur)} · ${v.positions.length} positions${v.last_decision ? ` · decided ${ago(new Date(v.last_decision * 1000))}` : ""}</div></div>
+      <button class="fold" aria-label="Expand">+</button></div>
+    <div class="fold-body"><div class="list">${v.positions.length ? v.positions.map(p => `<div class="row col"><div class="pfpos">
+      <div><b>${esc(p.sym)}</b> ${book(p.book)}${p.side !== "Spot" ? ` <span class="cn">${esc(p.side)} ${p.lev}x</span>` : ""}</div>
+      <div class="mono" id="lv-${k}-${esc(p.sym)}"><span class="${cls(p.pnl_pct)}">${pc(p.pnl_pct, 1)}</span> · ${eur(p.value_eur)}</div>
+      <div class="mono muted sm">entry $${price(p.entry_usd)} · now <span id="lp-${k}-${esc(p.sym)}">$${price(p.last_usd)}</span>${p.stop_usd ? ` · stop $${price(p.stop_usd)}` : ""}${p.target_usd ? ` · target $${price(p.target_usd)}` : ""}</div><div></div>
+      <div class="why">💭 ${esc(p.why)}</div></div></div>`).join("") : empty("Flat. Waiting for a setup.")}</div>
+      ${v.note ? `<div class="muted sm" style="margin-top:8px">${esc(v.note)}</div>` : ""}</div></div>`).join("");
+  initFold($("pf-sleeves"));
+  pfLive();
   $("pf-trades").innerHTML = (P.trades || []).length ? P.trades.map(t => `<div class="row"><div class="l"><div class="t">${esc(t.action)} ${esc(t.sym)} <span class="cn">${SLV[t.sleeve][0]}</span></div>
       <div class="m">${esc(t.why)}</div></div><div class="mono" style="text-align:right">${eur(t.eur)}${t.pnl_pct != null ? `<br><span class="${cls(t.pnl_pct)}">${pc(t.pnl_pct, 1)}</span>` : ""}<br><span class="jt">${ago(new Date(t.ts * 1000))}</span></div></div>`).join("") : empty("No trades yet.");
   const C = P.commentary || {};
   $("pf-comment").innerHTML = `<p>${esc(C.intro || "")}</p><ul>${Object.entries(C.sleeves || {}).filter(([, n]) => n).map(([k, n]) => `<li><b>${SLV[k][0]}:</b> ${esc(n)}</li>`).join("")}</ul>
     ${(C.positions || []).length ? `<div class="label pad" style="margin-top:12px">Why I hold each position</div><ul>${C.positions.map(p => `<li><b>${esc(p.sym)}</b> — ${esc(p.why)}</li>`).join("")}</ul>` : ""}`;
 }
-setInterval(() => { if (!document.hidden && !$("view-portfolio").classList.contains("hidden")) loadPortfolio(); }, 60_000);
+async function pfLive() {
+  let L; try { L = await fetchJson("/api/portfolio/live"); } catch { return; }
+  Object.entries(L.positions || {}).forEach(([k, ps]) => Object.entries(ps).forEach(([sym, p]) => {
+    const e = document.getElementById(`lv-${k}-${sym}`), q = document.getElementById(`lp-${k}-${sym}`);
+    if (e) e.innerHTML = `<span class="${cls(p.pnl_pct)}">${pc(p.pnl_pct, 1)}</span> · ${eur(p.value_eur)} <span class="live-dot" title="live"></span>`;
+    if (q && p.last_usd) q.textContent = `$${price(p.last_usd)}`;
+  }));
+}
+const pfOpen = () => !document.hidden && !$("view-portfolio").classList.contains("hidden");
+setInterval(() => { if (pfOpen()) pfLive(); }, 20_000);
+setInterval(() => { if (pfOpen()) loadPortfolio(); }, 300_000);
 
 // ── Owner view (same admin token as the switch) ─────────────────────
 const tok = () => store.get("ledgerAdminToken");

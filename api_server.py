@@ -436,6 +436,12 @@ def api_market_thoughts():
     return jsonify(dict(_public(d), ready=True))
 
 
+@app.route("/api/portfolio/live")
+def api_portfolio_live():
+    import paper_portfolio
+    return jsonify(_public(paper_portfolio.live_prices()))
+
+
 @app.route("/api/portfolio")
 def api_portfolio():
     """Ledger's SIMULATED paper portfolio (no real orders)."""

@@ -427,6 +427,23 @@ def trade_ideas(assets, hl):
     return out
 
 
+SCHEMA = 3
+BOOM_DEFAULT = {"theme": "AI infrastructure", "emoji": "🤖", "thesis": "Compute, power and data centres keep absorbing capital; the picks-and-shovels trade is the patient one.",
+                "boom_window": "next 6-18 months", "why_now": ["Hyperscaler capex guidance keeps rising", "Power and cooling are the new bottleneck"],
+                "crypto": ["TAO", "RENDER", "FET"], "stocks": ["NVDA", "AVGO", "VRT", "CEG"], "invalidation": "Capex cuts from two or more hyperscalers."}
+BOOM_PROXIES = {"space": ["SOL", "LINK"], "ai": ["TAO", "RENDER", "FET"], "energy": ["BTC"], "nuclear": ["BTC"], "robot": ["TAO", "FET"],
+                "quantum": ["BTC"], "defense": ["LINK"], "stable": ["ETH", "SOL"], "rwa": ["ONDO", "LINK"], "gaming": ["IMX"], "bitcoin": ["BTC"]}
+
+
+def _insights():
+    try:
+        import insights
+        d = insights.cached(max_age_h=36)
+        return {k: d[k] for k in ("beliefs", "risk_tilt", "items", "date")} if d else None
+    except Exception:
+        return None
+
+
 def next_boom(today: str | None = None):
     """Rotates one researched theme per day from data/next_boom.json (no generated content)."""
     try:
@@ -437,7 +454,12 @@ def next_boom(today: str | None = None):
     d = dt.date.fromisoformat(today) if today else dt.date.today()
     t = themes[d.toordinal() % len(themes)]
     keep = ("theme", "emoji", "thesis", "boom_window", "why_now", "crypto", "stocks", "invalidation", "researched")
-    return {k: t.get(k) for k in keep if t.get(k) is not None}
+    out = {k: t.get(k) for k in keep if t.get(k) is not None}
+    if not out.get("crypto"):   # never leave the crypto side empty: closest liquid proxies, labelled as such
+        th = (out.get("theme", "") + " " + out.get("thesis", "")).lower()
+        px = next((v for k, v in BOOM_PROXIES.items() if k in th), ["BTC", "ETH"])
+        out["crypto"] = px; out["crypto_proxy"] = True
+    return out
 
 
 def outlook(reads, reg, fg, cbp, dex):
@@ -479,11 +501,15 @@ def build():
     reads = [asset_read(assets[n], derivs.get(n), ((hl or {}).get("coins") or {}).get(n)) for n, _ in ASSETS if n in assets]
     reg = regime(assets, glob, fg) if assets else {"label": "Unknown", "key": "chop", "score": 0, "notes": []}
     summary, stance = outlook(reads, reg, fg, cbp, dex)
+    ins = _insights()
+    if ins and ins.get("beliefs"):
+        summary += " Daily reading: " + ins["beliefs"][0]
     return {"ts": time.time(), "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(), "regime": reg,
             "assets": reads, "fng": fg, "global": glob, "coinbase_premium": cbp, "trending": trend,
             "hyperliquid": hl, "dex_flows": dex, "trade_ideas": trade_ideas(assets, hl) if assets else [],
-            "summary": summary, "stance": stance, "next_boom": next_boom(), "mid_caps": mids, "low_caps": lows,
-            "trenches": safe("trenches", trenches, dex, lows, reads, fg, next_boom()),
+            "summary": summary, "stance": stance, "next_boom": next_boom() or BOOM_DEFAULT, "mid_caps": mids, "low_caps": lows,
+            "trenches": safe("trenches", trenches, dex, lows, reads, fg, next_boom()) or trenches_fallback(reads, fg, next_boom(), trend),
+            "insights": ins, "schema": SCHEMA,
             "size_scale": regime_scale_for(reg["key"]), "warnings": LOG[-12:]}
 
 
@@ -605,6 +631,24 @@ def lowcap_ideas(n=3):
     return out
 
 
+def trenches_fallback(reads, fg, boom, trend) -> dict:
+    """Never empty: when DEX pools are unavailable, an honest read from majors + trending."""
+    sol = next((r for r in reads if r["name"] == "SOL"), None)
+    tone = sol["tone"] if sol else "neutral"
+    mood = {"bull": "Trenches have a tailwind", "bear": "Trenches are bleeding", "neutral": "Trenches are choppy"}[tone]
+    take = (f"{mood}. I couldn't pull fresh on-chain pool data this round, so this is a read from SOL's structure"
+            + (f" (SOL is {sol['bias'].split(' ·')[0].lower()})" if sol else "") + " and what's trending. "
+            + ("Memecoin beta follows SOL; size up only into strength." if tone == "bull" else "Small size, fast exits, no bag-holding." ))
+    hot = [t for t in (trend or []) if (t.get("chg24") or 0) > 20][:3]
+    cold = [t for t in (trend or []) if (t.get("chg24") or 0) < -10][:3]
+    lt = [r["name"] for r in reads if r["tone"] == "bull"] + [str(c).lstrip("$") for c in ((boom or {}).get("crypto") or [])][:3]
+    return {"mood": mood, "take": take,
+            "could_pump": [{"sym": t["symbol"], "chain": "trending", "why": f"+{t['chg24']:.0f}% day, attention is on it"} for t in hot],
+            "could_dump": [{"sym": t["symbol"], "chain": "trending", "why": f"{t['chg24']:.0f}% day, momentum broke"} for t in cold],
+            "accumulate": [], "long_term": lt or ["BTC", "SOL"],
+            "rules": "Trenches rules: size for zero, take first profits early, never chase a green candle you didn't see build."}
+
+
 def trenches(dex, lows, reads, fg, boom):
     """Ledger's opinion on the memecoin trenches, from live DEX data (rule-based, honest)."""
     pools = []
@@ -699,7 +743,7 @@ def start():
         while True:
             try:
                 c = cached()
-                if not c or time.time() - c.get("ts", 0) > EVERY_H * 3600:
+                if not c or c.get("schema", 0) < SCHEMA or time.time() - c.get("ts", 0) > EVERY_H * 3600:
                     refresh()
             except Exception as e:
                 print(f"[MARKET] refresh error: {str(e)[:160]}")
