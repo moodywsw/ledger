@@ -89,7 +89,7 @@ def _asset(price, trend=1):
 def test_market_read_analysis_and_regime_scale(monkeypatch):
     a = _asset(155)
     r = market_thoughts.asset_read(a, {"funding_agg": 0.05, "oi_chg24": 5}, {"longs": 8, "shorts": 1})
-    assert r["tone"] == "bull" and r["plan"].startswith("Buy dips") and any("funding hot" in n for n in r["notes"])
+    assert r["tone"] == "bull" and r["plan"].startswith("Buy dips") and not any("funding" in n for n in r["notes"])
     reg = market_thoughts.regime({"BTC": _asset(150, -1) | {"price": 150}}, None, {"v": 80, "cls": "Greed"})
     assert reg["key"] == "risk_off"
     ideas = market_thoughts.trade_ideas({"BTC": a}, None)
