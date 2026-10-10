@@ -389,7 +389,7 @@ async function loadPredictions() {
   const S = P.sports || {}, pm = P.polymarket || {};
   const tot = (S.value || 0) + (pm.value_eur || 0), start = (S.start || 0) + 1000;
   $("pr-total").innerHTML = `${eur(tot)} <span class="${tone(tot - start)}" style="font-size:18px">${pc((tot / start - 1) * 100, 2)}</span>`;
-  $("pr-sub").textContent = `Paper bankroll €${start.toLocaleString()} · sports €${S.start || 1000} + Polymarket €1,000. Reference odds from Kalshi. Nothing real is placed.`;
+  $("pr-sub").textContent = `Paper bankroll €${start.toLocaleString()} · sports €${S.start || 1000} + Polymarket €1,000. Odds from Kalshi + Polymarket, data from ESPN + TheSportsDB. Nothing real is placed.`;
   $("pr-stats").innerHTML = [["Open", (S.open || []).length + (pm.positions || []).length], ["At stake", `€${(S.open_stake || 0).toFixed(0)}`], ["Settled", S.n_settled ?? 0],
     ["Hit rate", S.hit_rate == null ? "—" : pctp(S.hit_rate)], ["PnL", `<span class="${tone(S.pnl)}">€${(S.pnl || 0).toFixed(2)}</span>`]]
     .map(([k, v]) => `<div class="pr-stat"><span class="hud-label">${k}</span><b class="mono">${v}</b></div>`).join("");
