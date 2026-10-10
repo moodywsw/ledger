@@ -320,6 +320,16 @@ def api_fomo_theses():
         return jsonify({"enabled": False, "theses": [], "error": str(e)[:200]})
 
 
+@app.route("/api/persona/feed")
+def api_persona_feed():
+    """Ledger's voice: recent persona posts, mood and beliefs (for the website)."""
+    try:
+        import persona
+        return jsonify(persona.feed(limit=min(int(request.args.get("limit", 30)), 100)))
+    except Exception as e:
+        return jsonify({"posts": [], "mood": None, "beliefs": [], "error": str(e)[:200]})
+
+
 def start_api_server():
     """Starts the Flask app in a daemon background thread — call once from ledger_bot.py's main()."""
     def run():

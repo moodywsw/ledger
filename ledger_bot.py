@@ -4843,6 +4843,11 @@ def main():
           f"position_check={POSITION_CHECK_SECONDS}s config={json.dumps(RISK.as_dict())}")
 
     start_api_server()
+    try:
+        import persona
+        persona.start_persona()
+    except Exception as e:
+        print(f"[PERSONA] failed to start: {e}")
 
     if SNIPER_MODE_ENABLED:
         start_sniper_listener()
