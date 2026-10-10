@@ -51,3 +51,38 @@ def logos() -> dict:
     except Exception as e:
         print(f"[LOGOS] {type(e).__name__}")
     return _logos["m"]
+
+
+_dx = {"ts": 0, "d": None}
+
+
+def dex() -> dict:
+    """DEX flows: trending GeckoTerminal pools on Solana/Base/BSC/Ethereum, cached 5 min. Opens on DexScreener."""
+    with _lock:
+        if _dx["d"] and time.time() - _dx["ts"] < 300:
+            return _dx["d"]
+        items, seen = [], set()
+        for net in ("solana", "base", "bsc", "eth"):
+            try:
+                d = requests.get(f"https://api.geckoterminal.com/api/v2/networks/{net}/trending_pools", timeout=12, headers={"accept": "application/json"}).json().get("data") or []
+            except Exception:
+                continue
+            for p in d[:15]:
+                a = p.get("attributes") or {}
+                sym = (a.get("name") or "?").split(" / ")[0].upper()[:8]
+                if sym in seen or "USD" in sym or sym in ("SOL", "WETH", "WBNB", "ETH"):
+                    continue
+                pc = a.get("price_change_percentage") or {}
+                tx = (a.get("transactions") or {}).get("h24") or {}
+                def f(x):
+                    try: return float(x)
+                    except (TypeError, ValueError): return None
+                seen.add(sym)
+                dsnet = {"eth": "ethereum"}.get(net, net)
+                items.append({"id": f"https://dexscreener.com/{dsnet}/{a.get('address')}", "s": sym, "mc": f(a.get("market_cap_usd") or a.get("fdv_usd")) or 0,
+                              "h1": f(pc.get("h1")), "d1": f(pc.get("h24")), "w1": f(pc.get("h6")), "vol": f((a.get("volume_usd") or {}).get("h24")) or 0,
+                              "bs": (tx.get("buys") or 0) / max(1, (tx.get("buys") or 0) + (tx.get("sells") or 0)), "t": False, "net": net})
+        items.sort(key=lambda x: -x["vol"])
+        if items:
+            _dx.update(ts=time.time(), d={"ts": int(time.time()), "items": items[:45], "src": "dex"})
+        return _dx["d"] or {"ts": 0, "items": []}

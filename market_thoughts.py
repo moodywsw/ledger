@@ -644,31 +644,38 @@ DESK_SCHEMA = ('{"bias": "Bullish|Bearish|Neutral, with lean e.g. \'Neutral, lea
 
 
 def smart_money_rules(reads, dex, lows=None) -> dict:
-    acc, dis = [], []
+    """Group real flow evidence per asset; score > 0 = accumulating, < 0 = distributing."""
+    ev = {}
+    def add(name, score, txt):
+        e = ev.setdefault(name, {"score": 0.0, "ev": []}); e["score"] += score; e["ev"].append(txt)
+    m = lambda x: f"${x/1e6:.0f}m" if abs(x) >= 1e6 else f"${x/1e3:.0f}k"
     for r in reads:
         hl = r.get("hl") or {}
-        n = (hl.get("longs") or 0) + (hl.get("shorts") or 0)
-        if n >= 4:
-            if hl["longs"] >= 0.65 * n: acc.append({"name": r["name"], "why": f"Hyperliquid top traders {hl['longs']}/{n} long"})
-            elif hl["shorts"] >= 0.65 * n: dis.append({"name": r["name"], "why": f"Hyperliquid top traders {hl['shorts']}/{n} short"})
-        tl = r.get("top_long")
-        if tl and r.get("retail_long") and tl - r["retail_long"] >= 0.05:
-            acc.append({"name": r["name"], "why": f"Binance top traders {tl:.0%} long vs retail {r['retail_long']:.0%}"})
-        elif tl and r.get("retail_long") and r["retail_long"] - tl >= 0.05:
-            dis.append({"name": r["name"], "why": f"top traders {tl:.0%} long vs retail {r['retail_long']:.0%}: pros lighter than the crowd"})
+        if hl.get("longs") is not None:
+            net = (hl.get("long_ntl") or 0) - (hl.get("short_ntl") or 0)
+            if abs(net) >= 5e6:
+                add(r["name"], 1 if net > 0 else -1, f"HL top traders net {'long' if net > 0 else 'short'} {m(abs(net))} ({hl['longs']}L/{hl['shorts']}S)")
+        tl, rl = r.get("top_long"), r.get("retail_long")
+        if tl and rl and abs(tl - rl) >= 0.04:
+            add(r["name"], 1 if tl > rl else -1, f"Binance top traders {tl:.0%} long vs retail {rl:.0%}")
     try:
         import eyes
         e = eyes.cached()
         for k in ("etf_btc", "etf_eth", "etf_sol"):
             x = e.get(k)
-            if x and abs(x["sum5"]) >= 20:
-                (acc if x["sum5"] > 0 else dis).append({"name": f"{x['asset']} ETFs", "why": f"5-day net {x['sum5']:+.0f}m"})
+            if x and abs(x.get("sum5") or 0) >= 10:
+                add(x["asset"], 1 if x["sum5"] > 0 else -1, f"spot ETFs {'+' if x['sum5'] > 0 else '-'}${abs(x['sum5']):.0f}m net over 5 days")
     except Exception:
         pass
-    for d in (dex or [])[:8]:
-        if d.get("buy_share", 0.5) >= 0.58: acc.append({"name": d["pair"], "why": f"{d['buy_share']:.0%} of on-chain volume is buys"})
-        elif d.get("buy_share", 0.5) <= 0.42: dis.append({"name": d["pair"], "why": f"only {d['buy_share']:.0%} buys on-chain"})
-    return {"accumulating": acc[:6], "distributing": dis[:6]}
+    for d in (dex or [])[:10]:
+        bs, v = d.get("buy_share", 0.5), d.get("vol24") or 0
+        if v >= 2e5 and (bs >= 0.58 or bs <= 0.42):
+            add(d["pair"], 1 if bs >= 0.58 else -1, f"on-chain {bs:.0%} buys on {m(v)} 24h volume ({d.get('chain')})")
+    acc = sorted(((k, v) for k, v in ev.items() if v["score"] > 0), key=lambda kv: -kv[1]["score"])
+    dis = sorted(((k, v) for k, v in ev.items() if v["score"] < 0), key=lambda kv: kv[1]["score"])
+    mixed = [(k, v) for k, v in ev.items() if v["score"] == 0]
+    f = lambda xs: [{"name": k, "why": "; ".join(v["ev"][:3])} for k, v in xs[:5]]
+    return {"accumulating": f(acc), "distributing": f(dis), "mixed": f(mixed)}
 
 
 def _desk_facts(reads, reg, fg, cbp, glob, dex, prev) -> str:
@@ -757,8 +764,13 @@ def build():
             i["risk"] = risk_score(i)
             i["thesis"] = idea_thesis(i)
     tr = _with_radar(safe("trenches", trenches, dex, lows, reads, fg, next_boom()) or trenches_fallback(reads, fg, next_boom(), trend))
-    if not micros:
-        micros = safe("radar micros", radar_micros, tr) or []
+    taken = {i["name"] for i in mids + lows} | {n for n, _ in ASSETS}
+    micros = [i for i in micros if i["name"] not in taken]
+    if len(micros) < 3:
+        micros += safe("degen micros", degen_micros, taken | {i["name"] for i in micros}, 3 - len(micros)) or []
+    for i in micros:
+        i["risk"] = risk_score(i); i["thesis"] = idea_thesis(i)
+    tr["frontrun"] = safe("frontrun", frontrun) or []
     ins = _insights()
     if ins and ins.get("beliefs"):
         summary += " Daily reading: " + ins["beliefs"][0]
@@ -959,6 +971,150 @@ def microcap_ideas(n=2):
                     "mcap": o["mc"], "spec": True,
                     "why": f"{age_d:.0f}d old, first day sniped -{(1 - low_after / hi1):.0%}, now a base +{(px / low_after - 1):.0%} off the low; "
                            f"buyers > sellers on {len(acc)} scans, liquidity growing"})
+        if len(out) >= n:
+            break
+    return out
+
+
+FR_Q = ["launch date announced", "set to launch next week", "release date confirmed tech", "keynote event date", "election date vote next week",
+        "final match date", "token unlock next week", "binance will list", "film premiere date", "SpaceX launch date", "AI model release next week", "Fed meeting next week"]
+
+
+def _fr_path():
+    return cache_path().with_name("frontrun.json")
+
+
+def frontrun(max_age_h: float = 6) -> list:
+    """Upcoming catalysts (any domain) -> narrative tokens that could front-run them.
+    Events: Google News RSS + Mirko's eyes -> one LLM pass picks dated upcoming events with search keywords.
+    Tokens: DexScreener search per keyword; the OG (first-launched) token of a narrative ranks first, then volume and holders."""
+    try:
+        c = json.loads(_fr_path().read_text())
+        if time.time() - c["ts"] < max_age_h * 3600:
+            return c["items"]
+    except Exception:
+        pass
+    import xml.etree.ElementTree as ET, llm, ta
+    heads = []
+    for q in FR_Q:
+        try:
+            root = ET.fromstring(requests.get("https://news.google.com/rss/search", params={"q": q + " when:7d", "hl": "en-US", "gl": "US", "ceid": "US:en"}, timeout=10).content)
+            heads += [i.findtext("title", "")[:150] for i in list(root.iter("item"))[:6]]
+        except Exception:
+            continue
+    if not heads:
+        return []
+    today = dt.date.today().isoformat()
+    d, _ = llm.reason_json("You are Mirko, a degen narrative trader who front-runs events with memecoins/narrative tokens.",
+                           f"Today is {today}. From these headlines pick the 5 best UPCOMING events (next 3-45 days, any domain: tech launches, politics, sports, culture, crypto unlocks/listings, macro) "
+                           "that crypto traders could front-run with narrative tokens. For each give 1-2 short DexScreener search keywords for tokens likely named after it (e.g. 'GTA6', 'grok', 'starship').\n"
+                           + "\n".join(heads[:70]) + '\nJSON: {"events": [{"event": "...", "date": "YYYY-MM-DD or month", "domain": "tech|politics|sports|culture|crypto|macro", "why": "1 sentence why tokens could run", "keywords": ["..."]}]}', 1500)
+    items = []
+    for ev in ((d or {}).get("events") or [])[:5]:
+        toks, seen = [], set()
+        for kw in (ev.get("keywords") or [])[:2]:
+            try:
+                ps = requests.get("https://api.dexscreener.com/latest/dex/search", params={"q": kw}, timeout=10).json().get("pairs") or []
+            except Exception:
+                continue
+            for p in ps:
+                bt = p.get("baseToken") or {}
+                a = bt.get("address")
+                if not a or a in seen or p.get("chainId") not in ("solana", "base", "ethereum", "bsc"):
+                    continue
+                if kw.lower().replace(" ", "") not in (bt.get("symbol", "") + bt.get("name", "")).lower().replace(" ", ""):
+                    continue
+                vol = (p.get("volume") or {}).get("h24") or 0; mc = p.get("marketCap") or p.get("fdv") or 0
+                if mc < 2500 or ((p.get("liquidity") or {}).get("usd") or 0) < 1500:
+                    continue
+                seen.add(a)
+                toks.append({"sym": bt.get("symbol"), "name": bt.get("name"), "chain": p["chainId"], "ca": a, "mc": mc, "vol24": vol,
+                             "created": (p.get("pairCreatedAt") or 0) / 1000, "url": p.get("url")})
+        toks.sort(key=lambda t: t["created"] or 9e12)
+        if toks:
+            toks[0]["og"] = True
+        rest = sorted(toks[1:], key=lambda t: -t["vol24"])
+        pick = toks[:1] + rest[:2]
+        for t in pick:
+            t["age_d"] = round((time.time() - t["created"]) / 86400, 1) if t["created"] else None
+            try:
+                time.sleep(2.1)
+                h = ta.gt_holders(t["chain"], t["ca"]) or {}
+                t["holders"] = h.get("count")
+            except Exception:
+                t["holders"] = None
+        items.append({"event": ev.get("event"), "date": ev.get("date"), "domain": ev.get("domain"), "why": ev.get("why"), "tokens": pick})
+    try:
+        _fr_path().write_text(json.dumps({"ts": time.time(), "items": items}))
+    except Exception:
+        pass
+    return items
+
+
+LAUNCH_DEXES = [("solana", "pumpswap"), ("solana", "stonkfun"), ("solana", "letsbonk-fun"), ("solana", "raydium-launchlab"), ("solana", "pump-fun")]
+
+
+def degen_micros(exclude: set, n=3) -> list:
+    """Degen micro caps ($30k-$1.5M) that SURVIVED: age >= 24h, sustained volume, buyers ahead on 6h and 24h,
+    hard safety screens (RugCheck/GoPlus: no mint/freeze authority, no honeypot/tax, LP not pulled),
+    holder spread (>= 250 holders, top10 <= 35%), and on-chain whale buys >= whale sells over 24h.
+    Sources: pump.fun/PumpSwap, stonk.fun, letsbonk, Raydium LaunchLab pools via GeckoTerminal + DexScreener boosts."""
+    import safety, ta
+    cands, seen = [], set(x.upper() for x in exclude)
+    for net, dex, pg in [(n_, d_, p_) for n_, d_ in LAUNCH_DEXES for p_ in ((1, 2, 3, 4) if d_ in ("pumpswap", "stonkfun") else (1, 2))]:
+        try:
+            d = get(f"https://api.geckoterminal.com/api/v2/networks/{net}/dexes/{dex}/pools", {"sort": "h24_volume_usd_desc", "page": pg}).get("data") or []
+        except Exception as e:
+            log(f"degen {dex}: {str(e)[:60]}"); continue
+        time.sleep(2.1)
+        for q in d[:20]:
+            a = q.get("attributes") or {}
+            mint = (((q.get("relationships") or {}).get("base_token") or {}).get("data") or {}).get("id", "").split("_", 1)[-1]
+            try:
+                age_h = (time.time() - dt.datetime.fromisoformat(a["pool_created_at"].replace("Z", "+00:00")).timestamp()) / 3600
+                mc = float(a.get("market_cap_usd") or a.get("fdv_usd") or 0)
+                vol = float((a.get("volume_usd") or {}).get("h24") or 0)
+            except Exception:
+                continue
+            sym = (a.get("name") or "").split(" / ")[0][:14]
+            if mint and age_h >= 24 and 3e4 <= mc <= 1.5e6 and vol >= 3e4 and sym.upper() not in seen and not mint.startswith("So1111"):
+                cands.append({"sym": sym, "mint": mint, "net": net, "src": dex, "age_h": age_h, "mc": mc, "vol": vol, "pool": a.get("address")})
+                seen.add(sym.upper())
+    cands.sort(key=lambda c: -c["vol"] / max(c["mc"], 1))
+    out = []
+    for c in cands[:14]:
+        try:
+            ps = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{c['mint']}", timeout=8).json().get("pairs") or []
+        except Exception:
+            continue
+        if not ps:
+            continue
+        p = max(ps, key=lambda x: (x.get("liquidity") or {}).get("usd") or 0)
+        liq = (p.get("liquidity") or {}).get("usd") or 0
+        tx = p.get("txns") or {}; h6, h24 = tx.get("h6") or {}, tx.get("h24") or {}
+        if liq < 1.5e4 or h6.get("buys", 0) <= h6.get("sells", 0) or h24.get("buys", 0) <= h24.get("sells", 0):
+            continue
+        sf = safety.check("solana", c["mint"])
+        if not sf["ok"]:
+            log(f"degen {c['sym']} rejected: {', '.join(sf['flags'])[:80]}"); continue
+        time.sleep(2.1)
+        ho = ta.gt_holders("solana", c["mint"]) or {}
+        if not ho.get("count") or ho["count"] < 250 or (ho.get("top10_pct") or 100) > 35:
+            continue
+        time.sleep(2.1)
+        wh = ta.whale_trades("solana", p["pairAddress"], 500) or {}
+        if not wh or wh.get("buys_usd", 0) < wh.get("sells_usd", 0) or wh.get("n_buys", 0) < 2:
+            continue
+        px = float(p.get("priceUsd") or 0)
+        if not px:
+            continue
+        mc = p.get("marketCap") or p.get("fdv") or c["mc"]
+        src = {"pumpswap": "pump.fun grad", "pump-fun": "pump.fun", "stonkfun": "stonk.fun", "letsbonk-fun": "letsbonk", "raydium-launchlab": "LaunchLab"}.get(c["src"], c["src"])
+        out.append({"name": p.get("baseToken", {}).get("symbol") or c["sym"], "chain": "solana", "address": c["mint"], "tier": "micro", "side": "Long", "venue": "Spot", "spec": True,
+                    "mcap": mc, "entry_lo": px * 0.92, "entry_hi": px * 1.02, "stop": px * 0.7, "t1": px * 2, "t2": px * 4, "rr": round((2 - 1) / 0.3, 2),
+                    "holders": ho["count"], "top10": ho.get("top10_pct"), "age_d": round(c["age_h"] / 24, 1), "lp_locked": sf.get("lp_locked"),
+                    "why": f"{src}, survived {c['age_h'] / 24:.0f}d · {ho['count']:,} holders, top10 {ho.get('top10_pct', 0):.0f}% · whales bought ${wh['buys_usd']:,} vs sold ${wh['sells_usd']:,} (24h) · "
+                           f"{h24['buys']}/{h24['sells']} buys/sells · ${liq / 1000:.0f}k liq · RugCheck/GoPlus clean. Degen size only."})
         if len(out) >= n:
             break
     return out

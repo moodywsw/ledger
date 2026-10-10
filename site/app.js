@@ -131,12 +131,31 @@ function renderMind(f) {
   const ps = f.posts || [];
   const list = ps.slice(0, 30).reverse();   // chat-like: oldest at top, newest at the bottom
   const newest = list.length ? list[list.length - 1].ts : 0, atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
-  body.innerHTML = list.length ? list.map((p, i) => { const [ic, lb] = KIND[p.kind] || ["💬", p.kind];
+  body.innerHTML = '<div class="mf-inner">' + (list.length ? list.map((p, i) => { const [ic, lb] = KIND[p.kind] || ["💬", p.kind];
     return `<div class="thought ${i === list.length - 1 ? "latest" : ""} k-${esc(p.kind)}"><div class="th-meta"><span class="th-tag">${ic} ${esc(p.topic ? p.topic.replace(/_/g, " ") : lb)}</span><span class="th-time">${ago(new Date(p.ts * 1000))}</span></div><div class="th-text">${esc(p.text)}</div></div>`; }).join("")
     : (f.beliefs || []).length ? f.beliefs.map(b => `<div class="thought"><div class="th-meta"><span>🧭 belief</span></div><div class="th-text">${esc(b)}</div></div>`).join("")
-    : empty("Mirko is quiet for now — first thoughts land within a few hours.");
-  LEDGER._lastPost = newest; const stick = () => { body.scrollTop = body.scrollHeight; };
-  requestAnimationFrame(stick); setTimeout(stick, 400);   // newest thought always in view
+    : empty("Mirko is quiet for now — first thoughts land within a few hours.")) + "</div>";
+  LEDGER._lastPost = newest;
+  mindStick(body);
+}
+// Keep the thoughts list pinned to the newest message through every layout change (fonts, images, resize),
+// unless the reader deliberately scrolled up in the last 15s.
+function mindStick(body) {
+  const stick = () => { if (Date.now() - (body._userUp || 0) > 15000) body.scrollTop = body.scrollHeight; };
+  if (!body._stickInit) {
+    body._stickInit = true;
+    body.addEventListener("wheel", e => { if (e.deltaY < 0) body._userUp = Date.now(); }, { passive: true });
+    body.addEventListener("touchmove", () => { body._userUp = Date.now(); }, { passive: true });
+    body.addEventListener("scroll", () => { if (body.scrollHeight - body.scrollTop - body.clientHeight < 8) body._userUp = 0; }, { passive: true });
+    body.addEventListener("load", stick, true);   // images inside thoughts
+    new ResizeObserver(stick).observe(body);
+    if (document.fonts) document.fonts.ready.then(stick);
+    window.addEventListener("load", stick);
+    window.addEventListener("ledger:view", () => setTimeout(stick, 50));
+  }
+  const inner = body.querySelector(".mf-inner");
+  if (inner) { if (body._ro) body._ro.disconnect(); body._ro = new ResizeObserver(stick); body._ro.observe(inner); }
+  stick(); requestAnimationFrame(stick); setTimeout(stick, 300); setTimeout(stick, 1200);
 }
 
 function setConn(ok) { $("conn-dot").className = `dot ${ok ? "ok" : "err"}`; $("conn-status").textContent = ok ? "Live" : "Unreachable";
@@ -169,30 +188,20 @@ async function loadMarket() {
   LEDGER.market = m;
   try { renderReading(m.insights); } catch (e) { console.warn(e); }
   const B = m.brief;
-  $("mt-regime").textContent = B ? B.headline : m.regime.label;
+  $("mt-regime").textContent = "";
   $("br-chips").innerHTML = B ? B.chips.map(c => `<span class="brc ${c.tone}"><small>${esc(c.k)}</small><b>${esc(c.v)}</b></span>`).join("") : "";
   $("br-list").innerHTML = B ? B.bullets.map(x => `<li><span class="bi">${esc(x.i)}</span><span>${esc(x.t)}</span></li>`).join("") : `<li><span>${esc(m.summary || "")}</span></li>`;
   $("br-doing").innerHTML = B ? `<span class="hud-label">What I'm doing</span> ${esc(B.doing)}` : "";
   const D = m.desk;
   if (D && D.headline) {
     const bt = /bull/i.test(D.bias) ? "bull" : /bear/i.test(D.bias) ? "bear" : "neutral";
-    $("mt-regime").textContent = D.headline;
     $("br-chips").insertAdjacentHTML("afterbegin", `<span class="brc ${bt}"><small>Bias</small><b>${esc(D.bias)}</b></span><span class="brc"><small>Confidence</small><b>${D.confidence}%</b></span>`);
-    const SMx = (D.smart_money && (D.smart_money.accumulating || []).length) ? D.smart_money : (m.smart_money || {});
-    const smLine = [(SMx.accumulating || []).length ? `smart money accumulating ${SMx.accumulating.slice(0, 3).map(x => x.name).join(", ")}` : "", (SMx.distributing || []).length ? `distributing ${SMx.distributing.slice(0, 3).map(x => x.name).join(", ")}` : ""].filter(Boolean).join("; ");
-    $("br-doing").innerHTML = `<span class="hud-label">Takeaway</span> ${esc(D.takeaway || "")}${smLine ? ` <span class="sm-inline">🐋 ${esc(smLine)}.</span>` : ""}`;
-    $("br-list").innerHTML = (D.plan || []).slice(0, 2).map(p => `<li><span class="bi">🎯</span><span><b>If</b> ${esc(p.if || "")} <b>→</b> ${esc(p.then || "")}</span></li>`).join("");
-    const li = xs => (xs || []).map(x => `<li>${esc(x)}</li>`).join("");
-    $("mt-desk").innerHTML = `<div class="dk-meta"><span class="dk-bias ${bt}"><span>${esc(D.bias)}</span><i style="--c:${D.confidence}%"></i><b class="mono">${D.confidence}%</b></span><span class="muted sm mono">desk note · ${esc(D.ts_h || "")}</span></div>
-      <div class="dk-grid">
-        <div class="dk-box"><h3>⟳ What changed</h3><ul>${li(D.changed)}</ul></div>
-        <div class="dk-box"><h3>⚖ Positioning &amp; flows</h3><ul>${li(D.flows)}</ul></div>
-        <div class="dk-box"><h3>🎯 Plan</h3><ul class="dk-plan">${(D.plan || []).map(p => `<li><span class="if">IF</span> ${esc(p.if || "")} <span class="then">→</span> ${esc(p.then || "")}</li>`).join("")}</ul></div>
-        <div class="dk-box"><h3>⚠ Risks</h3><ul>${li(D.risks)}</ul></div>
-        ${(D.degen_picks || []).length ? `<div class="dk-box degen"><h3>🎲 Degen picks · high risk</h3><ul class="dg">${D.degen_picks.map(x => `<li><b>${esc(x.name)}</b>${x.chain ? ` <span class="cn">${esc(x.chain)}</span>` : ""}<p>${esc(x.thesis || "")}</p><small>☠ ${esc(x.risk || "")}</small></li>`).join("")}</ul></div>` : ""}
-      </div>`;
-    $("mt-desk").classList.remove("hidden");
-  } else $("mt-desk").classList.add("hidden");
+    $("br-doing").innerHTML = `<span class="hud-label">Takeaway</span> ${esc(D.takeaway || "")}`;
+    const SM = m.smart_money || {}, smb = (xs, k) => (xs || []).length ? `<li class="sm-${k}"><span class="bm"></span><span><b>${k === "acc" ? "Smart money accumulating" : "Smart money distributing"}:</b> ${xs.slice(0, 3).map(x => `<b class="smn">${esc(x.name)}</b> <span class="muted">(${esc(x.why)})</span>`).join(" · ")}</span></li>` : "";
+    $("br-list").innerHTML = `<li><span class="bm"></span><span>${esc(D.headline)}</span></li>`
+      + (D.plan || []).slice(0, 2).map(p => `<li><span class="bm"></span><span><b>If</b> ${esc(p.if || "")} <b class="arr">→</b> ${esc(p.then || "")}</span></li>`).join("")
+      + smb(SM.accumulating, "acc") + smb(SM.distributing, "dis");
+  }
   if (m.fng) { $("fng-v").textContent = m.fng.v; $("fng-l").textContent = `${m.fng.cls} · yesterday ${m.fng.prev}`; drawFng(m.fng.v); }
   const riskEmo = r => r == null ? "" : r <= 3 ? "🟢" : r <= 6 ? "🟡" : r <= 8 ? "🟠" : "🔴";
   const riskOf = i => i.risk ?? Math.max(0, Math.min(10, ({ mid: 4, low: 7, micro: 8 }[i.tier] ?? 2) + (i.venue === "Perp" ? 1 : 0) + ((i.rr || 0) < 1.5 ? 1 : 0) + (i.spec ? 1 : 0)));
@@ -205,9 +214,13 @@ async function loadMarket() {
   $("mt-maj").innerHTML = col(m.trade_ideas || [], "No clean setup on the majors.");
   $("mt-mid").innerHTML = col(m.mid_caps || [], "No mid cap is accumulating cleanly.");
   $("mt-low").innerHTML = col(m.low_caps || [], "No low cap passes the filters.");
-  const DG = (m.desk || {}).degen_picks || [];
-  $("mt-micro").innerHTML = (m.micro_caps || []).length ? col(m.micro_caps, "") : DG.length ? DG.map(x => `<article class="ic2 long degen"><header>${icon(x.name)}<b class="ic-tk">${esc(x.name)}</b><span class="ic-side">🎲 Degen</span><span class="ic-venue">${esc(x.chain || "")}</span><span class="ic-risk">🔴 9</span></header>
-      <p class="ic-th2">${esc(x.thesis || "")}<span class="ic-trg">☠ ${esc(x.risk || "")}</span></p></article>`).join("") : `<div class="empty sm">No micro cap worth the risk today.</div>`;
+  $("mt-micro").innerHTML = (m.micro_caps || []).length ? m.micro_caps.map(i => idea(i).replace("</header>", `</header><div class="mc-safe mono">${i.age_d != null ? `<span>⏱ ${i.age_d}d</span>` : ""}${i.holders ? `<span>👥 ${Number(i.holders).toLocaleString()}</span>` : ""}${i.top10 != null ? `<span>top10 ${Math.round(i.top10)}%</span>` : ""}${i.lp_locked != null ? `<span>LP lock ${Math.round(i.lp_locked)}%</span>` : ""}<span class="ok">✓ rug screens</span></div>`)).join("")
+    : `<div class="empty sm">Nothing survived the screens today (rug/honeypot checks, 24h+ age, holder spread, whale buys). No forced picks.</div>`;
+  const FR = ((m.trenches || {}).frontrun) || [];
+  $("mt-front").innerHTML = FR.length ? FR.map(e => `<div class="fr-ev"><div class="fr-h"><span class="fr-date mono">${esc(e.date || "")}</span><b>${esc(e.event || "")}</b><span class="cn">${esc(e.domain || "")}</span></div>
+      <p class="fr-why">${esc(e.why || "")}</p>
+      <div class="fr-toks">${(e.tokens || []).map(t => `<a class="fr-tok" href="${/^https:\/\//.test(t.url || "") ? esc(t.url) : "#"}" target="_blank" rel="noopener"><b>${esc(t.sym)}</b>${t.og ? '<span class="og">OG</span>' : ""}<span class="mono">${big(t.mc)} MC · ${t.age_d != null ? t.age_d + "d" : "?"} · ${t.holders ? Number(t.holders).toLocaleString() + " holders" : "holders n/a"}</span><code>${esc(t.chain)} · ${esc(t.ca.slice(0, 4))}…${esc(t.ca.slice(-4))}</code></a>`).join("")}</div></div>`).join("")
+    : `<div class="empty sm">No dated catalyst worth front-running right now.</div>`;
   const T = m.trenches;
   $("tr-mood").textContent = T ? T.mood : "—";
   const heat = !T ? "cold" : /fire|tailwind/i.test(T.mood) ? "hot" : /selective|choppy/i.test(T.mood) ? "warm" : "cold";
@@ -247,7 +260,6 @@ async function loadMarket() {
     <div class="coin-flip"><span class="hud-label">Flips if</span>${esc(c.flip || `${a.bull_case} / ${a.bear_case}`)}</div></article>`; }).join("");
   const SM = ((m.desk || {}).smart_money && ((m.desk.smart_money.accumulating || []).length + (m.desk.smart_money.distributing || []).length)) ? m.desk.smart_money : (m.smart_money || { accumulating: [], distributing: [] });
   const smli = xs => (xs || []).map(x => `<li><b>${esc(x.name)}</b><span>${esc(x.why || "")}</span></li>`).join("") || `<li class="muted">Nothing clear right now.</li>`;
-  $("sm-acc").innerHTML = smli(SM.accumulating); $("sm-dis").innerHTML = smli(SM.distributing);
   const hl = m.hyperliquid;
   $("hl-sub").textContent = hl ? `${hl.accounts} profitable accounts > $1M` : "unavailable";
   $("mt-hl").innerHTML = hl ? Object.entries(hl.coins).map(([c, h]) => { const ls = h.long_share == null ? 0.5 : h.long_share;
@@ -260,7 +272,6 @@ async function loadMarket() {
   $("mt-dex").innerHTML = (m.dex_flows || []).length ? m.dex_flows.map(d => `<div class="row"><div class="l"><div class="t">${esc(d.pair)} <span class="cn">${esc(d.chain)}</span></div>
       <div class="lsbar thin"><i style="width:${Math.round(d.buy_share * 100)}%"></i></div><div class="m mono">vol ${big(d.vol24)} · liq ${big(d.liq)}</div></div>
       <div class="mono ${cls(d.chg24)}">${pc(d.chg24, 0)}</div></div>`).join("") : empty("No DEX flow data this round.");
-  $("mt-trend").innerHTML = (m.trending || []).map(t => `<div class="tchip"><b>${esc(t.symbol)}</b><span class="mono ${cls(t.chg24)}">${pc(t.chg24, 0)}</span></div>`).join("") || empty("—");
   } catch (e) { console.warn("market lower", e); }
 }
 const md = t => esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/\*/g, "");
@@ -317,9 +328,6 @@ async function loadPortfolio() {
   pfLive();
   $("pf-trades").innerHTML = (P.trades || []).length ? P.trades.map(t => `<div class="row"><div class="l"><div class="t">${esc(t.action)} ${esc(t.sym)} <span class="cn">${SLV[t.sleeve][0]}</span></div>
       <div class="m">${esc(noRR(t.why))}</div></div><div class="mono" style="text-align:right">${eur(t.eur)}${t.pnl_pct != null ? `<br><span class="${cls(t.pnl_pct)}">${pc(t.pnl_pct, 1)}</span>` : ""}<br><span class="jt">${ago(new Date(t.ts * 1000))}</span></div></div>`).join("") : empty("No trades yet.");
-  const C = P.commentary || {};
-  if ($("pf-comment")) $("pf-comment").innerHTML = `<p>${esc(C.intro || "")}</p><ul>${Object.entries(C.sleeves || {}).filter(([, n]) => n).map(([k, n]) => `<li><b>${SLV[k][0]}:</b> ${esc(n)}</li>`).join("")}</ul>
-    ${(C.positions || []).length ? `<div class="label pad" style="margin-top:12px">Why I hold each position</div><ul>${C.positions.map(p => `<li><b>${esc(p.sym)}</b> — ${esc(noRR(p.why))}</li>`).join("")}</ul>` : ""}`;
 }
 const noRR = t => String(t || "").replace(/\s*\(?R:R[^)\n]*\)?\.?/g, "").trim();
 const book = b => b ? `<span class="tier">${esc(b)}</span>` : "";

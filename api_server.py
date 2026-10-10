@@ -566,7 +566,7 @@ def api_logos():
 @app.route("/api/bubbles")
 def api_bubbles():
     import bubbles
-    r = jsonify(bubbles.get())
+    r = jsonify(bubbles.dex() if request.args.get("src") == "dex" else bubbles.get())
     r.headers["Cache-Control"] = "public, max-age=120"
     return r
 

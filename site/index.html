@@ -80,30 +80,29 @@
 
 <main class="wrap view hidden" id="view-market">
   <section class="card mt-hero">
-    <div class="brief"><div class="label">Mirko Market Thoughts</div><h1 id="mt-regime">Preparing the first read…</h1>
+    <div class="brief"><div class="label">Live desk read</div><h1 class="mt-title">Mirko Market Thoughts</h1><span id="mt-regime" hidden></span>
       <div class="br-chips" id="br-chips"></div><ul class="br-list" id="br-list"></ul><div class="br-doing" id="br-doing"></div></div>
     <div class="fng"><canvas id="fng-gauge" width="220" height="130"></canvas><div class="fng-v mono" id="fng-v">—</div><div class="muted" id="fng-l">Fear &amp; Greed</div></div>
   </section>
   <section class="card bub-card" id="bub-card">
     <div class="card-head"><div><div class="label">Top 50 · CoinGecko · trending ★ · tap a bubble</div><h2>🫧 Market bubbles</h2></div>
-      <div class="seg" id="bub-tf"><button data-tf="h1">1h</button><button data-tf="d1" class="on">24h</button><button data-tf="w1">7d</button></div></div>
+      <div class="bub-ctl"><div class="seg" id="bub-src"><button data-src="cg" class="on">Top 50</button><button data-src="dex">DEX flows</button></div><div class="seg" id="bub-tf"><button data-tf="h1">1h</button><button data-tf="d1" class="on">24h</button><button data-tf="w1">7d</button></div></div></div>
     <canvas id="bub" height="260" aria-label="Crypto bubbles: size and colour by price change"></canvas></section>
   <div class="mt-row">
     <section class="majors" id="mt-assets"></section>
     <section class="card boom"><div class="card-head"><h2>🔭 Next Boom</h2><div class="tabs" id="boom-tabs"><button class="tab active" data-b="cur">Current</button><button class="tab" data-b="prev">Previous</button></div></div><div id="mt-boom"></div><div id="mt-boom-prev" class="hidden"></div><div class="boom-foot" id="boom-w"></div></section>
   </div>
-  <section class="card sm-card" id="sm-card"><div class="card-head"><div><div class="label">Who's buying, who's selling</div><h2>🐋 Smart money: accumulating / distributing</h2></div></div>
-    <div class="sm-grid"><div class="sm-col acc"><h3>▲ Accumulating</h3><ul id="sm-acc"></ul></div><div class="sm-col dis"><h3>▼ Distributing</h3><ul id="sm-dis"></ul></div></div></section>
   <section class="card ideas-card"><div class="card-head"><div><div class="label">Entry → target · stop, with the why</div><h2>🎯 Trade ideas</h2></div></div>
     <div class="ideas-4">
       <div><div class="ideas-h">Majors</div><div id="mt-maj" class="ideas-col"></div></div>
       <div><div class="ideas-h">Mid caps</div><div id="mt-mid" class="ideas-col"></div></div>
       <div><div class="ideas-h">Low caps</div><div id="mt-low" class="ideas-col"></div></div>
       <div><div class="ideas-h">Micro caps · degen</div><div id="mt-micro" class="ideas-col"></div></div>
-    </div></section>
-  <section class="card desk-sec"><div class="card-head"><div><div class="label">Positioning · levels · plan · trenches</div><h2>🧭 Mirko's Desk</h2></div></div>
-    <div id="mt-desk" class="desk hidden"></div>
-    <div class="trench-in" id="trench-box"><div class="tr-head"><span class="tr-title">⛏ Trenches</span><span class="tr-badge" id="tr-mood">—</span></div><div id="mt-trench"></div></div></section>
+    </div>
+    <div class="trench-in" id="trench-box"><div class="tr-head"><span class="tr-title">⛏ Mirko on the trenches</span><span class="tr-badge" id="tr-mood">—</span></div><div id="mt-trench"></div>
+      <div class="fr" id="fr-box"><div class="tr-head"><span class="tr-title">⚡ Frontrun · upcoming catalysts</span><span class="muted sm">OG tokens first, then volume &amp; holders</span></div><div id="mt-front"></div></div></div>
+    <div id="mt-desk" hidden></div>
+  </section>
   <section class="card reading" id="reading">
     <div class="rd-head"><div><div class="label">Daily intake · funds · policy · tech</div><h2>📚 What Mirko read today</h2></div></div>
     <div class="rd-chips" id="rd-chips"></div>
@@ -112,7 +111,6 @@
   <div class="grid2 mt-lower">
     <section class="card collapsible" data-key="mthl" data-fold="1"><div class="card-head"><h2>Hyperliquid top traders</h2><span class="muted"><span id="hl-sub"></span></span><button class="fold" aria-label="Expand">+</button></div><div class="fold-body"><div id="mt-hl" class="list"></div></div></section>
     <section class="card collapsible" data-key="mtdex" data-fold="1"><div class="card-head"><h2>DEX flows · trending pools</h2><span class="muted">24h buyer share</span><button class="fold" aria-label="Expand">+</button></div><div class="fold-body"><div id="mt-dex" class="list"></div></div></section>
-    <section class="card collapsible" data-key="mttrend" data-fold="1"><div class="card-head"><h2>Trending</h2><span class="muted">CoinGecko</span><button class="fold" aria-label="Expand">+</button></div><div class="fold-body"><div id="mt-trend" class="trend"></div></div></section>
   </div>
   <footer class="foot">Free public data · Binance, Bybit, OKX, Coinbase, CoinGecko, alternative.me, Hyperliquid, GeckoTerminal, SEC EDGAR, ARK, central-bank &amp; news RSS · refreshed every 2h</footer>
 </main>
@@ -144,18 +142,17 @@
 </main>
 
 <main class="wrap view hidden" id="view-ta">
-  <section class="card ta-card">
-    <div class="ta-top"><div><div class="label">Mirko TA · any coin · chart, flows, sentiment, verdict</div><h2>Ticker, name or contract address</h2></div>
-      <form class="ta-form" id="ta-form" autocomplete="off"><input id="ta-q" maxlength="64" placeholder="SOL · dogwifhat · So111… · 0x…" spellcheck="false"><button class="btn" type="submit">Analyse</button></form></div>
+  <section class="card ta-search">
+    <form class="ta-form" id="ta-form" autocomplete="off"><span class="ta-ico">⌕</span><input id="ta-q" maxlength="64" placeholder="Any coin: ticker (SOL), name (dogwifhat) or contract (So1…, 0x…)" spellcheck="false" aria-label="Coin to analyse"><button class="btn" type="submit">Analyse</button></form>
     <div class="ta-picks" id="ta-picks"></div>
-    <div class="ta-meta" id="ta-meta"></div>
-    <div class="ta-tv hidden" id="ta-tv"></div>
-    <div class="ta-own"><div class="ta-own-h"><span class="hud-label">Mirko's annotated chart</span><span class="ta-legend mono"><span class="lg e20">EMA20</span><span class="lg e50">EMA50</span><span class="lg e200">EMA200</span><span class="lg sr">S/R</span><span class="lg tl">Trend</span><span class="lg poc">POC</span><span class="lg bu">Bull</span><span class="lg ba">Base</span><span class="lg be">Bear</span></span></div>
-      <div class="ta-chart" id="ta-chart"></div><div class="ta-rsi" id="ta-rsi"></div>
-      <a class="ta-attr" href="https://www.tradingview.com/" target="_blank" rel="noopener">Charts: TradingView Lightweight Charts™</a></div>
   </section>
-  <section class="ta-verdict hidden" id="ta-verdict"></section>
-  <section class="ta-secs hidden" id="ta-secs"></section>
+  <section class="card ta-chartcard">
+    <div class="ta-head" id="ta-meta"></div>
+    <div class="ta-stage"><div class="ta-chart" id="ta-chart"></div><canvas class="ta-ov" id="ta-ov"></canvas></div>
+    <div class="ta-legend mono"><span class="lg zs">Support zone</span><span class="lg zr">Resistance zone</span><span class="lg en">Entry</span><span class="lg tp">TP</span><span class="lg sl">SL</span><span class="lg tl">Trendline</span><span class="lg poc">POC</span><span class="lg e20">EMA20</span><span class="lg e50">EMA50</span><span class="lg bu">Bull path</span><span class="lg be">Bear path</span>
+      <a class="ta-attr" href="https://www.tradingview.com/" target="_blank" rel="noopener">Lightweight Charts™</a></div>
+  </section>
+  <section class="ta-read hidden" id="ta-read"></section>
 </main>
 
 <main class="wrap view hidden" id="view-ask">
