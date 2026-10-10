@@ -22,29 +22,30 @@ def test_entry_card_is_short_and_complete():
     c = tc.entry_card(mint=MINT, symbol="POPCAT", name="Popcat Fan Club", price_usd=0.00012345,
                       mcap_usd=123_456, size_sol=0.1, size_usd=15.2, thesis="x " * 300)
     _limits_ok(c)
-    assert c["title"] == "🟢 ENTRY · 🪙 Popcat Fan Club (POPCAT)"
+    assert c["title"] == "🟢 BUY · Popcat Fan Club (POPCAT)"
     assert "$POPCAT" not in c["title"]  # "$TICKER" pings other bots
     lines = c["description"].splitlines()
-    assert lines[0] == f"📋 `{MINT}`"
+    assert lines[0].startswith("> 🧠 ") and lines[0].endswith("…")
+    assert lines[1] == f"**CA** `{MINT}`"
     for host in ("dexscreener.com/solana/", "pump.fun/coin/", "solscan.io/token/"):
-        assert host + MINT in lines[1]
-    assert lines[2].startswith("🧠 ") and lines[2].endswith("…") and len(lines[2]) <= 145
-    assert _vals(c) == {"💵 Entry": "$0.0001234 · $123.5K MC", "💰 Size": "0.100 SOL · $15.20"}
-    assert c["color"] == tc.COLOR_ENTRY
-    # trimmed spec: no paper/real tag, no footer, no source/reason/hold
-    blob = json.dumps(c, ensure_ascii=False)
-    for gone in ("PAPER", "REAL", "footer", "Source", "Reason", "Held"):
-        assert gone not in blob
+        assert host + MINT in lines[2]
+    v = _vals(c)
+    assert v["💰 Size"] == "**$15.20** USDC · 0.100 SOL" and v["💵 Entry"] == "$0.0001234" and v["🏷️ Market cap"] == "$123.5K"
+    assert v["⛓️ Chain"] == "◎ Solana" and c["color"] == tc.COLOR_WIN
 
 
 def test_exit_card_win_loss_and_trim():
     win = tc.exit_card(mint=MINT, symbol="WIF", entry_mcap_usd=200_000, exit_mcap_usd=300_000,
                        pnl_sol=0.05, pnl_usd=7.5, pnl_pct=0.5)
     _limits_ok(win)
-    assert win["title"] == "✅ EXIT · 🪙 WIF" and win["color"] == tc.COLOR_WIN
-    assert _vals(win) == {"📈 PnL": "**+50.0%** · +0.050 SOL · +$7.50", "💵 MC": "$200.0K → $300.0K"}
+    assert win["title"] == "✅ FULL EXIT · WIF" and win["color"] == tc.COLOR_WIN
+    assert _vals(win)["📈 PnL"] == "**+50.0%** · +$7.50 · +0.050 SOL" and _vals(win)["🏷️ MC"] == "$200.0K → $300.0K"
+    assert _vals(win)["🎒 Remaining"] == "position closed"
     loss = tc.exit_card(mint=MINT, symbol="WIF", pnl_sol=-0.02, pnl_usd=-3.0, pnl_pct=-0.2, partial_fraction=0.33)
-    assert loss["title"] == "🔴 TRIM 33% · 🪙 WIF" and loss["color"] == tc.COLOR_LOSS
+    assert loss["title"] == "🔴 TRIM 33% · WIF" and loss["color"] == tc.COLOR_LOSS
+    assert _vals(loss)["🎒 Remaining"] == "67% still riding"
+    st = tc.exit_card(mint=MINT, symbol="WIF", pnl_usd=-3.0, pnl_pct=-0.3, reason="stop_loss")
+    assert st["title"] == "🛑 STOP LOSS · WIF" and st["color"] == tc.COLOR_STOP
     assert "📉 PnL" in _vals(loss)
 
 
@@ -69,7 +70,7 @@ def test_speak_posts_embed_and_respects_post_discord(monkeypatch):
     assert sent[0]["embeds"] == [card] and "content" not in sent[0]
     lb.speak(title="t", description="d", embed=card, post_discord=False)
     assert len(sent) == 1
-    monkeypatch.setattr(lb, "DISCORD_TRADE_FORMAT", "text")
+    monkeypatch.setattr(lb, "DISCORD_TRADE_FORMAT", "text-forced")
     lb.speak(title="t", description="d", embed=card)
     assert "embeds" not in sent[1] and MINT in sent[1]["content"]
 
@@ -94,10 +95,10 @@ def test_paper_round_trip_cards(monkeypatch):
     lb.partial_close_paper_position(st, MINT, 1.5, 0.5, reason="tp")
     lb.close_paper_position(st, MINT, 0.8, reason="stop")
     trim, final = [k["embed"] for k in calls if k.get("embed")]
-    assert trim["title"].startswith("✅ TRIM 50%")
+    assert trim["title"].startswith("✅ TAKE PROFIT 50%")
     # final card reports the WHOLE round trip (+0.075 trim, -0.03 stop = +0.045 SOL, +15%)
-    assert final["title"].startswith("✅ EXIT")
-    assert _vals(final)["📈 PnL"] == "**+15.0%** · +0.045 SOL · +$4.50"
+    assert final["title"].startswith("✅ FULL EXIT")
+    assert _vals(final)["📈 PnL"] == "**+15.0%** · +$4.50 · +0.045 SOL"
 
 
 def test_scale_ins_are_not_posted(monkeypatch):
@@ -133,5 +134,5 @@ def test_real_only_sell_card(monkeypatch):
                             "realized_pnl_usdc": 4.0, "fraction_sold": 1.0}, "BONK", MINT, "sell", reason="stop")
     k = calls[0]
     c = k["embed"]
-    assert k["post_discord"] is True and c["title"] == "✅ EXIT · 🪙 BONK"
-    assert _vals(c) == {"📈 PnL": "**+20.0%** · +$4.00", "💵 MC": "$200.0K → $500.0K"}
+    assert k["post_discord"] is True and c["title"] == "✅ FULL EXIT · BONK"
+    assert _vals(c)["📈 PnL"] == "**+20.0%** · +$4.00" and _vals(c)["🏷️ MC"] == "$200.0K → $500.0K"

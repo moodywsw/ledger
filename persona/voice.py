@@ -113,6 +113,10 @@ def write(kind: str, ctx: dict, beliefs: list | None = None) -> str:
                       "respectful: no hate, slurs or dehumanising language, no calls to violence, no election or voting misinformation, "
                       "never attack or target a private individual, don't make light of deaths or tragedies. Opinions are fine; facts must "
                       "come from the headline only.\n") if str(ctx.get('topic', '')).startswith('world') else "")
+                  + (("This is MY OWN OPINION post: keep the exact subject (coin/stock/person/news) and the conviction % from the draft, "
+                      "state a bold, clear stance in first person (agree/disagree, bullish/bearish, respect/doubt) and one reason. "
+                      "About people: judge only their public market moves or statements, never their private life. End with 'Conviction N%'.\n")
+                     if str(ctx.get('topic', '')).startswith('opinion') else "")
                   + f"My mood: {moodmod.label(m)}. My beliefs: {'; '.join((beliefs or [])[:4])}\n"
                   f"Don't repeat these recent posts: {ctx.get('recent')}\nShow emotion and a clear opinion. Fallback draft: {draft}")
     else:

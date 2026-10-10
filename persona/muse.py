@@ -231,6 +231,10 @@ def _mr_vals(mr) -> dict:
 
 
 def choose_topic(recent: list, ctx: dict, rng=random) -> str:
+    # own opinions are the heart of the feed: ~40% of musings
+    op = [t for t in ("opinion", "opinion_people") if t not in recent[-1:]]
+    if op and rng.random() < 0.4:
+        return rng.choice(op)
     avail = [t for t in TOPICS if t not in recent[-5:]]
     if not ctx.get("fng"):
         avail = [t for t in avail if t != "market"]

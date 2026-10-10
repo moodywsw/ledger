@@ -155,6 +155,77 @@ def kalshi_outright(series: str) -> dict:
     return ev[0]["names"] if ev else {}
 
 
+# ---------- Polymarket sports (public Gamma API) ----------
+POLY_TAG = {"eng.1": "epl", "esp.1": "la-liga", "ita.1": "serie-a", "ger.1": "bundesliga", "fra.1": "ligue-1", "por.1": "soccer",
+            "uefa.champions": "soccer", "nba": "nba", "nfl": "nfl", "ufc": "ufc", "tennis": "tennis"}
+_pcache: dict = {}
+
+
+def poly_events(tag: str) -> list:
+    hit = _pcache.get(tag)
+    if hit and time.time() - hit[0] < 1800:
+        return hit[1]
+    try:
+        ev = _get("https://gamma-api.polymarket.com/events", {"tag_slug": tag, "closed": "false", "limit": 300})
+    except Exception:
+        ev = []
+    _pcache[tag] = (time.time(), ev)
+    return ev
+
+
+def _yes(m):
+    try:
+        return float(json.loads(m.get("outcomePrices") or "[]")[0])
+    except Exception:
+        return None
+
+
+def poly_game(tag: str, a: str, b: str) -> dict:
+    """{'ml': {name: p}, 'corners': [(line, p_over)], 'ht': {name: p}, 'first': {name: p}} for a fixture."""
+    out = {}
+    for e in poly_events(tag):
+        t = e.get("title", "")
+        head = t.split(" - ")[0]
+        if not (" vs" in head and same(head.split(" vs")[0], a) and same(head.split(" vs")[-1].lstrip(". "), b)):
+            continue
+        sub = t.split(" - ")[1] if " - " in t else ""
+        ms = e.get("markets") or []
+        if not sub:
+            out["ml"] = {("Draw" if (m.get("groupItemTitle") or "").startswith("Draw") else m.get("groupItemTitle")): _yes(m) for m in ms}
+        elif sub == "Total Corners":
+            rows = []
+            for m in ms:
+                try:
+                    rows.append((float(re.search(r"O/U ([\d.]+)", m.get("groupItemTitle") or m.get("question", "")).group(1)), _yes(m)))
+                except Exception:
+                    pass
+            out["corners"] = sorted(r for r in rows if r[1] is not None)
+        elif sub == "Halftime Result":
+            out["ht"] = {m.get("groupItemTitle"): _yes(m) for m in ms}
+        elif sub == "First Team to Score":
+            out["first"] = {m.get("groupItemTitle"): _yes(m) for m in ms}
+    return out
+
+
+_tsdb: dict = {}
+TSDB_LG = {"eng.1": 4328, "esp.1": 4335, "ita.1": 4332, "ger.1": 4331, "fra.1": 4334, "por.1": 4344, "uefa.champions": 4480}
+
+
+def tsdb_venue(lg: str, a: str, b: str):
+    """Venue/round from TheSportsDB free tier (public test key)."""
+    if lg not in TSDB_LG:
+        return None
+    if lg not in _tsdb or time.time() - _tsdb[lg][0] > 6 * 3600:
+        try:
+            _tsdb[lg] = (time.time(), _get(f"https://www.thesportsdb.com/api/v1/json/3/eventsnextleague.php", {"id": TSDB_LG[lg]}).get("events") or [])
+        except Exception:
+            _tsdb[lg] = (time.time(), [])
+    for e in _tsdb[lg][1]:
+        if same(e.get("strHomeTeam", ""), a) and same(e.get("strAwayTeam", ""), b):
+            return {"venue": e.get("strVenue"), "round": e.get("intRound")}
+    return None
+
+
 # ---------- pick builders ----------
 def leg(market, p, q, stake, key, why="", **kw):
     """p = Mirko's probability, q = market/reference price → odds."""
@@ -174,8 +245,21 @@ def football_pick(ev: dict, lg: str) -> dict | None:
     if lg != "uefa.champions" and not (hn in BIG or an in BIG):
         return None
     ref = kalshi_match(series, hn, an); src = "Kalshi"
+    pg = {}
+    try:
+        pg = poly_game(POLY_TAG.get(lg, "soccer"), hn, an)
+    except Exception:
+        pass
+    pml = pg.get("ml") or {}
+    ph_, pa_ = next((v for k, v in pml.items() if k and same(k, hn)), None), next((v for k, v in pml.items() if k and same(k, an)), None)
+    pd_ = pml.get("Draw")
     if ref and ref[2]:
-        qh, qa, qd = ref; s = qh + qa + qd; qh, qa, qd = qh / s, qa / s, qd / s
+        qh, qa, qd = ref
+        if ph_ and pa_ and pd_:
+            qh, qa, qd = (qh + ph_) / 2, (qa + pa_) / 2, (qd + pd_) / 2; src = "Kalshi + Polymarket"
+        s = qh + qa + qd; qh, qa, qd = qh / s, qa / s, qd / s
+    elif ph_ and pa_ and pd_:
+        s = ph_ + pa_ + pd_; qh, qa, qd = ph_ / s, pa_ / s, pd_ / s; src = "Polymarket"
     else:
         o = (c.get("odds") or [None])[0] or {}
         qh, qa, qd = (ml_prob((o.get(k) or {}).get("moneyLine")) for k in ("homeTeamOdds", "awayTeamOdds", "drawOdds"))
@@ -207,8 +291,27 @@ def football_pick(ev: dict, lg: str) -> dict | None:
     side.append(leg(f"Both teams to score — {'Yes' if pbtts >= .5 else 'No'}", max(pbtts, 1 - pbtts), max(pbtts, 1 - pbtts) - .03, 5, f"btts:{'y' if pbtts >= .5 else 'n'}"))
     big_game = hn in BIG and an in BIG
     side.append(leg("Over 3.5 yellow cards" if big_game else "Under 4.5 yellow cards", .6, .55, 5, "cards:o3.5" if big_game else "cards:u4.5"))
-    if max(ph, pa) > .55:
+    cor = pg.get("corners") or []
+    if cor:
+        cand = [r for r in cor if 7.5 <= r[0] <= 12.5 and .3 <= r[1] <= .7] or [r for r in cor if 7.5 <= r[0] <= 12.5] or cor
+        line, po_c = min(cand, key=lambda r: abs(r[0] - 9.5) + abs(r[1] - .5) * 4)
+        over = max(ph, pa) > .5   # a dominant favourite camps in the box → more corners
+        qc = po_c if over else 1 - po_c
+        side.append(leg(f"{'Over' if over else 'Under'} {line} corners", qc + .04, qc, 5, f"corners:{'o' if over else 'u'}{line}", why="Polymarket corners line"))
+    elif max(ph, pa) > .55:
         side.append(leg("Over 8.5 corners", .57, .52, 5, "corners:o8.5"))
+    ht = pg.get("ht") or {}
+    fav_name = hn if ph >= pa else an
+    qht = next((v for k, v in ht.items() if k and same(k, fav_name)), None)
+    if qht and .25 < qht < .75 and max(ph, pa) >= .5:
+        side.append(leg(f"{fav_name} leading at half-time", qht + .03, qht, 5, f"ht:{'h' if fav_name == hn else 'a'}"))
+    fs = pg.get("first") or {}
+    qfs = next((v for k, v in fs.items() if k and same(k, fav_name)), None)
+    if qfs and qfs < .8:
+        side.append(leg(f"{fav_name} to score first", qfs + .03, qfs, 5, f"first:{'h' if fav_name == hn else 'a'}"))
+    if max(ph, pa) >= .6:
+        pwn = max(ph, pa) * math.exp(-(la if ph >= pa else lh))
+        side.append(leg(f"{fav_name} to win to nil", pwn, pwn * .92, 4, f"wtn:{'h' if fav_name == hn else 'a'}"))
     # player props when the matchup supports it: favourite's top scorer
     favt = home if ph >= pa else away
     ld = next((l for l in favt.get("leaders", []) if l.get("name") in ("goals", "goalsLeaders")), None)
@@ -228,7 +331,18 @@ def football_pick(ev: dict, lg: str) -> dict | None:
     pcs = poisson(sc[0], lh) * poisson(sc[1], la)
     side.append(leg(f"Correct score {sc[0]}–{sc[1]} (lottery)", pcs, pcs * .85, 2, f"cs:{sc[0]}:{sc[1]}"))
     cat = "ucl" if lg == "uefa.champions" else "football"
-    return {"id": f"espn:{lg}:{ev['id']}", "sport": "soccer", "cat": cat, "league": name, "lg": lg, "event_id": ev["id"],
+    tv = None
+    try:
+        tv = tsdb_venue(lg, hn, an)
+    except Exception:
+        pass
+    fh_, fa_ = home.get("form") or "", away.get("form") or ""
+    read = (f"{src} has {hn} {round(qh * 100)}% · draw {round(qd * 100)}% · {an} {round(qa * 100)}%. "
+            f"Form {fh_ or '—'} vs {fa_ or '—'} moves me {'towards ' + hn if tilt > .015 else 'towards ' + an if tilt < -.015 else 'nowhere'}. "
+            f"My main bet: {main['pick']} at @{main['odds']} because I make it {round(main['p'] * 100)}% vs the market's {round(main['q'] * 100)}%. "
+            f"Expected goals ~{lh:.1f}–{la:.1f}, so I lean {'over' if po >= .5 else 'under'} on goals" + (f" and {'over' if max(ph, pa) > .5 else 'under'} on corners." if pg.get('corners') else ".")
+            + (f" Played at {tv['venue']}." if tv and tv.get('venue') else ""))
+    return {"read": read,"id": f"espn:{lg}:{ev['id']}", "sport": "soccer", "cat": cat, "league": name, "lg": lg, "event_id": ev["id"],
             "title": f"{hn} vs {an}", "kickoff": ev["date"], "ref": src, "main": main, "side": side}
 
 
@@ -268,7 +382,9 @@ def teamsport_pick(ev: dict, sport: str) -> dict | None:
                 line = math.floor(v * .85) + .5
                 side.append(leg(f"{ld['athlete']['displayName']} over {line} {stat}", .56, .52, 4, f"nbaprop:{nm}:{line}:{ld['athlete']['displayName']}",
                                 player=ld["athlete"]["displayName"]))
-    return {"id": f"espn:{sport}:{ev['id']}", "sport": sport, "cat": sport, "league": label, "lg": sport, "event_id": ev["id"],
+    read = (f"Kalshi prices {hn} {round(qh * 100)}% vs {an} {round(qa * 100)}%. I add ~2% for home court and back {pick} at @{main['odds']} "
+            f"({round(p * 100)}% vs {round(q * 100)}%)." + (" Player props follow the team's season leaders." if sport == "nba" and side else ""))
+    return {"read": read, "id": f"espn:{sport}:{ev['id']}", "sport": sport, "cat": sport, "league": label, "lg": sport, "event_id": ev["id"],
             "title": f"{an} @ {hn}", "kickoff": ev["date"], "ref": "Kalshi", "main": main, "side": side}
 
 
@@ -298,7 +414,9 @@ def ufc_picks(ev: dict) -> list:
         main = leg("Fight winner", p, q, stake_for(p, q), "ufc:win", f"{'Kalshi' if ref else 'Records'} price {pick} at {round(q * 100)}%." + (" Live dog." if q < .5 else ""), pick=pick)
         side = [leg(f"{pick} by KO/TKO or submission", p * .55, q * .5, 4, "ufc:finish"),
                 leg("Fight doesn't go the distance", .6, .55, 4, "ufc:nodist")]
-        out.append({"id": f"espn:ufc:{ev['id']}:{c['id']}", "sport": "ufc", "cat": "ufc", "league": "UFC", "lg": "ufc", "event_id": ev["id"], "comp_id": c["id"],
+        out.append({"read": f"{'Kalshi' if ref else 'Their records'} make {n1} {round(q1 * 100)}% vs {n2} {round((1 - q1) * 100)}%. "
+                            + (f"{pick} is a live underdog at @{main['odds']} — I like the price more than the fighter." if q < .5 else f"{pick} is the better fighter on paper; I want him to finish it."),
+                    "id": f"espn:ufc:{ev['id']}:{c['id']}", "sport": "ufc", "cat": "ufc", "league": "UFC", "lg": "ufc", "event_id": ev["id"], "comp_id": c["id"],
                     "title": f"{n1} vs {n2}", "kickoff": c.get("date") or ev["date"], "ref": "Kalshi" if ref else "records", "main": main, "side": side})
     return out
 
@@ -324,7 +442,8 @@ def tennis_picks(ev: dict, tour: str) -> list:
             else:
                 main = leg("Match winner", q + .03, q, stake_for(q + .03, q), "tennis:win", f"Kalshi {round(q * 100)}%; surface and form nudge me to {round((q + .03) * 100)}%.", pick=pick)
             side = [leg("Match goes to a deciding set", .38, .34, 4, "tennis:decider")]
-            out.append({"id": f"espn:{tour}:{c['id']}", "sport": "tennis", "cat": "tennis", "league": f"{tour.upper()} · {ev.get('name', '')}", "lg": tour,
+            out.append({"read": f"Kalshi has {pick} at {round(q * 100)}%. " + ("Too short to back straight, so I take the straight-sets price." if q > .8 else "Close enough to bet the winner; the deciding-set bet is my hedge."),
+                        "id": f"espn:{tour}:{c['id']}", "sport": "tennis", "cat": "tennis", "league": f"{tour.upper()} · {ev.get('name', '')}", "lg": tour,
                         "event_id": ev["id"], "comp_id": c["id"], "title": f"{n1} vs {n2}", "kickoff": c.get("date") or c.get("startDate") or ev["date"],
                         "ref": "Kalshi", "main": main, "side": side, "p_names": [n1, n2]})
     return out
@@ -342,7 +461,8 @@ def f1_pick(ev: dict) -> dict | None:
     pick, q = ranked[1] if len(ranked) > 1 and ranked[1][1] >= .18 else ranked[0]
     main = leg("Race winner", q + .04, q, stake_for(q + .04, q, 15), "f1:win", f"Kalshi has {pick} at {round(q * 100)}%. I'll take the price.", pick=pick)
     side = [leg(f"{ranked[0][0]} podium", min(.9, ranked[0][1] + .3), min(.88, ranked[0][1] + .25), 5, f"f1:podium:{ranked[0][0]}")]
-    return {"id": f"espn:f1:{ev['id']}", "sport": "f1", "cat": "f1", "league": "Formula 1", "lg": "f1", "event_id": ev["id"], "comp_id": race["id"],
+    return {"read": f"Kalshi race-winner board: {', '.join(f'{n} {round(v * 100)}%' for n, v in ranked[:3])}. I bet {pick} at @{main['odds']} and cover {ranked[0][0]} for a podium.",
+            "id": f"espn:f1:{ev['id']}", "sport": "f1", "cat": "f1", "league": "Formula 1", "lg": "f1", "event_id": ev["id"], "comp_id": race["id"],
             "title": ev.get("name", "Grand Prix"), "kickoff": race.get("date") or ev["date"], "ref": "Kalshi", "main": main, "side": side}
 
 
@@ -452,6 +572,16 @@ def settle_soccer(bet: dict) -> bool:
             elif k.startswith("sot:"):
                 _, sd, line = k.split(":"); v = _stat(teams.get("home" if sd == "h" else "away", {}), "shotsOnTarget")
                 if v is not None: r = v > float(line[1:])
+            elif k.startswith("ht:"):
+                lh_ = [int(x.get("displayValue") or 0) for x in (cs["home"].get("linescores") or [])][:1]
+                la_ = [int(x.get("displayValue") or 0) for x in (cs["away"].get("linescores") or [])][:1]
+                if lh_ and la_: r = (lh_[0] > la_[0]) if k.endswith("h") else (la_[0] > lh_[0])
+            elif k.startswith("first:"):
+                goals = [x for x in d.get("keyEvents") or [] if "goal" in ((x.get("type") or {}).get("type") or "")]
+                tm = (goals[0].get("team") or {}).get("displayName") if goals else None
+                r = False if not goals else same(tm or "", cs["home" if k.endswith("h") else "away"]["team"]["displayName"])
+            elif k.startswith("wtn:"):
+                r = (hg > ag and ag == 0) if k.endswith("h") else (ag > hg and hg == 0)
             elif k.startswith("cs:"):
                 _, a, b = k.split(":"); r = (hg, ag) == (int(a), int(b))
             elif k.startswith("player:"):
@@ -623,8 +753,8 @@ def start():
         first = True
         while True:
             try:
-                tick(force=first and not load().get("v9")) ; first = False
-                b = load(); b["v9"] = True; save(b)
+                tick(force=first and not load().get("v10")) ; first = False
+                b = load(); b["v10"] = True; save(b)
             except Exception as e:
                 print(f"[SPORTS] error: {type(e).__name__}")
             time.sleep(1800)

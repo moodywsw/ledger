@@ -117,7 +117,7 @@ def test_musings_rotate_topics_and_respect_interval(P):
         posts.append(p)
     assert P.muse(now=t0 + 5 * 4 * 3600 + 60, ctx=ctx) is None
     topics = [p["topic"] for p in posts]
-    assert len(set(topics)) == 6  # no repeats within the recent window
+    assert len(set(topics)) >= 4 and all(a != b for a, b in zip(topics, topics[1:]))  # opinions ~40%, never back-to-back repeats
     assert all("NFA" not in p["text"] for p in posts)
     store.save(P.s)
     assert engine.feed()["posts"][0]["kind"] == "musing"

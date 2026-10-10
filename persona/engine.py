@@ -341,10 +341,30 @@ class Persona:
         del seen[:-300]
         return None
 
+    def opinion_burst(self, now: float | None = None):
+        """After boot, if no own opinion in the last 3h, post 3 spaced opinion thoughts (3, 15, 35 min)."""
+        now = now or time.time()
+        q = self.s.setdefault("opinion_queue", [])
+        if not q and not getattr(self, "_burst_checked", False):
+            self._burst_checked = True
+            recent_op = [p for p in self.s["posts"][-40:] if str(p.get("topic", "")).startswith("opinion") and now - p["ts"] < 3 * 3600]
+            if not recent_op:
+                q.extend([now + 180, now + 900, now + 2100])
+        if q and now >= q[0]:
+            q.pop(0)
+            ctx = dict(muse.gather()); ctx.update(beliefs=self.s["beliefs"], mood_state=self.s["mood"])
+            topic = "opinion_people" if len(q) == 1 else "opinion"
+            draft = muse.template(topic, ctx, [p["text"] for p in self.s["posts"][-30:]])
+            self.publish("musing", {"topic": topic, "draft": draft, "recent": [p["text"] for p in self.s["posts"][-3:]]}, key=f"op:{int(now)}")
+
     def tick(self):
         with store.LOCK:
             self.read_new_journal()
             self.periodic()
+            try:
+                self.opinion_burst()
+            except Exception as ex:
+                print(f"[PERSONA] opinion skipped: {str(ex)[:120]}")
             try:
                 self.muse()
             except Exception as ex:

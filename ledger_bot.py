@@ -298,7 +298,7 @@ def speak(
         "content": text,
     }
     if embed is not None:
-        if DISCORD_TRADE_FORMAT == "embed":
+        if DISCORD_TRADE_FORMAT != "text-forced":   # trade cards always go out as rich embeds
             payload = {"username": LEDGER_DISCORD_NAME, "embeds": [embed]}
         else:
             text = trade_cards.card_to_text(embed)
@@ -2667,7 +2667,8 @@ def _report_real_result(real_result: dict, symbol: str, token: str, side: str, r
             card = trade_cards.entry_card(
                 mint=token, symbol=symbol, name=c.get("name"),
                 price_usd=c.get("price") or c.get("entry_price") or price_now, mcap_usd=c.get("mcap") or mcap_now,
-                size_usd=real_result.get("usdc_spent"), thesis=c.get("thesis"),
+                size_usd=real_result.get("usdc_spent"), thesis=c.get("thesis"), chain=c.get("chain") or "solana",
+                source=c.get("signal") or ("smart-wallet signal" if reason in (None, "copy", "mirror") else str(reason)),
             )
         else:
             pnl = real_result.get("realized_pnl_usdc")
@@ -2678,6 +2679,7 @@ def _report_real_result(real_result: dict, symbol: str, token: str, side: str, r
                 partial_fraction=real_result.get("fraction_sold"),
                 entry_mcap_usd=c.get("entry_mcap"), exit_mcap_usd=mcap_now,
                 pnl_usd=pnl, pnl_pct=(pnl / cost_slice) if (pnl is not None and cost_slice) else None,
+                received_usd=received, reason=reason,
             )
         fields = None
         if side == "buy":

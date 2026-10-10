@@ -82,49 +82,85 @@ def _header(mint: str) -> list:
     return [f"📋 `{mint}`", token_links(mint)]
 
 
+COLOR_STOP = 0xFB7185    # rose
+
+
+def _now_iso() -> str:
+    import datetime as _dt
+    return _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
+
+
+def _chain_label(chain: str | None) -> str:
+    return {"solana": "◎ Solana", "base": "🔵 Base", "bsc": "🟡 BNB Chain", "eth": "⟠ Ethereum"}.get((chain or "solana").lower(), chain or "◎ Solana")
+
+
 def entry_card(*, mint: str, symbol: str, name: str | None = None, price_usd: float | None = None,
                mcap_usd: float | None = None, size_sol: float | None = None, size_usd: float | None = None,
-               thesis: str | None = None, **_unused) -> dict:
-    size = " · ".join(x for x in (fmt_sol(size_sol) if size_sol is not None else None,
-                                  fmt_money(size_usd) if size_usd is not None else None) if x) or "—"
+               thesis: str | None = None, chain: str | None = None, source: str | None = None, **_unused) -> dict:
+    """Green BUY card: token + ticker, chain, size, entry price/MC, CA in code, links, why/signal."""
+    size = " · ".join(x for x in (f"**{fmt_money(size_usd)}** USDC" if size_usd is not None else None,
+                                  fmt_sol(size_sol) if size_sol is not None else None) if x) or "—"
     fields = [
-        {"name": "💵 Entry", "value": f"{fmt_price(price_usd)} · {_mc(mcap_usd)}", "inline": True},
         {"name": "💰 Size", "value": size, "inline": True},
+        {"name": "💵 Entry", "value": fmt_price(price_usd), "inline": True},
+        {"name": "🏷️ Market cap", "value": fmt_money(mcap_usd) if mcap_usd else "—", "inline": True},
+        {"name": "⛓️ Chain", "value": _chain_label(chain), "inline": True},
     ]
-    desc = _header(mint)
+    if source:
+        fields.append({"name": "📡 Signal", "value": _one_line(source, 60), "inline": True})
+    desc = []
     t = _one_line(thesis)
     if t:
-        desc.append(f"🧠 {t}")
+        desc.append(f"> 🧠 {t}")
+    desc += [f"**CA** `{mint}`", f"🔗 {token_links(mint)}"]
     return {
-        "title": f"🟢 ENTRY · 🪙 {_token_label(symbol, name)}"[:256],
+        "author": {"name": "Mirko · new position"},
+        "title": f"🟢 BUY · {_token_label(symbol, name)}"[:256],
+        "url": f"https://dexscreener.com/solana/{mint}",
         "description": "\n".join(desc),
-        "color": COLOR_ENTRY,
+        "color": COLOR_WIN,
         "fields": fields,
+        "footer": {"text": "Mirko · live on-chain trade"},
+        "timestamp": _now_iso(),
     }
 
 
 def exit_card(*, mint: str, symbol: str, name: str | None = None, partial_fraction: float | None = None,
               entry_mcap_usd: float | None = None, exit_mcap_usd: float | None = None,
               pnl_sol: float | None = None, pnl_usd: float | None = None, pnl_pct: float | None = None,
+              received_usd: float | None = None, reason: str | None = None, remaining_fraction: float | None = None,
               **_unused) -> dict:
-    """partial_fraction=None/1.0 → EXIT; 0<f<1 → TRIM of that fraction."""
+    """partial_fraction=None/1.0 → full exit; 0<f<1 → partial. Stop-outs get their own label/colour."""
     ref = pnl_usd if pnl_usd is not None else (pnl_sol if pnl_sol is not None else (pnl_pct or 0))
     win = ref >= 0
     is_trim = partial_fraction is not None and 0 < partial_fraction < 0.999
-    word = f"TRIM {partial_fraction:.0%}" if is_trim else "EXIT"
+    stop = bool(reason) and any(k in str(reason).lower() for k in ("stop", "sl", "rug", "trailing"))
+    if stop and not win:
+        word, emoji, color = "STOP LOSS", "🛑", COLOR_STOP
+    elif is_trim:
+        word, emoji, color = (f"TAKE PROFIT {partial_fraction:.0%}" if win else f"TRIM {partial_fraction:.0%}"), ("✅" if win else "🔴"), (COLOR_WIN if win else COLOR_LOSS)
+    else:
+        word, emoji, color = ("FULL EXIT" if win else "EXIT"), ("✅" if win else "🔴"), (COLOR_WIN if win else COLOR_LOSS)
     pnl = " · ".join([f"**{fmt_pct(pnl_pct)}**"]
-                     + ([fmt_sol(pnl_sol, signed=True)] if pnl_sol is not None else [])
-                     + ([fmt_money(pnl_usd, signed=True)] if pnl_usd is not None else []))
+                     + ([fmt_money(pnl_usd, signed=True)] if pnl_usd is not None else [])
+                     + ([fmt_sol(pnl_sol, signed=True)] if pnl_sol is not None else []))
     fields = [
         {"name": "📈 PnL" if win else "📉 PnL", "value": pnl, "inline": True},
-        {"name": "💵 MC", "value": f"{fmt_money(entry_mcap_usd) if entry_mcap_usd else '—'} → "
+        {"name": "💵 Received", "value": f"{fmt_money(received_usd)} USDC" if received_usd is not None else "—", "inline": True},
+        {"name": "🏷️ MC", "value": f"{fmt_money(entry_mcap_usd) if entry_mcap_usd else '—'} → "
                                    f"{fmt_money(exit_mcap_usd) if exit_mcap_usd else '—'}", "inline": True},
     ]
+    rem = remaining_fraction if remaining_fraction is not None else ((1 - partial_fraction) if is_trim else 0.0)
+    fields.append({"name": "🎒 Remaining", "value": f"{rem:.0%} still riding" if rem > 0.001 else "position closed", "inline": True})
     return {
-        "title": f"{'✅' if win else '🔴'} {word} · 🪙 {_token_label(symbol, name)}"[:256],
-        "description": "\n".join(_header(mint)),
-        "color": COLOR_WIN if win else COLOR_LOSS,
+        "author": {"name": "Mirko · " + ("partial exit" if is_trim else "position closed")},
+        "title": f"{emoji} {word} · {_token_label(symbol, name)}"[:256],
+        "url": f"https://dexscreener.com/solana/{mint}",
+        "description": "\n".join([f"**CA** `{mint}`", f"🔗 {token_links(mint)}"]),
+        "color": color,
         "fields": fields,
+        "footer": {"text": "Mirko · live on-chain trade" + (f" · {reason}" if reason else "")},
+        "timestamp": _now_iso(),
     }
 
 

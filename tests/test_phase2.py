@@ -197,7 +197,7 @@ def test_sniper_opens_paper_position_without_llm_or_ws_socials(monkeypatch):
     lb.evaluate_snipe_candidate(cand, st)
     assert "SNIPEpump" in st.open_positions
     assert st.open_positions["SNIPEpump"]["source"] == "sniper"
-    assert posted and posted[0]["embed"]["title"].startswith("🟢 ENTRY")
+    assert posted and posted[0]["embed"]["title"].startswith("🟢 BUY")
 
 
 def test_sniper_skips_unknown_liquidity(monkeypatch):

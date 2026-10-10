@@ -431,7 +431,7 @@ def trade_ideas(assets, hl):
     return out
 
 
-SCHEMA = 5
+SCHEMA = 6
 BOOM_DEFAULT = {"theme": "AI infrastructure", "emoji": "🤖", "thesis": "Compute, power and data centres keep absorbing capital; the picks-and-shovels trade is the patient one.",
                 "boom_window": "Nov 2026 – Dec 2027", "why_now": ["Hyperscaler capex guidance keeps rising", "Power and cooling are the new bottleneck"],
                 "crypto": ["TAO", "RENDER", "FET"], "stocks": ["NVDA", "AVGO", "VRT", "CEG"], "invalidation": "Capex cuts from two or more hyperscalers."}
@@ -468,6 +468,20 @@ def boom_with_history(cur: dict) -> dict:
             _boom_hist_path().write_text(json.dumps(h))
         except Exception:
             pass
+    if len(h.get("previous", [])) < 4:   # seed the archive with the themes that ran on earlier days
+        seen = {cur.get("theme")} | {x.get("theme") for x in h.get("previous", [])}
+        base = dt.date.fromisoformat(h.get("since") or today)
+        k = 1
+        while len(h["previous"]) < 4 and k < 30:
+            day = base - dt.timedelta(days=k)
+            t = next_boom(day.isoformat())
+            if t and t.get("theme") not in seen:
+                seen.add(t["theme"]); h["previous"].append({**t, "shown_from": day.isoformat(), "shown_to": (day + dt.timedelta(days=1)).isoformat()})
+            k += 1
+        try:
+            _boom_hist_path().write_text(json.dumps(h))
+        except Exception:
+            pass
     return {**cur, "since": h.get("since"), "previous": [{k: x.get(k) for k in ("theme", "emoji", "thesis", "boom_window", "crypto", "stocks", "shown_from", "shown_to")}
                                                          for x in h.get("previous", [])]}
 
@@ -480,7 +494,9 @@ def next_boom(today: str | None = None):
         return None
     if not themes: return None
     d = dt.date.fromisoformat(today) if today else dt.date.today()
-    t = themes[d.toordinal() % len(themes)]
+    pinned = [x for x in themes if x.get("featured_on") == d.isoformat()]
+    rot = [x for x in themes if not x.get("featured_on") or x.get("featured_on") != d.isoformat()]
+    t = pinned[0] if pinned else rot[d.toordinal() % len(rot)]
     keep = ("theme", "emoji", "thesis", "boom_window", "why_now", "crypto", "stocks", "invalidation", "researched")
     out = {k: t.get(k) for k in keep if t.get(k) is not None}
     if not out.get("crypto"):   # never leave the crypto side empty: closest liquid proxies, labelled as such
@@ -541,7 +557,7 @@ def build():
             "assets": reads, "fng": fg, "global": glob, "coinbase_premium": cbp, "trending": trend,
             "hyperliquid": hl, "dex_flows": dex, "trade_ideas": [{**i, "risk": risk_score(i)} for i in (trade_ideas(assets, hl) if assets else [])],
             "summary": summary, "stance": stance, "next_boom": boom_with_history(next_boom() or BOOM_DEFAULT), "mid_caps": mids, "low_caps": lows, "micro_caps": micros, "stocks_conv": stocks_conv,
-            "trenches": safe("trenches", trenches, dex, lows, reads, fg, next_boom()) or trenches_fallback(reads, fg, next_boom(), trend),
+            "trenches": _with_radar(safe("trenches", trenches, dex, lows, reads, fg, next_boom()) or trenches_fallback(reads, fg, next_boom(), trend)),
             "insights": ins, "schema": SCHEMA,
             "size_scale": regime_scale_for(reg["key"]), "warnings": LOG[-12:]}
 
@@ -734,6 +750,27 @@ def microcap_ideas(n=2):
         if len(out) >= n:
             break
     return out
+
+
+def _with_radar(t: dict) -> dict:
+    try:
+        import trench_sources
+        r = trench_sources.scan()
+    except Exception:
+        return t
+    t = dict(t or {})
+    t["radar"] = {"lines": r["lines"], "pads": [{"pad": p["pad"], "n": p.get("n", 0), "vol": p.get("vol", 0), "hot": (p.get("hot") or {}).get("sym")} for p in r["pads"]],
+                  "pump": {k: [{"sym": x["sym"], "mc": round(x["mc"])} for x in v[:5]] for k, v in r["pump"].items()},
+                  "tokensxyz": [x["sym"] for x in (r["tokensxyz"].get("trending") or [])][:8]}
+    if r["lines"]:
+        t["take"] = (t.get("take") or "") + " Radar: " + "; ".join(r["lines"][:3]) + "."
+    grads = r["pump"].get("graduated") or []
+    if grads:
+        g = max(grads, key=lambda x: x["mc"])
+        t.setdefault("could_pump", [])
+        if isinstance(t["could_pump"], list) and len(t["could_pump"]) < 6:
+            t["could_pump"].append({"sym": g["sym"], "chain": "pump.fun", "why": f"graduated and holding ${g['mc']:,.0f} mcap"})
+    return t
 
 
 def trenches_fallback(reads, fg, boom, trend) -> dict:

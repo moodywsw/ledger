@@ -2,6 +2,43 @@
  "note": "Researched themes for NEXT BOOM. read.py posts up to 3 not used in the last 14 days; themes older than 21 days are treated as stale. Refill via web research.",
  "themes": [
   {
+   "id": "tokenization",
+   "researched": "2026-10-10",
+   "featured_on": "2026-10-10",
+   "emoji": "🏦",
+   "theme": "Wall Street Goes Onchain: Tokenization",
+   "thesis": "Stocks, Treasuries and loans are moving onto blockchains, and the fee-collecting rails (exchanges, lenders, DEXs) capture more than BTC or ETH.",
+   "boom_window": "Oct 2026 – Apr 2027",
+   "why_now": [
+    "SEC order lets **tokenized US stocks** trade via permissioned AMMs/pools (5-year test route)",
+    "Citrini's tokenization basket (Oct 8): **AAVE, PENDLE, UNI, ONDO, AERO, ENA**; AAVE led with +4% on the day",
+    "Revenue/buyback tokens ran after CLARITY stalled: **NEAR +104%, UNI +49%** (Bitwise, to Sep 30)",
+    "JPMorgan: ~**$50B** flowed into crypto YTD, pace rising into Q4"
+   ],
+   "crypto": [
+    "ONDO",
+    "AAVE",
+    "PENDLE",
+    "UNI",
+    "AERO",
+    "ENA"
+   ],
+   "stocks": [
+    "COIN",
+    "HOOD",
+    "CRCL",
+    "FIGR",
+    "SOFI",
+    "BLSH"
+   ],
+   "invalidation": "SEC pulls or narrows the permissioned-venue relief, or onchain tokenized-equity value stalls below ~$5B for a quarter.",
+   "sources": [
+    "coindesk.com 2026-10-08",
+    "bitwise memo 2026-09-30",
+    "coincodex JPM note"
+   ]
+  },
+  {
    "id": "prediction-markets",
    "researched": "2026-10-10",
    "emoji": "🎲",

@@ -29,12 +29,12 @@
   <!-- FIRST VIEWPORT: status · live scan · thoughts -->
   <section class="top3">
     <div class="hero card hud">
-      <div class="hud-head"><span class="hud-label">MIRKO // STATUS</span><span class="hud-label dim">LIVE</span></div>
+      <div class="hud-head"><span class="hud-label">MIRKO // STATUS</span></div>
       <div class="hud-grid">
         <div class="tank" id="wolf" aria-hidden="true"><img class="t-base" src="tank.webp" alt="" width="360" height="590"><div class="tank-glow"></div><canvas class="bubbles" id="bubbles"></canvas><div class="t-float"><img class="t-wolf" src="wolf.webp" alt="" width="226" height="403"></div><img class="t-cap" src="tank-cap.webp" alt="" width="360" height="86"><span class="led"></span></div>
         <div class="hud-side">
           <div class="hud-cell"><div class="hud-label" title="Read-only for the public">ENGINE</div><div class="status-line"><span class="pulse" id="status-pulse"></span><span id="switch-state" class="switch-state">…</span></div></div>
-          <div class="hud-cell conv-cell"><div class="hud-label">CONVICTION · <span id="conv-asset">MARKET</span></div><div class="conv"><canvas id="gauge" width="120" height="70"></canvas><b class="mono conv-v" id="gauge-v">—</b></div><div class="conv-d" id="conv-d">reading the market…</div></div>
+          <div class="hud-cell conv-cell"><div class="hud-label">CONVICTION</div><div class="conv-asset mono" id="conv-asset">MARKET</div><div class="conv"><canvas id="gauge" width="120" height="70"></canvas><b class="mono conv-v" id="gauge-v">—</b></div><div class="conv-d" id="conv-d">reading the market…</div></div>
           <div class="hud-cell hud-toggle hidden" id="hud-control"><div class="hud-label">CONTROL</div><div class="hero-right"><button id="switch-btn" class="switch" type="button" disabled aria-label="Toggle bot"><span class="knob"></span></button><div class="switch-caption mono" id="switch-caption">…</div></div></div>
         </div>
       </div>
@@ -52,12 +52,6 @@
     </aside>
   </section>
 
-  <section class="card reading" id="reading">
-    <div class="rd-head"><div><div class="label">Daily intake</div><h2>📚 What Mirko read today</h2></div>
-      <div class="tilt"><span class="hud-label">RISK TILT</span><div class="tilt-bar"><i id="tilt-dot"></i></div><div class="tilt-l mono"><span>risk-off</span><b id="tilt-v">—</b><span>risk-on</span></div></div></div>
-    <div class="rd-chips" id="rd-chips"></div>
-    <div class="rd-grid"><div id="rd-beliefs" class="rd-beliefs"></div><div id="rd-items" class="rd-items"></div></div>
-  </section>
   <section class="kpis">
     <div class="card kpi"><div class="label">Wallet</div><div class="big mono" id="stat-real-balance">—</div><div class="sub">USDC · exposure <span class="mono" id="stat-exposure">—</span></div></div>
     <div class="card kpi"><div class="label">Realized PnL</div><div class="big mono" id="stat-real-pnl">—</div><div class="sub">USDC, real wallet</div></div>
@@ -100,6 +94,11 @@
       <div><div class="ideas-h">Micro caps</div><div id="mt-micro" class="ideas-col"></div></div>
     </div>
     <div class="trench-in" id="trench-box"><div class="tr-head"><span class="tr-title">⛏ Mirko on the trenches</span><span class="tr-badge" id="tr-mood">—</span></div><div id="mt-trench"></div></div></section>
+  <section class="card reading" id="reading">
+    <div class="rd-head"><div><div class="label">Daily intake · funds · policy · tech</div><h2>📚 What Mirko read today</h2></div></div>
+    <div class="rd-chips" id="rd-chips"></div>
+    <div class="rd-grid"><div id="rd-beliefs" class="rd-beliefs"></div><div id="rd-items" class="rd-items"></div></div>
+  </section>
   <div class="grid2 mt-lower">
     <section class="card collapsible" data-key="mthl" data-fold="1"><div class="card-head"><h2>Hyperliquid top traders</h2><span class="muted"><span id="hl-sub"></span></span><button class="fold" aria-label="Expand">+</button></div><div class="fold-body"><div id="mt-hl" class="list"></div></div></section>
     <section class="card collapsible" data-key="mtdex" data-fold="1"><div class="card-head"><h2>DEX flows · trending pools</h2><span class="muted">24h buyer share</span><button class="fold" aria-label="Expand">+</button></div><div class="fold-body"><div id="mt-dex" class="list"></div></div></section>

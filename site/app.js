@@ -108,17 +108,17 @@ function renderOverview(o) {
 
 // ── What Mirko read today (dashboard) ───────────────────────────────
 const SRC_ICON = { "fed/ecb": "🏛", "central banks": "🏛", politics: "🗳", ark: "🦉", funds: "💼", "13f": "💼", sec: "💼", hn: "🛠", tech: "🛠", arxiv: "🧪", ai: "🧪", china: "🐉" };
+let RD = { I: null, f: "all" };
 function renderReading(I) {
-  if (!I || !$("reading")) return;
+  if (I) RD.I = I; I = RD.I; if (!I || !$("reading")) return;
   const items = I.items || [], cats = {};
   items.forEach(x => { cats[x.cat] = (cats[x.cat] || 0) + 1; });
-  $("rd-chips").innerHTML = Object.entries(cats).map(([c, n]) => `<span class="src-chip">${SRC_ICON[String(c).toLowerCase()] || "📰"} ${esc(c)} <b>${n}</b></span>`).join("") || '<span class="muted sm">collecting today\'s sources…</span>';
+  $("rd-chips").innerHTML = [["all", items.length], ...Object.entries(cats)].map(([c, n]) => `<button class="src-chip ${RD.f === c ? "active" : ""}" data-f="${esc(c)}">${c === "all" ? "✦ all" : (SRC_ICON[String(c).toLowerCase()] || "📰") + " " + esc(c)} <b>${n}</b></button>`).join("");
   $("rd-beliefs").innerHTML = (I.beliefs || []).slice(0, 4).map((b, i) => `<div class="insight"><span class="in-n mono">0${i + 1}</span><p>${esc(b)}</p></div>`).join("") || empty("Insights land after the morning read.");
-  $("rd-items").innerHTML = items.slice(0, 7).map(x => `<div class="rd-item"><span class="src-dot">${SRC_ICON[String(x.cat).toLowerCase()] || "📰"}</span><span>${esc(x.title)}</span></div>`).join("");
-  const t = Math.max(-1, Math.min(1, I.risk_tilt || 0));
-  $("tilt-dot").style.left = `${(t + 1) * 50}%`; $("tilt-dot").className = t > .15 ? "on" : t < -.15 ? "off" : "flat";
-  $("tilt-v").textContent = `${t > 0 ? "+" : ""}${t.toFixed(2)}`;
+  const list = items.filter(x => RD.f === "all" || x.cat === RD.f);
+  $("rd-items").innerHTML = list.slice(0, RD.f === "all" ? 8 : 14).map(x => `<div class="rd-item"><span class="src-dot">${SRC_ICON[String(x.cat).toLowerCase()] || "📰"}</span>${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.title)}</a>` : `<span>${esc(x.title)}</span>`}</div>`).join("") || empty("Nothing in this source today.");
 }
+$("rd-chips").addEventListener("click", e => { const t = e.target.closest(".src-chip"); if (!t) return; RD.f = t.dataset.f; renderReading(); });
 
 // ── Mirko's thoughts (persona feed) ────────────────────────────────
 const KIND = { musing: ["💭", "thought"], mood: ["🫀", "mood"], recap: ["📊", "recap"], entry: ["🟢", "entry"], exit_win: ["💰", "exit"],
@@ -149,7 +149,7 @@ async function pollOnce() {
     fetchJson("/api/journal?limit=60").then(j => { LEDGER.journal = j; }),
     fetchJson("/api/overview").then(renderOverview),
     fetchJson("/api/persona/feed?limit=40").then(renderMind).catch(() => renderMind(null)),
-    fetchJson("/api/market_thoughts").then(m => { if (m.ready) { LEDGER.market = m; try { renderReading(m.insights); } catch (e) { console.warn(e); } } }),
+    fetchJson("/api/market_thoughts").then(m => { if (m.ready) LEDGER.market = m; }),
   ]);
   setConn(res.slice(0, 2).some(r => r.status === "fulfilled"));
   if (!LEDGER.councilTs || Date.now() - LEDGER.councilTs > 600_000) { LEDGER.councilTs = Date.now(); fetchJson("/api/council").then(x => { LEDGER.council = x; }).catch(() => {}); }
@@ -167,6 +167,7 @@ async function loadMarket() {
   m.assets = (m.assets || []).map(a => ({ support: [], resistance: [], notes: [], ...a }));
   m.regime = m.regime || { label: "Unknown", key: "chop", score: 0 };
   LEDGER.market = m;
+  try { renderReading(m.insights); } catch (e) { console.warn(e); }
   $("mt-regime").textContent = m.regime.label; $("mt-summary").textContent = m.summary;
   if (m.fng) { $("fng-v").textContent = m.fng.v; $("fng-l").textContent = `${m.fng.cls} · yesterday ${m.fng.prev}`; drawFng(m.fng.v); }
   const riskEmo = r => r == null ? "" : r <= 3 ? "🟢" : r <= 6 ? "🟡" : r <= 8 ? "🟠" : "🔴";
@@ -190,6 +191,9 @@ async function loadMarket() {
   $("mt-trench").innerHTML = T ? `<p class="tr-take">${esc(T.take)}</p><div class="tr-grid">
       <div class="tr-col"><h4>🚀 Could pump</h4>${li(T.could_pump)}</div><div class="tr-col"><h4>🩸 Could dump</h4>${li(T.could_dump)}</div>
       <div class="tr-col"><h4>🧺 Accumulate</h4>${li(T.accumulate)}</div><div class="tr-col"><h4>🏛 Long-term</h4>${li(T.long_term)}</div></div>
+      ${T.radar ? `<div class="radar"><div class="bsec-h">Launchpad radar</div><div class="pads">${T.radar.pads.filter(p => p.n).map(p => `<div class="pad"><span>${esc(p.pad)}</span><b class="mono">${big(p.vol)}</b><small>${p.hot ? "hot $" + esc(p.hot) : ""}</small></div>`).join("")}</div>
+        ${["new", "graduating", "graduated"].some(k => (T.radar.pump[k] || []).length) ? `<div class="pump-cols">${["new", "graduating", "graduated"].map(k => `<div><div class="bsec-h">pump.fun · ${k}</div>${(T.radar.pump[k] || []).map(x => `<div class="pmp"><b>$${esc(x.sym)}</b><span class="mono">${big(x.mc)}</span></div>`).join("") || '<div class="muted sm">—</div>'}</div>`).join("")}</div>` : ""}
+        ${(T.radar.tokensxyz || []).length ? `<div class="bsec-h" style="margin-top:10px">tokens.xyz trending</div><div class="bt-row">${T.radar.tokensxyz.map(x => `<span class="tick c">$${esc(x)}</span>`).join("")}</div>` : ""}</div>` : ""}
 ` : empty("Trenches read appears after the next market refresh.");
   const b = m.next_boom;
   $("boom-w").innerHTML = b ? [b.boom_window ? `<span class="bchip">⏳ window <b>${esc(b.boom_window)}</b></span>` : "", b.since ? `<span class="bchip">📌 featured since <b>${esc(b.since)}</b></span>` : ""].join("") : "";
@@ -227,9 +231,15 @@ async function loadMarket() {
 }
 const md = t => esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/\*/g, "");
 function levelBar(a) {
-  const lv = [...a.support.map(v => ["s", v]), ...a.resistance.map(v => ["r", v]), ["p", a.price]];
-  const vs = lv.map(x => x[1]), lo = Math.min(...vs) * 0.995, hi = Math.max(...vs) * 1.005, X = v => ((v - lo) / (hi - lo)) * 100;
-  return `<div class="lvl">${lv.map(([k, v]) => `<span class="lv lv-${k}" style="left:${X(v)}%"><i></i><em class="mono">${k === "p" ? "now" : Math.abs(X(v) - X(a.price)) < 9 ? "" : fp(v)}</em></span>`).join("")}</div>`;
+  const all = [...a.support, ...a.resistance].filter(v => v > 0);
+  const S = all.filter(v => v < a.price).sort((x, y) => y - x), R = all.filter(v => v > a.price).sort((x, y) => x - y);
+  const s1 = S[0] ?? a.price * .97, r1 = R[0] ?? a.price * 1.03;
+  const pos = Math.max(3, Math.min(97, (a.price - s1) / (r1 - s1) * 100));
+  const near = pos < 33 ? "near support" : pos > 67 ? "near resistance" : "mid-range";
+  return `<div class="sr">
+    <div class="sr-top"><span class="sr-lab s">▼ Support</span><span class="sr-near mono">${near}</span><span class="sr-lab r">Resistance ▲</span></div>
+    <div class="sr-bar"><i class="sr-mark" style="left:${pos}%"><b class="mono">${fp(a.price)}</b></i></div>
+    <div class="sr-vals mono"><span class="pos">${fp(s1)}${S[1] ? `<small> · next ${fp(S[1])}</small>` : ""}</span><span class="neg">${R[1] ? `<small>next ${fp(R[1])} · </small>` : ""}${fp(r1)}</span></div></div>`;
 }
 function drawFng(v) {
   const c = $("fng-gauge"), x = c.getContext("2d"), W = c.width, H = c.height, cx = W / 2, cy = H - 12, r = 92;
@@ -313,7 +323,7 @@ setInterval(() => { if (pfOpen()) loadPortfolio(); }, 300_000);
 
 // ── Predictions (paper) ─────────────────────────────────────────────
 const when = iso => new Date(iso).toLocaleString("en-GB", { timeZone: "Europe/Lisbon", weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).replace(",", " ·");
-const CATS = [["all", "All", "✦"], ["football", "Football", "⚽"], ["ucl", "Champions League", "⭐"], ["nba", "NBA", "🏀"], ["nfl", "NFL", "🏈"], ["ufc", "UFC", "🥊"],
+const CATS = [["all", "All", "✦"], ["read", "Mirko's read", "🧠"], ["football", "Football", "⚽"], ["ucl", "Champions League", "⭐"], ["nba", "NBA", "🏀"], ["nfl", "NFL", "🏈"], ["ufc", "UFC", "🥊"],
   ["tennis", "Tennis", "🎾"], ["f1", "F1", "🏎"], ["poly", "Polymarket", "🔮"], ["hist", "History", "📜"]];
 const CICON = Object.fromEntries(CATS.map(c => [c[0], c[2]]));
 const pctp = p => `${Math.round(p * 100)}%`;
@@ -342,10 +352,16 @@ function polyCard(p) {
 function renderPred() {
   const P = PR.data; if (!P) return;
   const S = P.sports || {}, pm = P.polymarket || { positions: [] }, open = S.open || [];
-  const n = c => c === "all" ? open.length + (pm.positions || []).length : c === "poly" ? (pm.positions || []).length : c === "hist" ? (S.settled || []).length : open.filter(b => b.cat === c).length;
+  const n = c => c === "read" ? open.length : c === "all" ? open.length + (pm.positions || []).length : c === "poly" ? (pm.positions || []).length : c === "hist" ? (S.settled || []).length : open.filter(b => b.cat === c).length;
   $("pr-cats").innerHTML = CATS.map(([k, l, i]) => `<button class="cat ${PR.cat === k ? "active" : ""} ${n(k) ? "" : "zero"}" data-c="${k}"><span>${i}</span>${l}<b>${n(k)}</b></button>`).join("");
   const hist = PR.cat === "hist";
   $("pr-board").classList.toggle("hidden", hist); $("pr-hist").classList.toggle("hidden", !hist);
+  if (PR.cat === "read") {
+    $("pr-board").innerHTML = `<div class="reads">${open.map(b => `<article class="rd-card"><div class="rd-meta"><span>${CICON[b.cat] || "🎯"} ${esc(b.league)}</span><span class="mono">${when(b.kickoff)}</span></div>
+      <h3>${esc(b.title)}</h3><div class="rd-pick"><span class="hud-label">My bet</span><b>${esc(b.main.pick || b.main.market)}</b><span class="mono">${pctp(b.main.p)} · @${b.main.odds} · €${b.main.stake}</span></div>
+      <p>${esc(b.read || b.main.why || "")}</p></article>`).join("")}</div>` || empty("No open picks right now.");
+    return;
+  }
   if (!hist) {
     const list = PR.cat === "poly" ? [] : open.filter(b => PR.cat === "all" || b.cat === PR.cat);
     const polys = PR.cat === "all" || PR.cat === "poly" ? (pm.positions || []) : [];

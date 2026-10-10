@@ -107,7 +107,8 @@
   }
 
   function draw(t) {
-    drift += reduce ? 0 : .02; px += (mx - px) * .04; py += (my - py) * .04;
+    const F = Math.min(4, Math.max(.5, (t - (draw.pt || t - 16.7)) / 16.7)); draw.pt = t;  // time-based speed, independent of fps
+    drift += reduce ? 0 : .03 * F; px += (mx - px) * .04; py += (my - py) * .04;
     const fxo = -PAD + Math.sin(drift / 40) * 8 - px * 10, fyo = -PAD + Math.cos(drift / 55) * 6 - py * 8;
     ctx.drawImage(far, fxo, fyo, W + PAD * 2, H + PAD * 2);
     ctx.drawImage(mid, -PAD + Math.sin(drift / 40) * 18 - px * 26, -PAD + Math.cos(drift / 55) * 14 - py * 20, W + PAD * 2, H + PAD * 2);
@@ -117,7 +118,7 @@
       const [r, gg, b] = g.col, glow = ctx.createRadialGradient(g.x, g.y, 0, g.x, g.y, g.r * 1.2);
       glow.addColorStop(0, `rgba(${r},${gg},${b},${.18 + g.heat * .16})`); glow.addColorStop(.25, `rgba(${r},${gg},${b},.06)`); glow.addColorStop(1, "rgba(0,0,0,0)"); ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(g.x, g.y, g.r * 1.2, 0, 6.283); ctx.fill();
       const cr = Math.cos(g.rot), sr = Math.sin(g.rot);
-      for (const d of g.dots) { d.a += d.sp * 16; const ux = Math.cos(d.a) * d.rr * g.r, uy = Math.sin(d.a) * d.rr * g.r * g.tilt, x = g.x + ux * cr - uy * sr, y = g.y + ux * sr + uy * cr;
+      for (const d of g.dots) { d.a += d.sp * 16 * F * 1.6; const ux = Math.cos(d.a) * d.rr * g.r, uy = Math.sin(d.a) * d.rr * g.r * g.tilt, x = g.x + ux * cr - uy * sr, y = g.y + ux * sr + uy * cr;
         ctx.fillStyle = `rgba(${r},${gg},${b},${.3 + .7 * Math.abs(Math.sin(t / 1200 + d.tw))})`; ctx.fillRect(x, y, d.s, d.s); }
     }
     ctx.globalCompositeOperation = "source-over";
@@ -126,7 +127,7 @@
       ctx.font = "10px JetBrains Mono, monospace"; ctx.fillStyle = "rgba(160,170,190,.75)"; ctx.fillText(g.info || `${Math.round(g.heat * 100)}% active`, g.x - g.r * .5, g.y - g.r * .85 + 14); }
     // spider
     const dx = spider.tx - spider.x, dy = spider.ty - spider.y, dist = Math.hypot(dx, dy);
-    if (dist > 2) { spider.x += dx * .02; spider.y += dy * .02; } else if (spider.dwell++ === 0) arrive(); else if (spider.dwell > 150) nextTarget();
+    if (dist > 2) { const k = Math.min(1, .045 * F); spider.x += dx * k; spider.y += dy * k; } else if (spider.dwell === 0) { spider.dwell = 1; arrive(); } else if ((spider.dwell += F) > 95) nextTarget();
     const g = gal[spider.target]; const [r, gg, b] = g.col;
     ctx.strokeStyle = `rgba(${r},${gg},${b},.35)`; ctx.lineWidth = 1; ctx.setLineDash([3, 4]); ctx.beginPath(); ctx.moveTo(spider.x, spider.y); ctx.lineTo(spider.tx, spider.ty); ctx.stroke(); ctx.setLineDash([]);
     for (const l of spider.legs) { const k = l.len + Math.sin(t / 180 + l.ph) * 5, ex = spider.x + Math.cos(l.a) * k, ey = spider.y + Math.sin(l.a) * k;
@@ -135,7 +136,7 @@
     ctx.fillStyle = sg; ctx.beginPath(); ctx.arc(spider.x, spider.y, 22, 0, 6.283); ctx.fill(); ctx.fillStyle = "#ff6ec7"; ctx.fillRect(spider.x - 4, spider.y - 4, 8, 8);
     // tags
     ctx.font = "11px JetBrains Mono, monospace";
-    for (const tg of tags) { tg.life++; const a = Math.min(1, tg.life / 20) * (tg.life > 380 ? Math.max(0, 1 - (tg.life - 380) / 60) : 1); if (a <= 0) continue;
+    for (const tg of tags) { tg.life += F * 1.4; const a = Math.min(1, tg.life / 20) * (tg.life > 380 ? Math.max(0, 1 - (tg.life - 380) / 60) : 1); if (a <= 0) continue;
       const w = ctx.measureText(tg.t).width + 14; ctx.globalAlpha = a; ctx.strokeStyle = `rgba(${tg.col.join(",")},.6)`; ctx.fillStyle = "rgba(10,14,20,.85)";
       ctx.beginPath(); ctx.roundRect ? ctx.roundRect(tg.x, tg.y, w, 20, 4) : ctx.rect(tg.x, tg.y, w, 20); ctx.fill(); ctx.stroke();
       ctx.fillStyle = "#e6edf6"; ctx.fillText(tg.t, tg.x + 7, tg.y + 14); ctx.globalAlpha = 1; }
@@ -151,11 +152,11 @@
       const reg = m.regime;
       let c = .5 + Math.max(-1, Math.min(1, Math.abs(reg.score) / 4)) * .25 + ((md.confidence ?? .5) - .5) * .5 - (md.tilt || 0) * .2;
       out.push({ k: "MARKET", v: Math.round(Math.max(.05, Math.min(.98, c)) * 100), tone: reg.key === "risk_on" ? "bull" : reg.key === "risk_off" ? "bear" : "neutral",
-        d: `${reg.label} · ${reg.key === "risk_off" ? "defensive size" : reg.key === "risk_on" ? "full size" : "normal size"}` });
+        d: reg.key === "risk_off" ? "risk-off tape, I stay small" : reg.key === "risk_on" ? "risk-on tape, I press winners" : "no clear trend, I trade the edges" });
       const order = ["BTC", "ETH", "SOL"];
       (m.assets || []).sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name)).forEach(a => out.push({ k: a.name, v: Math.round(Math.max(5, Math.min(95, 50 + a.score * 8))), tone: a.tone,
-        d: a.tone === "bull" ? "trending up, buying dips" : a.tone === "bear" ? "weak, selling rips" : "range, waiting for a breakout" }));
-      (m.stocks_conv || []).forEach(x => out.push({ k: x.name, v: x.conv, tone: x.tone, d: `${x.note} · 1M ${x.chg1m > 0 ? "+" : ""}${x.chg1m}%` }));
+        d: a.tone === "bull" ? "trend is up, I buy dips" : a.tone === "bear" ? "trend is down, I sell rallies" : "stuck in a range, waiting" }));
+      (m.stocks_conv || []).forEach(x => out.push({ k: x.name, v: x.conv, tone: x.tone, d: x.tone === "bull" ? "uptrend, I buy dips" : x.tone === "bear" ? "downtrend, I stay away" : "choppy, no edge" }));
     }
     return out;
   }
@@ -167,7 +168,9 @@
     c.clearRect(0, 0, w, h); c.lineWidth = 7 * DPR; c.lineCap = "round"; c.strokeStyle = "#1a2230"; c.beginPath(); c.arc(cx, cy, R, Math.PI, 0); c.stroke();
     c.strokeStyle = col; c.shadowColor = col; c.shadowBlur = 8 * DPR; c.beginPath(); c.arc(cx, cy, R, Math.PI, Math.PI + Math.PI * conv); c.stroke();
     const v = document.getElementById("gauge-v"); v.textContent = it.v; v.style.color = col;
-    const a = document.getElementById("conv-asset"); if (a) { a.textContent = it.k; a.style.color = col; }
+    const st = it.tone === "bull" ? "Bullish" : it.tone === "bear" ? "Bearish" : "Neutral";
+    const a = document.getElementById("conv-asset"); if (a) { a.textContent = `${it.k} · ${st}`; a.style.color = col; }
+    v.textContent = `${it.v}%`;
     const d = document.getElementById("conv-d"); if (d) d.textContent = it.d;
   }
   setInterval(() => { if (!document.hidden && gauge) { convIdx++; try { drawConv(); } catch (e) {} } }, 5000);
