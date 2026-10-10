@@ -88,11 +88,16 @@ def gemini_call(body: dict, key: str, timeout: int = 25) -> dict:
                                   params={"key": key}, timeout=timeout, json=body)
             except requests.RequestException as e:
                 last = type(e).__name__; continue
-        if r.status_code in (404, 400) and "model" in r.text.lower():
-            last = f"{m}:{r.status_code}"; continue
+        try:
+            em = r.json().get("error", {}) if r.status_code != 200 else {}
+        except Exception:
+            em = {}
+        why = f"{em.get('status', '')} {str(em.get('message', ''))[:70]}".strip()
+        if r.status_code in (404, 400) and ("not found" in why.lower() or "not supported" in why.lower()):
+            last = f"{m}:{r.status_code} {why}"; continue
         if r.status_code != 200:
-            print(f"[LLM] gemini {m} HTTP {r.status_code}")
-            last = f"{m}:{r.status_code}"
+            print(f"[LLM] gemini {m} HTTP {r.status_code} {why}")
+            last = f"{m}:{r.status_code} {why}"
             if r.status_code == 429:
                 continue
             break
