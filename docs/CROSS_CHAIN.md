@@ -34,3 +34,22 @@ automated control of a Fomo account.
 2. Base **paper** fetcher + replay (copy_score on Base buys). Go further only if copy-score > 0.
 3. Real execution behind its own `EVM_REAL_TRADING_ENABLED=false`, same live-small rails (budget, kill switch, allowlist).
 4. BSC, then others, only if step 2 shows edge.
+
+## Chain usage of active traders (2026-10-10)
+`wallets.json` now stores a `chains` map per trader (solana / base / bsc / robinhood; one EVM address covers all three EVM chains).
+Data sources: fomoapi.io/top100 (public page, full wallets), Provadata trader pages (which chains are verified).
+Daily per-chain activity is written by `/workspace/fomo-watch/run.py` to `candidates.json -> chain_mix`.
+
+| Trader | Solana | EVM wallet | Verified chains (Provadata) | Observed activity (first scan, 6h RH window) |
+|---|---|---|---|---|
+| unipcs | 2heJ…DogF | 0x0a6e…119e | Solana, BNB, Robinhood | Robinhood 41 transfers, Solana quiet |
+| DumbCrayonEater | 5FGo…rp8V | 0x8f62…80a3 | Solana, Robinhood | Robinhood 18, Solana active |
+| frank | 498g…AayQ | 0x696d…8e28 | Solana, Robinhood | Robinhood 8, Solana active |
+| OuterHeavyBat | 49nv…xmgS (not his trading wallet) | 0x4f…4c55 (partial) | Solana, BNB, Robinhood | EVM unknown until full address |
+| ogle | jrbG…s5Ux | 0x1b…1143 / 0xe9…57be (partial) | Solana, Robinhood | Solana quiet |
+| seralberttrades (inactive) | Cqu5…QSsR (partial) | 0x9164…8fda | Solana, Robinhood | not yet scanned |
+| ansem, Lizzerd, RC calendar, DegenCapitalLLC | yes | not resolved | n/a | Solana only |
+
+Takeaway: the big Fomo names do most of their trading on **Robinhood Chain**, then Solana. None is verified on Base, and two (unipcs, OHB) are verified on BSC.
+Revised order: Robinhood Chain paper fetcher first (free RPC allows a 30k-block getLogs window and it works), then BSC. Base comes last: no tracked trader is verified there.
+Base/BSC public RPCs rate-limit eth_getLogs. Set `BASE_RPC` / `BSC_RPC` to a free-tier key (Alchemy/QuickNode) before relying on those numbers.
