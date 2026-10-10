@@ -321,8 +321,8 @@ def test_form_thesis_respects_safety_and_cadence(monkeypatch):
 def test_thesis_card_is_short_and_labelled():
     c = trade_cards.thesis_card(mint="Mpump", symbol="THX", name="Thesis", why=["a", "b", "c", "d"],
                                 mcap_usd=600_000, invalidation="-25% from entry", conviction="medium")
-    assert c["title"] == "🧠 THESIS · 🪙 Thesis (THX)"
-    assert c["description"].count("• ") == 3 and "NFA" not in str(c) and "$THX" not in str(c)
+    assert c["title"] == "👀 WATCH · Thesis ($THX)" and "NFA" not in str(c) and "Invalid" not in str(c)
+    assert "🎯 Conviction" in str(c) and "💡" in c["description"]
 
 
 # ── Fomo ────────────────────────────────────────────────────────────

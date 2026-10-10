@@ -72,17 +72,86 @@ def _one_line(text: str | None, limit: int = THESIS_MAX) -> str | None:
     return t if len(t) <= limit else t[: limit - 1].rstrip() + "…"
 
 
+import re as _re
+
+_PLAIN = [
+    (_re.compile(r"(\d+) tracked wallets? bought", _re.I), lambda m: "smart wallets I follow are buying" if m.group(1) != "1" else "a smart wallet I follow just bought"),
+    (_re.compile(r"trending on fomo", _re.I), lambda m: "it's trending on Fomo"),
+    (_re.compile(r"\+\d+% 1h, not vertical", _re.I), lambda m: "it's climbing steadily without going vertical"),
+    (_re.compile(r"buyers lead", _re.I), lambda m: "buyers clearly outnumber sellers"),
+    (_re.compile(r"fresh pump\.fun", _re.I), lambda m: "a fresh pump.fun launch that passed my safety checks"),
+    (_re.compile(r"accumulat", _re.I), lambda m: "quiet accumulation before the move"),
+    (_re.compile(r"graduat", _re.I), lambda m: "it graduated and is holding its level"),
+    (_re.compile(r"copy|mirror|smart", _re.I), lambda m: "smart money is rotating in"),
+]
+
+
+def plain_thesis(text_or_list, limit: int = 170) -> str | None:
+    """Turn raw signal fragments ('SOL +0.3% 24h (chop)', 'buyers lead 21/9 txns 1h') into 1-2 plain English lines."""
+    if not text_or_list:
+        return None
+    parts = text_or_list if isinstance(text_or_list, (list, tuple)) else _re.split(r"[;•\n]|, (?=[a-z+$\d])", str(text_or_list))
+    out = []
+    for p in parts:
+        p = str(p).strip(" .-")
+        if not p or _re.match(r"^(SOL|BTC|ETH) [+-]?\d", p):     # market-wide noise, not a thesis
+            continue
+        hit = next((f(m) for rx, f in _PLAIN for m in [rx.search(p)] if m), None)
+        if hit:
+            if hit not in out: out.append(hit)
+        else:
+            q = _re.sub(r"\([^)]*\)|\b\d[\d.,/%x$kKmM+-]*\b|\b(txns?|1h|6h|24h|liq|top10|dev|mc|vol)\b", "", p)
+            q = " ".join(q.split()).strip(" ,:;-")
+            if len(q.split()) >= 3 and q.lower() not in (o.lower() for o in out):
+                out.append(q)
+    if not out:
+        return "Momentum and smart-money flow lined up; sized for the risk."
+    txt = out[0][0].upper() + out[0][1:]
+    if len(out) > 1:
+        txt += ", and " + " and ".join(out[1:3]) if len(out) == 2 else ", " + ", ".join(out[1:-1][:1]) + " and " + out[-1]
+    return _one_line(txt.rstrip(".") + ".", limit)
+
+
+def conviction_bar(score10: int | float | None) -> str | None:
+    if score10 is None:
+        return None
+    n = max(1, min(10, round(float(score10))))
+    emo = "🟢" if n >= 8 else "🟡" if n >= 6 else "🟠" if n >= 4 else "🔴"
+    return f"{emo} `{'▰' * n}{'▱' * (10 - n)}` **{n}/10**"
+
+
+def conviction10(v) -> int | None:
+    """Accepts 1-10 numbers or 'low'/'medium'/'high'."""
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return max(1, min(10, round(v)))
+    return {"low": 4, "medium": 6, "high": 8, "very high": 9}.get(str(v).lower())
+
+
 def _token_label(symbol: str | None, name: str | None) -> str:
-    # No "$" prefix on purpose: "$TICKER" triggers other bots in the server.
-    sym = symbol or "?"
-    return f"{name} ({sym})" if name and name.upper() != sym.upper() else sym
+    sym = (symbol or "?").lstrip("$")
+    return f"{name} (${sym})" if name and name.upper() != sym.upper() else f"${sym}"
 
 
-def _header(mint: str) -> list:
-    return [f"📋 `{mint}`", token_links(mint)]
+def _desc(mint: str, thesis: str | None = None) -> str:
+    lines = [f"```\n{mint}\n```", token_links(mint)]
+    if thesis:
+        lines += ["", f"💡 {thesis}"]
+    return "\n".join(lines)
 
 
-COLOR_STOP = 0xFB7185    # rose
+def _finish(card: dict, logo_url: str | None) -> dict:
+    if logo_url and str(logo_url).startswith("https://"):
+        card["thumbnail"] = {"url": logo_url}
+    card["footer"] = {"text": "Mirko · on-chain"}
+    card["timestamp"] = _now_iso()
+    return card
+
+
+COLOR_BUY = 0x3B82F6     # blue
+COLOR_STOP = 0xEF4444    # red
+COLOR_WATCH = 0xA78BFA   # violet
 
 
 def _now_iso() -> str:
@@ -90,106 +159,58 @@ def _now_iso() -> str:
     return _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
 
 
-def _chain_label(chain: str | None) -> str:
-    return {"solana": "◎ Solana", "base": "🔵 Base", "bsc": "🟡 BNB Chain", "eth": "⟠ Ethereum"}.get((chain or "solana").lower(), chain or "◎ Solana")
-
-
 def entry_card(*, mint: str, symbol: str, name: str | None = None, price_usd: float | None = None,
                mcap_usd: float | None = None, size_sol: float | None = None, size_usd: float | None = None,
-               thesis: str | None = None, chain: str | None = None, source: str | None = None, **_unused) -> dict:
-    """Green BUY card: token + ticker, chain, size, entry price/MC, CA in code, links, why/signal."""
-    size = " · ".join(x for x in (f"**{fmt_money(size_usd)}** USDC" if size_usd is not None else None,
-                                  fmt_sol(size_sol) if size_sol is not None else None) if x) or "—"
-    fields = [
-        {"name": "💰 Size", "value": size, "inline": True},
-        {"name": "💵 Entry", "value": fmt_price(price_usd), "inline": True},
-        {"name": "🏷️ Market cap", "value": fmt_money(mcap_usd) if mcap_usd else "—", "inline": True},
-        {"name": "⛓️ Chain", "value": _chain_label(chain), "inline": True},
-    ]
-    if source:
-        fields.append({"name": "📡 Signal", "value": _one_line(source, 60), "inline": True})
-    desc = []
-    t = _one_line(thesis)
-    if t:
-        desc.append(f"> 🧠 {t}")
-    desc += [f"**CA** `{mint}`", f"🔗 {token_links(mint)}"]
-    return {
-        "author": {"name": "Mirko · new position"},
-        "title": f"🟢 BUY · {_token_label(symbol, name)}"[:256],
-        "url": f"https://dexscreener.com/solana/{mint}",
-        "description": "\n".join(desc),
-        "color": COLOR_WIN,
-        "fields": fields,
-        "footer": {"text": "Mirko · live on-chain trade"},
-        "timestamp": _now_iso(),
-    }
+               thesis=None, conviction=None, logo_url: str | None = None, **_unused) -> dict:
+    """🟢 BUY: logo, CA block + links, Entry MC · Size · Conviction, 1-2 line plain thesis."""
+    size = f"**{fmt_money(size_usd)}**" if size_usd is not None else (f"**{fmt_sol(size_sol)}**" if size_sol is not None else "—")
+    fields = [{"name": "📊 Entry MC", "value": f"**{fmt_money(mcap_usd)}**" if mcap_usd else "—", "inline": True},
+              {"name": "💰 Size", "value": size, "inline": True}]
+    cb = conviction_bar(conviction10(conviction))
+    if cb:
+        fields.append({"name": "🎯 Conviction", "value": cb, "inline": True})
+    return _finish({"title": f"🟢 BUY · {_token_label(symbol, name)}"[:256], "url": f"https://dexscreener.com/solana/{mint}",
+                    "description": _desc(mint, plain_thesis(thesis)), "color": COLOR_BUY, "fields": fields}, logo_url)
 
 
 def exit_card(*, mint: str, symbol: str, name: str | None = None, partial_fraction: float | None = None,
               entry_mcap_usd: float | None = None, exit_mcap_usd: float | None = None,
               pnl_sol: float | None = None, pnl_usd: float | None = None, pnl_pct: float | None = None,
               received_usd: float | None = None, reason: str | None = None, remaining_fraction: float | None = None,
-              **_unused) -> dict:
-    """partial_fraction=None/1.0 → full exit; 0<f<1 → partial. Stop-outs get their own label/colour."""
+              logo_url: str | None = None, thesis=None, **_unused) -> dict:
+    """CLOSE · PROFIT / CLOSE · LOSS / TAKE PROFIT x% — MC entry→exit, PnL $ and % with colour emoji."""
     ref = pnl_usd if pnl_usd is not None else (pnl_sol if pnl_sol is not None else (pnl_pct or 0))
     win = ref >= 0
     is_trim = partial_fraction is not None and 0 < partial_fraction < 0.999
-    stop = bool(reason) and any(k in str(reason).lower() for k in ("stop", "sl", "rug", "trailing"))
-    if stop and not win:
-        word, emoji, color = "STOP LOSS", "🛑", COLOR_STOP
-    elif is_trim:
-        word, emoji, color = (f"TAKE PROFIT {partial_fraction:.0%}" if win else f"TRIM {partial_fraction:.0%}"), ("✅" if win else "🔴"), (COLOR_WIN if win else COLOR_LOSS)
+    stop = bool(reason) and any(k in str(reason).lower() for k in ("stop", "rug", "trailing")) and not win
+    if is_trim:
+        word = f"🟢 TAKE PROFIT {partial_fraction:.0%}" if win else f"🔴 CUT {partial_fraction:.0%}"
+    elif stop:
+        word = "🔴 CLOSE · STOP LOSS"
     else:
-        word, emoji, color = ("FULL EXIT" if win else "EXIT"), ("✅" if win else "🔴"), (COLOR_WIN if win else COLOR_LOSS)
-    pnl = " · ".join([f"**{fmt_pct(pnl_pct)}**"]
-                     + ([fmt_money(pnl_usd, signed=True)] if pnl_usd is not None else [])
-                     + ([fmt_sol(pnl_sol, signed=True)] if pnl_sol is not None else []))
+        word = "🟢 CLOSE · PROFIT" if win else "🔴 CLOSE · LOSS"
+    dot = "🟢" if win else "🔴"
+    pnl_main = fmt_money(pnl_usd, signed=True) if pnl_usd is not None else fmt_sol(pnl_sol, signed=True) if pnl_sol is not None else "—"
     fields = [
-        {"name": "📈 PnL" if win else "📉 PnL", "value": pnl, "inline": True},
-        {"name": "💵 Received", "value": f"{fmt_money(received_usd)} USDC" if received_usd is not None else "—", "inline": True},
-        {"name": "🏷️ MC", "value": f"{fmt_money(entry_mcap_usd) if entry_mcap_usd else '—'} → "
-                                   f"{fmt_money(exit_mcap_usd) if exit_mcap_usd else '—'}", "inline": True},
+        {"name": "📊 MC", "value": f"{fmt_money(entry_mcap_usd) if entry_mcap_usd else '—'} → **{fmt_money(exit_mcap_usd) if exit_mcap_usd else '—'}**", "inline": True},
+        {"name": "💵 PnL", "value": f"{dot} **{pnl_main}** ({fmt_pct(pnl_pct)})", "inline": True},
     ]
     rem = remaining_fraction if remaining_fraction is not None else ((1 - partial_fraction) if is_trim else 0.0)
-    fields.append({"name": "🎒 Remaining", "value": f"{rem:.0%} still riding" if rem > 0.001 else "position closed", "inline": True})
-    return {
-        "author": {"name": "Mirko · " + ("partial exit" if is_trim else "position closed")},
-        "title": f"{emoji} {word} · {_token_label(symbol, name)}"[:256],
-        "url": f"https://dexscreener.com/solana/{mint}",
-        "description": "\n".join([f"**CA** `{mint}`", f"🔗 {token_links(mint)}"]),
-        "color": color,
-        "fields": fields,
-        "footer": {"text": "Mirko · live on-chain trade" + (f" · {reason}" if reason else "")},
-        "timestamp": _now_iso(),
-    }
-
-
-COLOR_THESIS = 0xA78BFA  # violet
+    fields.append({"name": "🎒 Position", "value": f"{rem:.0%} still riding" if rem > 0.001 else "fully closed", "inline": True})
+    return _finish({"title": f"{word} · {_token_label(symbol, name)}"[:256], "url": f"https://dexscreener.com/solana/{mint}",
+                    "description": _desc(mint, plain_thesis(thesis) if thesis else None),
+                    "color": COLOR_WIN if win else (COLOR_STOP if stop else COLOR_LOSS), "fields": fields}, logo_url)
 
 
 def thesis_card(*, mint: str, symbol: str, name: str | None = None, why: list | None = None,
-                mcap_usd: float | None = None, invalidation: str | None = None,
-                conviction: str | None = None, **_unused) -> dict:
-    """Mirko's own call. Labelled 'Thesis' (no NFA boilerplate): 🧠 title,
-    📋 CA + links, ≤3 short reasons, ❌ invalidation, 🎯 conviction."""
-    lines = _header(mint)
-    for w in (why or [])[:3]:
-        t = _one_line(w, 90)
-        if t:
-            lines.append(f"• {t}")
-    fields = []
-    if mcap_usd:
-        fields.append({"name": "💵 MC", "value": fmt_money(mcap_usd), "inline": True})
-    if invalidation:
-        fields.append({"name": "❌ Invalid if", "value": _one_line(invalidation, 60), "inline": True})
-    if conviction:
-        fields.append({"name": "🎯 Conviction", "value": conviction, "inline": True})
-    return {
-        "title": f"🧠 THESIS · 🪙 {_token_label(symbol, name)}",
-        "description": "\n".join(lines),
-        "color": COLOR_THESIS,
-        "fields": fields,
-    }
+                mcap_usd: float | None = None, conviction=None, logo_url: str | None = None, **_unused) -> dict:
+    """👀 WATCH: Mirko's own call — logo, CA block + links, plain thesis, MC + conviction bar."""
+    fields = [{"name": "📊 MC", "value": f"**{fmt_money(mcap_usd)}**" if mcap_usd else "—", "inline": True}]
+    cb = conviction_bar(conviction10(conviction))
+    if cb:
+        fields.append({"name": "🎯 Conviction", "value": cb, "inline": True})
+    return _finish({"title": f"👀 WATCH · {_token_label(symbol, name)}"[:256], "url": f"https://dexscreener.com/solana/{mint}",
+                    "description": _desc(mint, plain_thesis(why)), "color": COLOR_WATCH, "fields": fields}, logo_url)
 
 
 def card_to_text(card: dict) -> str:

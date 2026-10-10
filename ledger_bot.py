@@ -228,6 +228,25 @@ COLOR_REAL = 0xec4899     # magenta — real on-chain trade, deliberately distin
 
 
 
+_LOGOS: dict = {}
+
+
+def _token_logo(mint: str) -> str | None:
+    """Token logo from DexScreener (cached; None on any failure — never blocks a post for long)."""
+    if not mint or len(mint) < 30:
+        return None
+    if mint in _LOGOS:
+        return _LOGOS[mint]
+    url = None
+    try:
+        ps = requests.get(f"https://api.dexscreener.com/tokens/v1/solana/{mint}", timeout=4).json()
+        url = next(((p.get("info") or {}).get("imageUrl") for p in ps if (p.get("info") or {}).get("imageUrl")), None)
+    except Exception:
+        pass
+    _LOGOS[mint] = url if url and url.startswith("https://") else None
+    return _LOGOS[mint]
+
+
 def speak(
     title: str, description: str, color: int = COLOR_NEUTRAL, fields: list = None,
     journal_kind: str = None, token_ticker: str = None, journal_meta: dict = None,
@@ -297,6 +316,10 @@ def speak(
         "username": LEDGER_DISCORD_NAME,
         "content": text,
     }
+    if embed is not None and "thumbnail" not in embed and post_discord and DISCORD_WEBHOOK_URLS:
+        logo = _token_logo(str(embed.get("url", "")).rsplit("/", 1)[-1])
+        if logo:
+            embed = {**embed, "thumbnail": {"url": logo}}
     if embed is not None:
         if DISCORD_TRADE_FORMAT != "text-forced":   # trade cards always go out as rich embeds
             payload = {"username": LEDGER_DISCORD_NAME, "embeds": [embed]}
@@ -5256,7 +5279,8 @@ def run_own_thesis(state: LedgerState):
         journal_meta={"own_thesis": True, "score": th["score"], "why": th["why"], "regime": th["regime"],
                       "wallets": th["wallets"], "conviction": th["conviction"]},
         embed=trade_cards.thesis_card(mint=th["mint"], symbol=symbol, name=th.get("name"), why=th["why"],
-                                      mcap_usd=th.get("mcap_usd"), invalidation=inval, conviction=th["conviction"]),
+                                      mcap_usd=th.get("mcap_usd"),
+                                      conviction=max(1, min(10, 5 + th["score"] - own_thesis.OWN_THESIS_MIN_SCORE))),
     )
     learning.note("thesis", f"own thesis on {symbol} (score {th['score']}, {th['conviction']}): {'; '.join(th['why'])}",
                   mint=th["mint"])
