@@ -272,11 +272,12 @@ async function loadPortfolio() {
   initFold($("pf-sleeves"));
   pfLive();
   $("pf-trades").innerHTML = (P.trades || []).length ? P.trades.map(t => `<div class="row"><div class="l"><div class="t">${esc(t.action)} ${esc(t.sym)} <span class="cn">${SLV[t.sleeve][0]}</span></div>
-      <div class="m">${esc(t.why)}</div></div><div class="mono" style="text-align:right">${eur(t.eur)}${t.pnl_pct != null ? `<br><span class="${cls(t.pnl_pct)}">${pc(t.pnl_pct, 1)}</span>` : ""}<br><span class="jt">${ago(new Date(t.ts * 1000))}</span></div></div>`).join("") : empty("No trades yet.");
+      <div class="m">${esc(noRR(t.why))}</div></div><div class="mono" style="text-align:right">${eur(t.eur)}${t.pnl_pct != null ? `<br><span class="${cls(t.pnl_pct)}">${pc(t.pnl_pct, 1)}</span>` : ""}<br><span class="jt">${ago(new Date(t.ts * 1000))}</span></div></div>`).join("") : empty("No trades yet.");
   const C = P.commentary || {};
   $("pf-comment").innerHTML = `<p>${esc(C.intro || "")}</p><ul>${Object.entries(C.sleeves || {}).filter(([, n]) => n).map(([k, n]) => `<li><b>${SLV[k][0]}:</b> ${esc(n)}</li>`).join("")}</ul>
-    ${(C.positions || []).length ? `<div class="label pad" style="margin-top:12px">Why I hold each position</div><ul>${C.positions.map(p => `<li><b>${esc(p.sym)}</b> — ${esc(p.why)}</li>`).join("")}</ul>` : ""}`;
+    ${(C.positions || []).length ? `<div class="label pad" style="margin-top:12px">Why I hold each position</div><ul>${C.positions.map(p => `<li><b>${esc(p.sym)}</b> — ${esc(noRR(p.why))}</li>`).join("")}</ul>` : ""}`;
 }
+const noRR = t => String(t || "").replace(/\s*\(?R:R[^)\n]*\)?\.?/g, "").trim();
 const book = b => b ? `<span class="tier">${esc(b)}</span>` : "";
 const tone = v => v == null ? "flat" : v > 0.005 ? "pos" : v < -0.005 ? "neg" : "flat";
 const qty = q => q == null ? "—" : q >= 1000 ? Math.round(q).toLocaleString() : q >= 1 ? q.toFixed(2) : q.toPrecision(3);
@@ -296,7 +297,7 @@ function perpCards(k, ps) {
     <header><div class="asset-c">${icon(p.sym)}<b>${esc(p.sym)}</b><span class="ic-side">${esc(p.side.toUpperCase())} ${p.lev}×</span></div><span class="ic-risk">${riskEmo10(p.risk)} ${p.risk ?? "–"}<small>/10</small></span></header>
     <div class="perp-kv mono"><div><span>Entry</span><b>$${price(p.entry_usd)}</b></div><div><span>TP</span><b class="pos">${p.target_usd ? "$" + price(p.target_usd) : "—"}</b></div>
       <div><span>SL</span><b class="neg">${p.stop_usd ? "$" + price(p.stop_usd) : "—"}</b></div><div><span>PnL</span><b id="lv-${k}-${esc(p.sym)}" class="${tone(p.pnl_pct)}">${pc(p.pnl_pct, 2)}</b></div></div>
-    <p class="pp-why">${esc(String(p.why || "").replace(/\s*\(R:R[^)]*\)/g, ""))}</p></article>`).join("")}</div>`;
+    <p class="pp-why">${esc(noRR(p.why))}</p></article>`).join("")}</div>`;
 }
 async function pfLive() {
   let L; try { L = await fetchJson("/api/portfolio/live"); } catch { return; }
@@ -326,7 +327,7 @@ function betCard(b) {
     <div class="bet-main"><div class="bm-l"><span class="hud-label">${esc(m.market)}</span><b class="bet-pick">${esc(m.pick || m.market)}</b></div>
       <div class="bet-prob"><b class="mono">${pctp(m.p)}</b><span class="mono">@${m.odds} · €${m.stake}</span></div></div>
     <div class="conf"><i style="width:${Math.round(m.p * 100)}%"></i><s style="left:${Math.round((m.q || m.p) * 100)}%" title="market"></s></div>
-    ${m.why ? `<p class="bet-why">${esc(m.why)}</p>` : ""}
+    ${m.why && !/^(records|book)/i.test(m.why) ? `<p class="bet-why">${esc(m.why)}</p>` : ""}
     ${side.length ? `<details class="more"><summary>+${side.length} markets${side.some(x => x.player) ? " · player props" : ""}</summary><ul class="bet-side">${side.map(x => `<li class="${x.player ? "prop" : ""}"><span>${x.player ? "👤 " : ""}${esc(x.market)}</span><span class="mono">${pctp(x.p)} · @${x.odds} · €${x.stake}</span></li>`).join("")}</ul></details>` : ""}
   </article>`;
 }
