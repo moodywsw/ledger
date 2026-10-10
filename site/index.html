@@ -19,28 +19,41 @@
   <nav class="nav" id="nav">
     <button class="nav-btn active" data-view="dash">Dashboard</button>
     <button class="nav-btn" data-view="market">Market Thoughts</button>
+    <button class="nav-btn" data-view="portfolio">Portfolio</button>
   </nav>
   <div class="conn"><span class="dot" id="conn-dot"></span><span id="conn-status">connecting…</span></div>
 </header>
 
 <main class="wrap view" id="view-dash">
-  <!-- FIRST VIEWPORT: status + Ledger's thoughts -->
-  <section class="top">
+  <!-- FIRST VIEWPORT: status · live scan · thoughts -->
+  <section class="top3">
     <div class="hero card">
-      <div class="wolf" id="wolf" aria-hidden="true"><div class="wolf-glow"></div><img src="wolf.webp" alt="" width="520" height="366"><div class="dream mono" id="dream">asleep · dreaming</div></div>
-      <div class="hero-left">
-        <div class="id-row"><div><div class="label">Ledger status</div>
-        <div class="status-line"><span class="pulse" id="status-pulse"></span><span id="switch-state" class="switch-state">…</span></div></div></div>
-        <div class="hero-note" id="switch-note">Checking…</div>
-        <div class="chips"><span class="chip" id="real-armed-badge">REAL</span><span class="chip" id="chip-open">0 open</span><span class="chip" id="chip-regime">regime …</span></div>
+      <div class="hero-main">
+        <div class="tank" id="wolf" aria-hidden="true"><img class="t-base" src="tank.webp" alt="" width="360" height="590"><div class="tank-glow"></div><canvas class="bubbles" id="bubbles"></canvas><img class="t-wolf" src="wolf.webp" alt="" width="226" height="388"><span class="led"></span></div>
+        <div class="hero-left">
+          <div class="label">Ledger status</div>
+          <div class="status-line"><span class="pulse" id="status-pulse"></span><span id="switch-state" class="switch-state">…</span></div>
+          <div class="hero-note" id="switch-note">Checking…</div>
+          <div class="dream mono" id="dream">asleep · dreaming</div>
+          <div class="chips"><span class="chip" id="real-armed-badge">REAL</span><span class="chip" id="chip-open">0 open</span></div>
+        </div>
       </div>
+      <div class="conv"><canvas id="gauge" width="120" height="70"></canvas><div><div class="label">Conviction <b class="mono" id="gauge-v">—</b></div><div class="conv-d" id="conv-d">reading the market…</div></div></div>
       <div class="hero-right">
         <button id="switch-btn" class="switch" type="button" disabled aria-label="Toggle bot"><span class="knob"></span></button>
         <div class="switch-caption" id="switch-caption">…</div>
       </div>
     </div>
+    <section class="card scan-card">
+      <div class="card-head"><h2>🕸 Live scan</h2><span class="muted" id="scan-sub">market · smart money · risk · memory</span></div>
+      <div class="scan-stage"><canvas id="scan" aria-label="Animated map of what Ledger is scanning"></canvas></div>
+      <div class="scan-strip">
+        <div class="mini"><div class="mini-h">SCAN LOG <span id="scan-rate">0 ev/s</span></div><div class="mini-b mono" id="scan-log"></div></div>
+        <div class="mini"><div class="mini-h">COVERAGE <span>live</span></div><canvas id="radar" class="mini-c"></canvas></div>
+      </div>
+    </section>
     <aside class="mind card">
-      <div class="card-head"><h2>🧠 Ledger's thoughts</h2><span class="mood-pill" id="mood-pill">…</span></div>
+      <div class="card-head"><h2>🧠 Thoughts</h2><span class="mood-pill" id="mood-pill">…</span></div>
       <div id="mind-feed" class="mind-feed"></div>
     </aside>
   </section>
@@ -53,17 +66,6 @@
     <div class="card kpi eq-card"><div class="label">Equity · SOL</div><div id="equity-chart" class="chart"></div><div class="eq-tip mono" id="eq-tip"></div></div>
   </section>
 
-  <!-- Signature visual: live scan -->
-  <section class="card scan-card">
-    <div class="card-head"><h2>🕸 Ledger's mind — live scan</h2><span class="muted" id="scan-sub">crawling market · smart money · risk · memory</span></div>
-    <div class="scan-stage"><canvas id="scan" aria-label="Animated map of what Ledger is scanning"></canvas></div>
-    <div class="scan-strip">
-      <div class="mini"><div class="mini-h">SCAN LOG <span id="scan-rate">0 ev/s</span></div><div class="mini-b mono" id="scan-log"></div></div>
-      <div class="mini"><div class="mini-h">COVERAGE RADAR <span>live</span></div><canvas id="radar" class="mini-c"></canvas></div>
-      <div class="mini"><div class="mini-h">HEAT GRID <span id="heat-n">—</span></div><div class="heat" id="heat"></div></div>
-      <div class="mini"><div class="mini-h">CONVICTION <span id="gauge-v">—</span></div><canvas id="gauge" class="mini-c"></canvas></div>
-    </div>
-  </section>
 
   <div class="grid2">
     <section class="card collapsible" data-key="pos">
@@ -90,16 +92,30 @@
   <section class="card ideas-card"><div class="card-head"><h2>🎯 Trade ideas</h2><span class="muted">levels-based · not advice</span></div><div id="mt-ideas" class="ideas"></div></section>
   <section class="card boom"><div class="card-head"><h2>🔭 Next Boom</h2><span class="muted" id="boom-w"></span></div><div id="mt-boom"></div></section>
   </div>
+  <section class="card trench"><div class="card-head"><h2>⛏ Ledger on the trenches</h2><span class="muted" id="tr-mood"></span></div><div id="mt-trench"></div></section>
   <section class="assets" id="mt-assets"></section>
   <div class="grid2">
     <section class="card"><div class="card-head"><h2>Hyperliquid top traders</h2><span class="muted" id="hl-sub"></span></div><div id="mt-hl" class="list"></div></section>
-    <section class="card"><div class="card-head"><h2>Funding · open interest · positioning</h2></div><div id="mt-deriv" class="list"></div></section>
+    <section class="card"><div class="card-head"><h2>Open interest · positioning</h2></div><div id="mt-deriv" class="list"></div></section>
   </div>
   <div class="grid2">
     <section class="card"><div class="card-head"><h2>DEX flows · trending pools</h2><span class="muted">24h buyer share</span></div><div id="mt-dex" class="list"></div></section>
     <section class="card"><div class="card-head"><h2>Trending</h2><span class="muted">CoinGecko</span></div><div id="mt-trend" class="trend"></div></section>
   </div>
   <footer class="foot">Free public data · Binance, Bybit, OKX, Coinbase, CoinGecko, alternative.me, Hyperliquid, GeckoTerminal · refreshed every 2h</footer>
+</main>
+
+<main class="wrap view hidden" id="view-portfolio">
+  <section class="card pf-hero">
+    <div><div class="label">Paper portfolio — simulated</div><h1 class="mono" id="pf-total">—</h1><div class="muted" id="pf-sub">Started with €3,000 · no real money</div></div>
+    <canvas id="pf-donut" width="180" height="180" aria-label="Allocation"></canvas>
+    <div class="pf-chart" id="pf-chart"></div>
+  </section>
+  <section class="sleeves" id="pf-sleeves"></section>
+  <section class="card"><div class="card-head"><h2>Open positions</h2><span class="muted">why Ledger holds each one</span></div><div id="pf-pos" class="list"></div></section>
+  <section class="card collapsible" data-key="pftrades"><div class="card-head"><h2>Trade history</h2><button class="fold" aria-label="Minimize">–</button></div><div class="fold-body"><div id="pf-trades" class="list feed"></div></div></section>
+  <section class="card pf-comment"><div class="card-head"><h2>🗣 Ledger's commentary</h2></div><div id="pf-comment"></div></section>
+  <footer class="foot">Paper portfolio — simulated. Crypto decisions every 4h, stocks once per US trading day, stops checked every 15 min. Not advice.</footer>
 </main>
 
 <main class="wrap view hidden" id="view-owner">
@@ -113,5 +129,6 @@
 </main>
 <script src="app.js"></script>
 <script src="scan.js"></script>
+<script src="tank.js"></script>
 </body>
 </html>

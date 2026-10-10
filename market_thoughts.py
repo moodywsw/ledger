@@ -244,11 +244,17 @@ def hl_smart_money(top=20):
     return {"accounts": len(states), "coins": coins}
 
 
+_POOLS: list = []   # raw trending pools from the last dex_flows() call (reused for low caps / trenches)
+
+
 def dex_flows():
     """Net buy pressure on trending DEX pools (GeckoTerminal), Solana/Base/BSC."""
     rows = []
+    _POOLS.clear()
     for net in ("solana", "base", "bsc"):
         d = safe(f"gt {net}", get, f"https://api.geckoterminal.com/api/v2/networks/{net}/trending_pools", {"page": 1})
+        for p in ((d or {}).get("data") or []):
+            _POOLS.append((net, p))
         for p in ((d or {}).get("data") or [])[:10]:
             a = p.get("attributes") or {}
             tx = (a.get("transactions") or {}).get("h24") or {}
@@ -319,10 +325,6 @@ def asset_read(a, dv, hl):
     pos50 = "above" if a["ma50"] and p > a["ma50"] else "below"
     notes = []
     f = (dv or {}).get("funding_agg")
-    if f is not None:
-        if f > 0.03: notes.append("funding hot, longs paying up")
-        elif f < -0.01: notes.append("negative funding, shorts crowded (squeeze fuel)")
-        elif f < 0: notes.append("funding slightly negative, shorts paying longs")
     oc = (dv or {}).get("oi_chg24")
     if oc is not None and abs(oc) >= 3:
         notes.append("OI rising into weakness, fresh shorts" if oc > 0 and a["chg24"] < 0 else
@@ -472,14 +474,174 @@ def build():
     trend = safe("trending", trending) or []
     hl = safe("hyperliquid", hl_smart_money) if HL_ENABLED else None
     dex = safe("dex flows", dex_flows) or []
+    mids = safe("mid caps", midcap_ideas) or []
+    lows = safe("low caps", lowcap_ideas) or []
     reads = [asset_read(assets[n], derivs.get(n), ((hl or {}).get("coins") or {}).get(n)) for n, _ in ASSETS if n in assets]
     reg = regime(assets, glob, fg) if assets else {"label": "Unknown", "key": "chop", "score": 0, "notes": []}
     summary, stance = outlook(reads, reg, fg, cbp, dex)
     return {"ts": time.time(), "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(), "regime": reg,
             "assets": reads, "fng": fg, "global": glob, "coinbase_premium": cbp, "trending": trend,
             "hyperliquid": hl, "dex_flows": dex, "trade_ideas": trade_ideas(assets, hl) if assets else [],
-            "summary": summary, "stance": stance, "next_boom": next_boom(),
+            "summary": summary, "stance": stance, "next_boom": next_boom(), "mid_caps": mids, "low_caps": lows,
+            "trenches": safe("trenches", trenches, dex, lows, reads, fg, next_boom()),
             "size_scale": regime_scale_for(reg["key"]), "warnings": LOG[-12:]}
+
+
+# ---------------- mid caps / low caps / trenches ----------------
+STABLES = {"USDT", "USDC", "DAI", "FDUSD", "TUSD", "USDE", "USDS", "PYUSD", "USD1", "BUSD", "WBTC", "WETH", "STETH", "WSTETH", "WEETH",
+           "CBBTC", "BTCB", "LEO", "XAUT", "PAXG", "BSC-USD", "SUSDE", "USDD", "FRAX", "RLUSD"}
+
+
+def midcap_ideas(n=3):
+    """$100M-$3B coins showing quiet accumulation: up modestly over 7d, not chasing on the day, healthy
+    volume/mcap, uptrend on the daily and close to the 20D (not extended). Levels from Binance candles."""
+    rows = get("https://api.coingecko.com/api/v3/coins/markets", {"vs_currency": "usd", "order": "market_cap_desc", "per_page": 250,
+               "page": 1, "price_change_percentage": "7d"})
+    cands = []
+    for r in rows:
+        sym, mc, vol = (r.get("symbol") or "").upper(), r.get("market_cap") or 0, r.get("total_volume") or 0
+        c7, c24 = r.get("price_change_percentage_7d_in_currency"), r.get("price_change_percentage_24h")
+        if sym in STABLES or sym in ("BTC", "ETH", "SOL") or not (1e8 <= mc <= 3e9) or c7 is None or c24 is None:
+            continue
+        if 0 <= c7 <= 25 and -4 <= c24 <= 8 and 0.04 <= vol / mc <= 1.0:
+            cands.append((vol / mc + c7 / 50, sym, r))
+    out = []
+    for _, sym, r in sorted(cands, reverse=True)[:10]:
+        if len(out) >= n:
+            break
+        a = safe(f"{sym} mid", asset_data, sym, sym + "USDT")
+        if not a or trend_score(a) < 1 or not a["ma20"] or a["price"] > a["ma20"] * 1.10:
+            continue
+        i = make_idea(a, "Long", f"quiet accumulation: {r['price_change_percentage_7d_in_currency']:+.0f}% 7d, "
+                      f"vol/mcap {r['total_volume'] / r['market_cap']:.0%}, holding above the 20D")
+        if i:
+            i.update(tier="mid", mcap=r["market_cap"], name=sym)
+            out.append(i)
+    return out
+
+
+def _watch_path():
+    return Path(os.environ.get("DATA_DIR", ".")) / "lowcap_watch.json"
+
+
+def lowcap_ideas(n=3):
+    """Low caps ($1M-$100M) from trending DEX pools, tracked across refreshes in lowcap_watch.json.
+    Qualified = buyers > sellers on 2+ refreshes >= 4h apart with higher lows; else labelled speculative.
+    Sanity: mcap/FDV consistent, liquidity <= 0.5x mcap, volume/liquidity < 50, price < $20 (no wrapped/stocks)."""
+    try:
+        watch = json.loads(_watch_path().read_text())
+    except Exception:
+        watch = {}
+    now = time.time()
+    for net, p in _POOLS:
+        a = p.get("attributes") or {}
+        tid = ((p.get("relationships") or {}).get("base_token") or {}).get("data", {}).get("id", "")
+        addr = tid.split("_", 1)[1] if "_" in tid else None
+        tx = (a.get("transactions") or {}).get("h24") or {}
+        b, s_ = tx.get("buyers") or 0, tx.get("sellers") or 0
+        try:
+            px, liq = float(a.get("base_token_price_usd") or 0), float(a.get("reserve_in_usd") or 0)
+            mc = float(a.get("market_cap_usd") or a.get("fdv_usd") or 0); fdv = float(a.get("fdv_usd") or 0)
+            vol = float((a.get("volume_usd") or {}).get("h24") or 0)
+        except Exception:
+            continue
+        if not addr or not (b + s_) or not px:
+            continue
+        k = f"{net}:{addr}"
+        w = watch.setdefault(k, {"sym": (a.get("name") or "").split(" / ")[0][:14], "chain": net, "pool": a.get("address"), "obs": []})
+        w["obs"].append({"ts": now, "bs": b / (b + s_), "px": px, "mc": mc, "fdv": fdv, "liq": liq, "vol": vol})
+        w["obs"] = w["obs"][-12:]
+    for k in [k for k, w in watch.items() if now - w["obs"][-1]["ts"] > 4 * 86400]:
+        del watch[k]
+    try:
+        _watch_path().write_text(json.dumps(watch))
+    except Exception:
+        pass
+    scored = []
+    for k, w in watch.items():
+        o = w["obs"][-1]
+        if now - o["ts"] > 3 * 3600 or not (1e6 <= o["mc"] <= 1e8) or o["px"] > 20 or not o["liq"]:
+            continue
+        if o["liq"] > 0.5 * o["mc"] or o["vol"] / o["liq"] > 50 or (o["fdv"] and o["mc"] > o["fdv"] * 1.05) or o["bs"] < 0.52:
+            continue
+        acc = [x for x in w["obs"] if x["bs"] > 0.52]
+        span = (acc[-1]["ts"] - acc[0]["ts"]) if len(acc) > 1 else 0
+        lows = [x["px"] for x in w["obs"][-4:]]
+        base = len(lows) >= 2 and min(lows[-2:]) >= 0.9 * min(lows)
+        qual = len(acc) >= 2 and span >= 4 * 3600 and base
+        scored.append((qual, len(acc) + o["bs"] * 2, k, w, o, base))
+    scored.sort(key=lambda x: (-x[0], -x[1]))
+    out = []
+    for qual, _, k, w, o, base in scored:
+        if len(out) >= n:
+            break
+        net, addr = k.split(":", 1)
+        try:
+            time.sleep(2.1)
+            ohl = sorted(get(f"https://api.geckoterminal.com/api/v2/networks/{net}/pools/{w['pool']}/ohlcv/hour",
+                             {"limit": 72, "aggregate": 4, "currency": "usd"})["data"]["attributes"]["ohlcv_list"])
+            ds = max(get(f"https://api.dexscreener.com/tokens/v1/{net}/{addr}"), key=lambda q: (q.get("liquidity") or {}).get("usd") or 0)
+        except Exception as e:
+            log(f"lowcap {w['sym']}: {str(e)[:60]}")
+            continue
+        pxl = float(ds.get("priceUsd") or 0)
+        if len(ohl) < 6 or not pxl or abs(ohl[-1][4] / pxl - 1) > 0.10 or not ds.get("marketCap"):
+            continue
+        p = pxl
+        lo5 = min(r[3] for r in ohl[-6:])
+        lo, hi_e = max(lo5, p * 0.90), p
+        entry = (lo + hi_e) / 2
+        stop = max(lo5 * 0.95, entry * 0.80)
+        if stop >= lo * 0.97:
+            stop = lo * 0.88
+        risk = entry - stop
+        hi = max(r[2] for r in ohl)
+        t1 = max(hi, entry + 2 * risk) if hi > entry * 1.15 else entry + 2 * risk
+        out.append({"name": w["sym"], "chain": net, "address": addr, "side": "Long", "venue": "Spot", "tier": "low",
+                    "entry_lo": lo, "entry_hi": hi_e, "stop": stop, "t1": t1, "t2": entry + 3 * risk if t1 < entry + 3 * risk else None,
+                    "rr": round((t1 - entry) / risk, 2) if risk > 0 else None, "mcap": ds.get("marketCap"), "spec": not qual,
+                    "why": (f"buyers > sellers on {len([x for x in w['obs'] if x['bs'] > .52])} scans" if qual else "net buying on the latest scan")
+                           + (", higher lows" if base else ", no clear base yet")})
+    return out
+
+
+def trenches(dex, lows, reads, fg, boom):
+    """Ledger's opinion on the memecoin trenches, from live DEX data (rule-based, honest)."""
+    pools = []
+    for net, p in _POOLS:
+        a = p.get("attributes") or {}
+        tx = (a.get("transactions") or {}).get("h1") or {}
+        try:
+            pools.append({"sym": (a.get("name") or "").split(" / ")[0][:14], "chain": net,
+                          "h1": float((a.get("price_change_percentage") or {}).get("h1") or 0),
+                          "h24": float((a.get("price_change_percentage") or {}).get("h24") or 0),
+                          "bs1": (tx.get("buyers") or 0) / max(1, (tx.get("buyers") or 0) + (tx.get("sellers") or 0)),
+                          "vol": float((a.get("volume_usd") or {}).get("h24") or 0), "liq": float(a.get("reserve_in_usd") or 0)})
+        except Exception:
+            continue
+    if not pools:
+        return None
+    hot = sum(1 for p in pools if p["h24"] > 50) / len(pools)
+    sol = next((r for r in reads if r["name"] == "SOL"), None)
+    mood = ("Trenches are on fire" if hot > .4 else "Trenches are selective" if hot > .15 else "Trenches are cold")
+    take = (f"{mood}: {hot:.0%} of trending pools are up 50%+ on the day. "
+            + (f"SOL itself is {sol['bias'].split(' ·')[0].lower()}, " if sol else "")
+            + ("so memecoin beta has a tailwind." if sol and sol["tone"] == "bull" else
+               "so rotations are fast and exits matter more than entries." if not sol or sol["tone"] == "neutral" else
+               "so most pumps get sold into. Smaller size, faster exits."))
+    if fg and fg["v"] >= 75:
+        take += " Greed is high; the late money is here."
+    pump = [p for p in pools if p["bs1"] >= .6 and 0 < p["h1"] < 40 and p["liq"] > 30_000 and p["vol"] / max(p["liq"], 1) < 40]
+    dump = [p for p in pools if (p["h24"] > 150 and p["bs1"] < .45) or p["vol"] / max(p["liq"], 1) > 60]
+    pump.sort(key=lambda p: -p["bs1"]); dump.sort(key=lambda p: -p["h24"])
+    acc = [l for l in lows if not l.get("spec")] or lows
+    lt = [r["name"] for r in reads if r["tone"] == "bull"] + [str(c).lstrip("$") for c in ((boom or {}).get("crypto") or [])][:3]
+    return {"mood": mood, "take": take,
+            "could_pump": [{"sym": p["sym"], "chain": p["chain"], "why": f"{p['bs1']:.0%} buyers last hour, +{p['h1']:.0f}% 1h, liquidity holds"} for p in pump[:4]],
+            "could_dump": [{"sym": p["sym"], "chain": p["chain"], "why": (f"+{p['h24']:.0f}% day but sellers took over" if p["h24"] > 150 else "volume dwarfs liquidity — exit-liquidity risk")} for p in dump[:4]],
+            "accumulate": [{"sym": l["name"], "chain": l["chain"], "why": l["why"]} for l in acc[:3]],
+            "long_term": lt or ["BTC"],
+            "rules": "Trenches rules: size for zero, take first profits early, never chase a green candle you didn't see build."}
 
 
 def regime_scale_for(key: str) -> float:

@@ -11,7 +11,11 @@ DISCORD_MAX_PER_DAY = int(os.environ.get("PERSONA_DISCORD_MAX_PER_DAY", "40"))
 QUIET_HOURS = os.environ.get("PERSONA_QUIET_HOURS", "")  # e.g. "1-7" (UTC), empty = off
 RECAP_HOUR_UTC = int(os.environ.get("PERSONA_RECAP_HOUR_UTC", "22"))
 MOOD_POST_EVERY_H = float(os.environ.get("PERSONA_MOOD_EVERY_HOURS", "8"))
-MUSE_EVERY_H = float(os.environ.get("PERSONA_MUSE_EVERY_HOURS", "3.5"))
+MUSE_MIN_MIN = float(os.environ.get("PERSONA_MUSE_MIN_MINUTES", "45"))
+MUSE_MAX_MIN = float(os.environ.get("PERSONA_MUSE_MAX_MINUTES", "60"))
+REACT_EVERY_MIN = float(os.environ.get("PERSONA_REACT_CHECK_MINUTES", "5"))
+REACT_COOLDOWN_MIN = float(os.environ.get("PERSONA_REACT_COOLDOWN_MINUTES", "45"))
+BTC_MOVE_PCT = float(os.environ.get("PERSONA_BTC_MOVE_PCT", "2.0"))
 BELIEFS_EVERY_H = float(os.environ.get("PERSONA_BELIEFS_EVERY_HOURS", "6"))
 # X budget is small, so only the most interesting kinds go there.
 X_KINDS = {"musing", "exit_win", "exit_loss", "thesis_own", "refusal", "recap", "mood", "thesis_kol", "entry"}
@@ -271,11 +275,13 @@ class Persona:
             self.publish("mood", {"belief": b[int(now) % len(b)] if b else ""}, key=f"mood:{int(now // 3600)}")
 
     def muse(self, now: float | None = None, ctx: dict | None = None) -> dict | None:
-        """Non-trade thought every ~MUSE_EVERY_H hours, rotating topics, no repeats."""
+        """Non-trade thought every 45-60 min (random jitter), rotating topics, no repeats."""
+        import random as _r
         now = now or time.time()
-        if now - self.s.get("last_muse", 0) < MUSE_EVERY_H * 3600:
+        if now < self.s.get("next_muse", 0):
             return None
         self.s["last_muse"] = now
+        self.s["next_muse"] = now + _r.uniform(MUSE_MIN_MIN, MUSE_MAX_MIN) * 60
         ctx = dict(ctx if ctx is not None else muse.gather())
         ctx.update(beliefs=self.s["beliefs"], lessons_count=len(self.s["lessons"]), mood_state=self.s["mood"])
         recent = self.s.setdefault("muse_topics", [])
@@ -290,6 +296,51 @@ class Persona:
                                        "world": [h for h in (ctx.get("world") or []) if not muse._SENSITIVE.search(h)][:3], "fng": ctx.get("fng"),
                                        "recent": recent_texts[-3:]}, key=f"muse:{int(now)}")
 
+    def react(self, now: float | None = None, btc_price: float | None = None, world: list | None = None) -> dict | None:
+        """Reactive thoughts: a sharp BTC move or a fresh market-moving world headline (cooldown-limited)."""
+        now = now or time.time()
+        if now - self.s.get("last_react_check", 0) < REACT_EVERY_MIN * 60 and btc_price is None and world is None:
+            return None
+        self.s["last_react_check"] = now
+        if now - self.s.get("last_react", 0) < REACT_COOLDOWN_MIN * 60:
+            return None
+        if btc_price is None:
+            try:
+                import market_thoughts
+                btc_price = float(market_thoughts.spot("/api/v3/ticker/price", {"symbol": "BTCUSDT"})["price"])
+            except Exception:
+                btc_price = None
+        hist = [h for h in self.s.setdefault("btc_hist", []) if now - h[0] <= 3600]
+        if btc_price:
+            hist.append([now, btc_price])
+        self.s["btc_hist"] = hist[-20:]
+        if btc_price and hist:
+            ref = hist[0][1]
+            chg = (btc_price / ref - 1) * 100
+            if abs(chg) >= BTC_MOVE_PCT and now - hist[0][0] >= 600:
+                self.s["last_react"] = now
+                self.s["btc_hist"] = [[now, btc_price]]
+                draft = muse.reactive_btc(chg, btc_price, self.s["mood"])
+                return self.publish("musing", {"topic": "btc_move", "draft": draft, "move": f"{chg:+.1f}% in under an hour",
+                                               "recent": [p["text"] for p in self.s["posts"][-3:]]}, key=f"btc:{int(now)}")
+        if world is None and now - self.s.get("last_news_check", 0) >= 20 * 60:
+            self.s["last_news_check"] = now
+            world = muse.headlines(10, muse.WORLD_RSS)
+        seen = self.s.setdefault("seen_headlines", [])
+        for h in world or []:
+            k = hashlib.sha1(h.encode()).hexdigest()[:12]
+            if k in seen:
+                continue
+            seen.append(k)
+            take = muse.market_hook(h)
+            if take and not muse._SENSITIVE.search(h) and muse.is_big(h):
+                del seen[:-300]
+                self.s["last_react"] = now
+                return self.publish("musing", {"topic": "news_flash", "draft": muse.reactive_news(h, take), "world": [h],
+                                               "recent": [p["text"] for p in self.s["posts"][-3:]]}, key=f"news:{k}")
+        del seen[:-300]
+        return None
+
     def tick(self):
         with store.LOCK:
             self.read_new_journal()
@@ -298,6 +349,10 @@ class Persona:
                 self.muse()
             except Exception as ex:
                 print(f"[PERSONA] muse skipped: {str(ex)[:120]}")
+            try:
+                self.react()
+            except Exception as ex:
+                print(f"[PERSONA] react skipped: {str(ex)[:120]}")
             if int(time.time() // 60) % 15 == 0:
                 self.react_kol_theses()
             store.save(self.s)

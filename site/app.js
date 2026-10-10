@@ -10,7 +10,7 @@ function solPlain(v, d = 3) { return v == null ? "—" : `${num(v, d)} SOL`; }
 function usd(v, signed = false) { if (v == null) return "—"; const s = signed && v > 0 ? "+" : ""; return `${s}${v < 0 ? "-" : ""}$${Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
 function pct(v) { return v == null ? "—" : `${v > 0 ? "+" : ""}${(v * 100).toFixed(1)}%`; }
 function cls(v) { return v == null || v === 0 ? "zero" : v > 0 ? "pos" : "neg"; }
-function price(v) { if (v == null) return "—"; return v < 0.001 ? Number(v).toExponential(2) : Number(v).toPrecision(4); }
+function price(v) { if (v == null) return "—"; if (v >= 1000) return Math.round(v).toLocaleString(); return v < 0.001 ? Number(v).toExponential(2) : Number(v).toPrecision(4); }
 function ago(iso) { const t = new Date(iso).getTime(); if (!t) return ""; const s = (Date.now() - t) / 1000;
   if (s < 60) return `${Math.floor(s)}s ago`; if (s < 3600) return `${Math.floor(s / 60)}m ago`; if (s < 86400) return `${Math.floor(s / 3600)}h ago`; return `${Math.floor(s / 86400)}d ago`; }
 function setVal(id, text, c) { const el = $(id); el.textContent = text; if (c !== undefined) el.className = `${el.className.replace(/\b(pos|neg|zero)\b/g, "").trim()} ${c}`; }
@@ -23,7 +23,7 @@ function showView(v) {
   document.querySelectorAll(".view").forEach(x => x.classList.toggle("hidden", x.id !== `view-${v}`));
   document.querySelectorAll(".nav-btn").forEach(b => b.classList.toggle("active", b.dataset.view === v));
   if (location.hash !== `#${v}`) history.replaceState(null, "", v === "dash" ? location.pathname : `#${v}`);
-  if (v === "market") loadMarket(); if (v === "owner") ownerOpen();
+  if (v === "market") loadMarket(); if (v === "portfolio") loadPortfolio(); if (v === "owner") ownerOpen();
   window.dispatchEvent(new Event("ledger:view"));
 }
 $("nav").addEventListener("click", e => { const b = e.target.closest(".nav-btn"); if (b) showView(b.dataset.view); });
@@ -125,9 +125,10 @@ async function pollOnce() {
     fetchJson("/api/journal?limit=60").then(j => { LEDGER.journal = j; }),
     fetchJson("/api/overview").then(renderOverview),
     fetchJson("/api/persona/feed?limit=20").then(renderMind).catch(() => renderMind(null)),
-    fetchJson("/api/market_thoughts").then(m => { if (m.ready) { LEDGER.market = m; $("chip-regime").textContent = `regime · ${m.regime.label}`; } }),
+    fetchJson("/api/market_thoughts").then(m => { if (m.ready) LEDGER.market = m; }),
   ]);
   setConn(res.slice(0, 2).some(r => r.status === "fulfilled"));
+  window.dispatchEvent(new Event("ledger:data"));
 }
 
 // ── Market Thoughts tab ─────────────────────────────────────────────
@@ -158,7 +159,7 @@ async function loadMarket() {
       <div class="lsbar"><i style="width:${Math.round(ls * 100)}%"></i></div>
       <div class="mono muted sm">${Math.round(ls * 100)}% long by notional · avg long ${fp(h.long_entry)} · avg short ${fp(h.short_entry)}</div></div>`; }).join("") : empty("Hyperliquid data unavailable this round.");
   $("mt-deriv").innerHTML = m.assets.map(a => `<div class="row"><div class="l"><div class="t">${a.name}</div>
-      <div class="m mono">funding ${a.funding == null ? "—" : a.funding.toFixed(4) + "%"} · OI ${big(a.oi_total)} ${a.oi_chg24 != null ? `(${pc(a.oi_chg24)})` : ""}</div>
+      <div class="m mono">OI ${big(a.oi_total)} ${a.oi_chg24 != null ? `(${pc(a.oi_chg24)})` : ""}</div>
       <div class="m mono">top traders ${a.top_long != null ? Math.round(a.top_long * 100) + "% long" : "—"} · retail ${a.retail_long != null ? Math.round(a.retail_long * 100) + "% long" : "—"} · taker ${a.taker ? a.taker.toFixed(2) : "—"}</div></div></div>`).join("")
     + (m.coinbase_premium != null ? `<div class="row"><div class="l"><div class="t">Coinbase premium</div><div class="m mono ${cls(m.coinbase_premium)}">${pc(m.coinbase_premium, 3)}</div></div></div>` : "")
     + (m.global ? `<div class="row"><div class="l"><div class="t">Total market</div><div class="m mono">${big(m.global.mcap)} · ${pc(m.global.mcap_chg)} · BTC dom ${m.global.btc_dom.toFixed(1)}%</div></div></div>` : "");
@@ -166,15 +167,28 @@ async function loadMarket() {
       <div class="lsbar thin"><i style="width:${Math.round(d.buy_share * 100)}%"></i></div><div class="m mono">vol ${big(d.vol24)} · liq ${big(d.liq)}</div></div>
       <div class="mono ${cls(d.chg24)}">${pc(d.chg24, 0)}</div></div>`).join("") : empty("No DEX flow data this round.");
   $("mt-trend").innerHTML = (m.trending || []).map(t => `<div class="tchip"><b>${esc(t.symbol)}</b><span class="mono ${cls(t.chg24)}">${pc(t.chg24, 0)}</span></div>`).join("") || empty("—");
-  $("mt-ideas").innerHTML = (m.trade_ideas || []).length ? m.trade_ideas.map(i => `<div class="idea ${i.side === "Long" ? "long" : "short"}">
-      <div class="i-h"><b>${i.side} ${i.name}</b><span class="cn">${i.venue}</span><span class="mono muted">R:R ${i.rr}</span></div>
-      <div class="i-g mono"><span>Entry</span><b>${fp(i.entry_lo)}–${fp(i.entry_hi)}</b><span>Stop</span><b class="neg">${fp(i.stop)}</b><span>Target</span><b class="pos">${fp(i.t1)}${i.t2 ? ` → ${fp(i.t2)}` : ""}</b></div>
-      <div class="muted">${esc(i.why)}</div></div>`).join("") : empty("No clean setup right now. Wait for a daily close outside the range.");
+  const idea = i => `<div class="idea ${i.side === "Long" ? "long" : "short"}">
+      <div class="i-h"><b>${i.side} ${esc(i.name)}</b><span class="cn">${esc(i.venue)}</span>${i.tier ? `<span class="tier ${i.tier}">${i.tier === "low" ? "low cap" : "mid cap"}</span>` : ""}${i.chain ? `<span class="cn">${esc(i.chain)}</span>` : ""}<span class="mono muted">R:R ${i.rr ?? "—"}</span></div>
+      <div class="i-g mono"><span>Entry</span><b>${fp(i.entry_lo)}–${fp(i.entry_hi)}</b><span>Stop</span><b class="neg">${fp(i.stop)}</b><span>Target</span><b class="pos">${fp(i.t1)}${i.t2 ? ` → ${fp(i.t2)}` : ""}</b>${i.mcap ? `<span>Mcap</span><b>${big(i.mcap)}</b>` : ""}</div>
+      <div class="muted">${esc(i.why)}${i.spec ? " · <b>speculative, small size</b>" : ""}</div></div>`;
+  const maj = m.trade_ideas || [], mid = m.mid_caps || [], low = m.low_caps || [];
+  $("mt-ideas").innerHTML = (maj.length || mid.length || low.length)
+    ? (maj.length ? `<div class="ideas-h">Majors</div>${maj.map(idea).join("")}` : "") + (mid.length ? `<div class="ideas-h">Mid caps · accumulation</div>${mid.map(idea).join("")}` : "")
+      + (low.length ? `<div class="ideas-h">Low caps · on-chain accumulation</div>${low.map(idea).join("")}` : "")
+    : empty("No clean setup right now. Wait for a daily close outside the range.");
+  const T = m.trenches;
+  $("tr-mood").textContent = T ? T.mood : "";
+  const li = xs => xs && xs.length ? `<ul>${xs.map(x => typeof x === "string" ? `<li><b>${esc(x)}</b></li>` : `<li><b>${esc(x.sym)}</b> <span class="cn">${esc(x.chain || "")}</span><br>${esc(x.why)}</li>`).join("")}</ul>` : `<div class="muted">Nothing convincing.</div>`;
+  $("mt-trench").innerHTML = T ? `<p class="tr-take">${esc(T.take)}</p><div class="tr-grid">
+      <div class="tr-col"><h4>🚀 Could pump</h4>${li(T.could_pump)}</div><div class="tr-col"><h4>🩸 Could dump</h4>${li(T.could_dump)}</div>
+      <div class="tr-col"><h4>🧺 Accumulate</h4>${li(T.accumulate)}</div><div class="tr-col"><h4>🏛 Long-term</h4>${li(T.long_term)}</div></div>
+      <div class="tr-rules">${esc(T.rules)}</div>` : empty("Trenches read appears after the next market refresh.");
   const b = m.next_boom;
   $("boom-w").textContent = b && b.boom_window ? `window · ${b.boom_window}` : "";
   $("mt-boom").innerHTML = b ? `<h3>${esc(b.emoji || "🚀")} ${esc(b.theme)}</h3><p class="boom-t">${md(b.thesis || "")}</p>
       <div class="grid2 inner"><div><div class="label pad">Why now</div><ul>${(b.why_now || []).slice(0, 4).map(w => `<li>${md(w)}</li>`).join("")}</ul></div>
-      <div><div class="label pad">Exposure</div><div class="trend">${(b.crypto || []).map(c => `<span class="tchip"><b>$${esc(String(c).replace(/^\$/, ""))}</b></span>`).join("")}${(b.stocks || []).map(s => `<span class="tchip"><b>${esc(s)}</b></span>`).join("")}</div>
+      <div><div class="label pad">Crypto</div><div class="trend">${(b.crypto || []).map(c => `<span class="tchip"><b>$${esc(String(c).replace(/^\$/, ""))}</b></span>`).join("") || '<span class="muted">no clean crypto proxy, equities lead this one</span>'}</div>
+      <div class="label pad" style="margin-top:10px">Stocks</div><div class="trend">${(b.stocks || []).map(s => `<span class="tchip"><b>${esc(s)}</b></span>`).join("") || '<span class="muted">—</span>'}</div>
       ${b.invalidation ? `<div class="label pad" style="margin-top:12px">Invalidation</div><div class="muted">${md(b.invalidation)}</div>` : ""}</div></div>` : empty("No theme in rotation.");
 }
 const md = t => esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/\*/g, "");
@@ -191,6 +205,39 @@ function drawFng(v) {
   x.strokeStyle = g; x.beginPath(); x.arc(cx, cy, r, Math.PI, Math.PI + Math.PI * v / 100); x.stroke();
   const a = Math.PI + Math.PI * v / 100; x.fillStyle = "#fff"; x.beginPath(); x.arc(cx + r * Math.cos(a), cy + r * Math.sin(a), 6, 0, 7); x.fill();
 }
+
+// ── Portfolio tab (paper, simulated) ────────────────────────────────
+const SLV = { spot: ["Crypto spot", "#7c8cff"], perps: ["Crypto perps", "#22d3e6"], stocks: ["Penny stocks", "#f5b84b"] };
+const eur = v => v == null ? "—" : `€${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+async function loadPortfolio() {
+  let P; try { P = await fetchJson("/api/portfolio"); } catch { return; }
+  $("pf-total").innerHTML = `${eur(P.total_eur)} <span class="${cls(P.pnl_pct)}" style="font-size:18px">${pc(P.pnl_pct, 2)}</span>`;
+  $("pf-sub").textContent = `Started with €3,000 on ${new Date(P.created * 1000).toLocaleDateString()} · simulated, no real money`;
+  const sl = Object.entries(P.sleeves);
+  const c = $("pf-donut"), x = c.getContext("2d"), tot = sl.reduce((a, [, v]) => a + v.value_eur, 0) || 1; x.clearRect(0, 0, 180, 180);
+  let a0 = -Math.PI / 2; sl.forEach(([k, v]) => { const a1 = a0 + 6.283 * v.value_eur / tot; x.strokeStyle = SLV[k][1]; x.lineWidth = 22; x.beginPath(); x.arc(90, 90, 66, a0 + .02, a1 - .02); x.stroke(); a0 = a1; });
+  x.fillStyle = "#e6edf6"; x.font = "600 13px Inter"; x.textAlign = "center"; x.fillText("allocation", 90, 95);
+  const H = P.history || [];
+  if (H.length > 1) { const vs = H.map(h => h.v), mn = Math.min(...vs), mx = Math.max(...vs), sp = (mx - mn) || 1, Wd = 600, Hh = 150;
+    const d = vs.map((v, i) => `${i ? "L" : "M"}${(i / (vs.length - 1) * Wd).toFixed(1)},${(Hh - 6 - (v - mn) / sp * (Hh - 12)).toFixed(1)}`).join("");
+    const col = vs[vs.length - 1] >= 3000 ? "#22d39b" : "#ff5c7a";
+    $("pf-chart").innerHTML = `<svg viewBox="0 0 ${Wd} ${Hh}" preserveAspectRatio="none"><path d="${d}" fill="none" stroke="${col}" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>`; }
+  else $("pf-chart").innerHTML = `<div class="empty sm">Value curve builds over the first hours.</div>`;
+  $("pf-sleeves").innerHTML = sl.map(([k, v]) => `<div class="card sleeve"><div class="label"><span class="sw" style="background:${SLV[k][1]}"></span>${SLV[k][0]}</div>
+    <div class="big mono">${eur(v.value_eur)} <span class="${cls(v.pnl_pct)}" style="font-size:14px">${pc(v.pnl_pct, 2)}</span></div>
+    <div class="muted">cash ${eur(v.cash_eur)} · ${v.positions.length} positions${v.last_decision ? ` · decided ${ago(new Date(v.last_decision * 1000))}` : ""}</div></div>`).join("");
+  const pos = sl.flatMap(([k, v]) => v.positions.map(p => ({ ...p, sleeve: k })));
+  $("pf-pos").innerHTML = pos.length ? pos.map(p => `<div class="row col"><div class="pfpos"><div><b>${esc(p.sym)}</b> <span class="cn">${SLV[p.sleeve][0]}</span>${p.side !== "Spot" ? ` <span class="cn">${esc(p.side)} ${p.lev}x</span>` : ""}</div>
+      <div class="mono"><span class="${cls(p.pnl_pct)}">${pc(p.pnl_pct, 1)}</span> · ${eur(p.value_eur)}</div>
+      <div class="mono muted sm">entry $${price(p.entry_usd)} · now $${price(p.last_usd)}${p.stop_usd ? ` · stop $${price(p.stop_usd)}` : ""}${p.target_usd ? ` · target $${price(p.target_usd)}` : ""}</div><div></div>
+      <div class="why">💭 ${esc(p.why)}</div></div></div>`).join("") : empty("Ledger hasn't opened anything yet — first decisions within a few hours.");
+  $("pf-trades").innerHTML = (P.trades || []).length ? P.trades.map(t => `<div class="row"><div class="l"><div class="t">${esc(t.action)} ${esc(t.sym)} <span class="cn">${SLV[t.sleeve][0]}</span></div>
+      <div class="m">${esc(t.why)}</div></div><div class="mono" style="text-align:right">${eur(t.eur)}${t.pnl_pct != null ? `<br><span class="${cls(t.pnl_pct)}">${pc(t.pnl_pct, 1)}</span>` : ""}<br><span class="jt">${ago(new Date(t.ts * 1000))}</span></div></div>`).join("") : empty("No trades yet.");
+  const C = P.commentary || {};
+  $("pf-comment").innerHTML = `<p>${esc(C.intro || "")}</p><ul>${Object.entries(C.sleeves || {}).filter(([, n]) => n).map(([k, n]) => `<li><b>${SLV[k][0]}:</b> ${esc(n)}</li>`).join("")}</ul>
+    ${(C.positions || []).length ? `<div class="label pad" style="margin-top:12px">Why I hold each position</div><ul>${C.positions.map(p => `<li><b>${esc(p.sym)}</b> — ${esc(p.why)}</li>`).join("")}</ul>` : ""}`;
+}
+setInterval(() => { if (!document.hidden && !$("view-portfolio").classList.contains("hidden")) loadPortfolio(); }, 60_000);
 
 // ── Owner view (same admin token as the switch) ─────────────────────
 const tok = () => store.get("ledgerAdminToken");
@@ -265,4 +312,4 @@ $("switch-btn").addEventListener("click", async () => {
 pollOnce(); setInterval(() => { if (!document.hidden) pollOnce(); }, POLL_INTERVAL_MS);
 pollSwitch(); setInterval(() => { if (!document.hidden) pollSwitch(); }, POLL_INTERVAL_MS);
 setInterval(() => { if (!document.hidden && !$("view-market").classList.contains("hidden")) loadMarket(); }, 120_000);
-{ const h = (location.hash || "").slice(1); showView(["dash", "market", "owner"].includes(h) ? h : "dash"); }
+{ const h = (location.hash || "").slice(1); showView(["dash", "market", "portfolio", "owner"].includes(h) ? h : "dash"); }

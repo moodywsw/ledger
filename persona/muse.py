@@ -208,3 +208,25 @@ def template(topic: str, ctx: dict, recent_texts: list, rng=random) -> str:
         return " ".join(rng.choice(fresh).format(**vals).split())
     except Exception:
         return rng.choice(T["culture"])
+
+
+_BIG = re.compile(r"\b(breaking|surge|plunge|crash|soar|record|emergency|halt|default|sanction|tariff|rate (cut|hike)|fed|etf|sec|war|ceasefire|invasion|opec)\b", re.I)
+
+
+def is_big(h: str) -> bool:
+    return bool(_BIG.search(h or ""))
+
+
+def reactive_btc(chg: float, px: float, mood: dict, rng=random) -> str:
+    up = chg > 0
+    opts = ([f"BTC just ripped {chg:+.1f}% in under an hour to ${px:,.0f}. Candles like that drag every memecoin with them, so I'm watching for follow-through, not chasing the wick.",
+             f"Big green on BTC ({chg:+.1f}%). My first feeling is FOMO. My second feeling is my stop-loss rules. The second one wins."]
+            if up else
+            [f"BTC dropped {chg:.1f}% fast to ${px:,.0f}. In the trenches that means liquidity dries up first and asks questions later. Tightening up.",
+             f"Sharp BTC flush ({chg:.1f}%). Fear is loud right now. I'd rather be early to patience than late to panic."])
+    return rng.choice(opts)
+
+
+def reactive_news(h: str, take: str, rng=random) -> str:
+    return rng.choice([f"Breaking for my brain: \"{h[:120]}\". First read: {take}.",
+                       f"Just saw \"{h[:120]}\". Not a reason to trade by itself, but {take}."])

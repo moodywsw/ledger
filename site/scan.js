@@ -145,10 +145,21 @@
       while (cells.length < 40) cells.push(vals.length ? vals[cells.length % vals.length] * (0.6 + 0.4 * Math.random()) : (Math.random() - .5) * .3);
       heatEl.innerHTML = cells.map(v => `<i style="background:${v >= 0 ? `rgba(34,211,155,${.15 + Math.min(1, v) * .8})` : `rgba(255,92,122,${.15 + Math.min(1, -v) * .8})`}"></i>`).join("");
       document.getElementById("heat-n").textContent = m ? `${vals.length} signals` : "—"; }
-    if (gauge) { const conf = L.mood ? (L.mood.confidence ?? .5) : .5, c = gauge.getContext("2d"), w = gauge.width = gauge.clientWidth * DPR, h = gauge.height = gauge.clientHeight * DPR, cx = w / 2, cy = h * .82, R = Math.min(w / 2, h) * .7;
-      c.clearRect(0, 0, w, h); c.lineWidth = 8 * DPR; c.lineCap = "round"; c.strokeStyle = "#1a2230"; c.beginPath(); c.arc(cx, cy, R, Math.PI, 0); c.stroke();
-      c.strokeStyle = conf > .6 ? "#22d39b" : conf < .4 ? "#ff5c7a" : "#f5b84b"; c.beginPath(); c.arc(cx, cy, R, Math.PI, Math.PI + Math.PI * conf); c.stroke();
-      document.getElementById("gauge-v").textContent = `${Math.round(conf * 100)}`; }
+    if (gauge) {
+      const reg = m ? m.regime : null, md = L.mood || {};
+      let conv = .5 + (reg ? Math.max(-1, Math.min(1, Math.abs(reg.score) / 4)) * .25 : 0) + ((md.confidence ?? .5) - .5) * .5 - (md.tilt || 0) * .2;
+      conv = Math.max(.05, Math.min(.98, conv));
+      const c = gauge.getContext("2d"), w = gauge.width = gauge.clientWidth * DPR, h = gauge.height = gauge.clientHeight * DPR, cx = w / 2, cy = h * .9, R = Math.min(w / 2, h) * .78;
+      c.clearRect(0, 0, w, h); c.lineWidth = 7 * DPR; c.lineCap = "round"; c.strokeStyle = "#1a2230"; c.beginPath(); c.arc(cx, cy, R, Math.PI, 0); c.stroke();
+      c.strokeStyle = conv > .6 ? "#22d39b" : conv < .4 ? "#ff5c7a" : "#f5b84b"; c.beginPath(); c.arc(cx, cy, R, Math.PI, Math.PI + Math.PI * conv); c.stroke();
+      document.getElementById("gauge-v").textContent = `${Math.round(conv * 100)}`;
+      const d = document.getElementById("conv-d");
+      if (d && m && m.assets && m.assets.length) {
+        const a = [...m.assets].sort((x, y) => Math.abs(y.score) - Math.abs(x.score))[0];
+        const what = a.tone === "bull" ? `${a.name} trending up, buying dips` : a.tone === "bear" ? `${a.name} weak, selling rips` : `${a.name} range, waiting for a breakout`;
+        d.textContent = `${what} · ${m.regime.key === "risk_off" ? "defensive size" : m.regime.key === "risk_on" ? "full size" : "normal size"}`;
+      }
+    }
     const rate = document.getElementById("scan-rate"); if (rate) rate.textContent = `${(events / 10).toFixed(1)} ev/s`; events = 0;
     const sub = document.getElementById("scan-sub"); if (sub && m) sub.textContent = `regime · ${m.regime.label.toLowerCase()} · ${L.mood ? "mood · " + L.mood.label : ""}`;
     gal.forEach(g => { g.heat = heat(g); });
@@ -165,6 +176,6 @@
   new IntersectionObserver(es => { inView = es[0].isIntersecting; onVis(); }).observe(cv);
   document.addEventListener("visibilitychange", onVis); window.addEventListener("ledger:view", onVis);
   let rt; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { layout(); if (reduce) draw(0); }, 200); });
-  layout(); nextTarget(); pushLog("boot  mind online"); start(); minis(); setInterval(() => { if (!document.hidden) minis(); }, 10_000);
+  layout(); nextTarget(); pushLog("boot  mind online"); start(); minis(); setInterval(() => { if (!document.hidden) minis(); }, 10_000); window.addEventListener("ledger:data", minis);
   if (reduce) setInterval(() => { if (!document.hidden) { spider.x = spider.tx; spider.y = spider.ty; arrive(); nextTarget(); spider.x = spider.tx; spider.y = spider.ty; draw(0); } }, 6000);
 })();
