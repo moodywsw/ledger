@@ -72,6 +72,7 @@ from pathlib import Path
 from journal_store import log_journal, get_token_history
 from theses_store import upsert_thesis
 from api_server import start_api_server
+import strategy_lab
 from real_trading import (
     execute_real_trade, get_wallet_balances, get_open_real_positions_summary,
     retry_stuck_real_sell, REAL_TRADING_ENABLED,
@@ -2170,11 +2171,17 @@ def risk_gate_entry(state: LedgerState, token: str, symbol: str, source: str, wa
         if PAPER_TRADING_ENABLED:
             snap = paper_portfolio_snapshot(state)
             scale = ULTRA_CONSERVATIVE_SIZE_MULTIPLIER if state.ultra_conservative_mode else 1.0
-            size, note = size_for_signal(snap.equity, RISK, source, wallet_stat, scale=scale)
+            _rs, _rn = _regime_scale(source)
+            size, note = size_for_signal(snap.equity, RISK, source, wallet_stat, scale=scale * _rs)
+            if _rn:
+                note += f" · {_rn}"
             size_usd = size * sol_price if sol_price else None
         else:
             snap = real_portfolio_snapshot(state)
-            size, note = size_for_signal(snap.equity, _dc.replace(RISK, min_position_sol=0.0), source, wallet_stat)
+            _rs, _rn = _regime_scale(source)
+            size, note = size_for_signal(snap.equity, _dc.replace(RISK, min_position_sol=0.0), source, wallet_stat, scale=_rs)
+            if _rn:
+                note += f" · {_rn}"
             size_usd = size
     except Exception as e:
         result["reason"] = f"couldn't build portfolio snapshot: {e}"
@@ -3147,6 +3154,20 @@ def _position_price(mint: str, pos: dict):
     return get_sniper_exit_price(mint)
 
 
+def _regime_scale(source: str) -> tuple:
+    """Market-regime filter from Ledger Market Thoughts: risk-off only ever SHRINKS new entries.
+    Hard rails, caps and safety filters are untouched. Owner-approved Strategy Lab scale wins."""
+    try:
+        import market_thoughts
+        s, note = market_thoughts.regime_size_scale()
+        ov = strategy_lab.regime_scale_override()
+        if ov is not None and s < 1.0:
+            s, note = ov, note.rsplit("x", 1)[0] + f"x{ov:.2f} (lab)"
+        return max(0.0, min(1.0, s)), note
+    except Exception:
+        return 1.0, ""
+
+
 def manage_paper_positions_v2(state: LedgerState):
     """Runs every open paper position through risk_engine.evaluate_exit and executes the result."""
     now = time.time()
@@ -3168,7 +3189,7 @@ def manage_paper_positions_v2(state: LedgerState):
         _tv = dict(pos, mint=mint, opened_ts_x=_opened_ts(pos))
         actions, updates = trader_profile.timing_exit(_tv, price, now, _dexscreener_best_pair, get_top10_holder_pct, fomo_theses.token_best_score)
         if not actions and not pos.get("moonbag"):
-            actions, updates2 = evaluate_exit(view, price, now, RISK)
+            actions, updates2 = evaluate_exit(view, price, now, strategy_lab.cfg_for(RISK, pos.get("opened_by") or pos.get("wallet")))
             updates = {**updates, **updates2}
         pos.update(updates)
         if price is not None:
@@ -3208,7 +3229,7 @@ def manage_real_only_positions_v2():
         _tv = dict(pos, mint=mint, opened_ts_x=_opened_ts(pos))
         actions, updates = trader_profile.timing_exit(_tv, price, now, _dexscreener_best_pair, get_top10_holder_pct, fomo_theses.token_best_score)
         if not actions and not pos.get("moonbag"):
-            actions, updates2 = evaluate_exit(view, price, now, RISK)
+            actions, updates2 = evaluate_exit(view, price, now, strategy_lab.cfg_for(RISK, pos.get("opened_by") or pos.get("wallet")))
             updates = {**updates, **updates2}
         pos.update(updates)
         positions[mint] = pos
@@ -4843,6 +4864,12 @@ def main():
           f"position_check={POSITION_CHECK_SECONDS}s config={json.dumps(RISK.as_dict())}")
 
     start_api_server()
+    try:
+        import market_thoughts
+        market_thoughts.start()
+        strategy_lab.start(RISK.profile)
+    except Exception as _e:
+        print(f"[WARN] market thoughts / strategy lab not started: {_e}")
     try:
         import persona
         persona.start_persona()

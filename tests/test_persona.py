@@ -67,7 +67,7 @@ def test_beliefs_distilled(P):
     for i in range(3):
         P._lesson("omo", "stop_loss", -0.1, -20, "stop_loss")
     b = P.distil_beliefs()
-    assert any("frank" in x for x in b) and any("omo" in x for x in b) and len(b) <= 8
+    assert not any("frank" in x or "omo" in x for x in b) and any("best signal" in x for x in b) and any("cold" in x for x in b) and len(b) <= 8
 
 
 def test_x_rate_limit_and_discord(P, monkeypatch):

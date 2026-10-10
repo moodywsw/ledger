@@ -35,6 +35,8 @@ from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory
 
 import bot_switch
+import privacy
+from functools import wraps
 from journal_store import get_recent_journal
 from theses_store import get_theses
 from real_trading import (
@@ -73,6 +75,7 @@ def add_cors_headers(response):
     # so the static site (served from a different origin/port) can
     # fetch it directly without needing a proxy.
     response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, X-Admin-Token"
     return response
 
 
@@ -103,8 +106,39 @@ def load_state() -> dict:
         return {}
 
 
+def owner_only(fn):
+    """Owner views: same admin token as the ON/OFF switch (Bearer or X-Admin-Token)."""
+    @wraps(fn)
+    def inner(*a, **k):
+        if request.method == "OPTIONS":
+            return ("", 204)
+        if not privacy.is_owner(request):
+            return jsonify({"error": "unauthorized"}), 401
+        resp = fn(*a, **k)
+        r = app.make_response(resp)
+        r.headers["Cache-Control"] = "no-store"
+        return r
+    return inner
+
+
+def _public(obj, keep=None):
+    return privacy.scrub_obj(obj, keep)
+
+
 @app.route("/api/state")
 def api_state():
+    d = _state_full()
+    keep = {p["mint"] for p in d["open_positions"]}
+    return jsonify(_public(d, keep))
+
+
+@app.route("/api/owner/state")
+@owner_only
+def api_owner_state():
+    return jsonify(_state_full())
+
+
+def _state_full():
     state = load_state()
     open_positions_raw = state.get("open_positions", {})
 
@@ -137,15 +171,21 @@ def api_state():
             "moonbag": bool(pos.get("moonbag")),
         })
 
-    return jsonify({
+    return {
         "balance_sol": state.get("balance_sol"),
         "realized_pnl_sol": state.get("realized_pnl_sol"),
         "open_positions": positions,
-    })
+    }
 
 
 @app.route("/api/real_state")
 def api_real_state():
+    d = _real_state_full()
+    keep = {p.get("mint") for p in (d.get("open_real_positions") or []) if isinstance(p, dict) and p.get("mint")}
+    return jsonify(_public(d, keep))
+
+
+def _real_state_full():
     """
     Real (on-chain) trading state — separate from /api/state, which is
     paper-only. Kept as its own endpoint rather than folded into
@@ -178,7 +218,7 @@ def api_real_state():
         max_position_usdc = get_max_real_position_usdc(balances["usdc"])
         max_total_exposure_usdc = (balances["usdc"] + exposure_usdc) * MAX_TOTAL_EXPOSURE_PCT
 
-    return jsonify({
+    return ({
         "armed": REAL_TRADING_ENABLED,
         "balance_usdc": balances.get("usdc"),
         "balance_sol": balances.get("sol"),
@@ -218,13 +258,20 @@ def api_bot_switch_post():
 def api_journal():
     limit = request.args.get("limit", default=50, type=int)
     limit = max(1, min(limit, 500))  # sane bounds — never dump the whole file on a bad query param
+    return jsonify(_public(get_recent_journal(limit=limit)))
+
+
+@app.route("/api/owner/journal")
+@owner_only
+def api_owner_journal():
+    limit = max(1, min(request.args.get("limit", default=150, type=int), 500))
     return jsonify(get_recent_journal(limit=limit))
 
 
 @app.route("/api/theses")
 def api_theses():
     active = get_theses(statuses={"stalking", "holding"})
-    return jsonify(active)
+    return jsonify(_public(active))
 
 
 # ── Dashboard v2: read-only aggregate endpoint ───────────────────────
@@ -302,12 +349,73 @@ def build_overview(state: dict, journal: list, now: float = None) -> dict:
     }
 
 
+def public_overview(o: dict) -> dict:
+    """Overview without anything that identifies a copied trader."""
+    o = dict(o)
+    o.pop("traders", None)
+    o["closed_trades"] = [{k: v for k, v in t.items() if k != "opened_by"} for t in o.get("closed_trades", [])]
+    return _public(o, {t.get("token") for t in o["closed_trades"] if t.get("token")})
+
+
 @app.route("/api/overview")
 def api_overview():
+    return jsonify(public_overview(build_overview(load_state(), get_recent_journal(limit=500))))
+
+
+@app.route("/api/owner/overview")
+@owner_only
+def api_owner_overview():
     return jsonify(build_overview(load_state(), get_recent_journal(limit=500)))
 
 
-@app.route("/api/fomo_theses")
+@app.route("/api/owner/check", methods=["GET", "POST", "OPTIONS"])
+@owner_only
+def api_owner_check():
+    return jsonify({"ok": True})
+
+
+@app.route("/api/market_thoughts")
+def api_market_thoughts():
+    import market_thoughts
+    d = market_thoughts.cached()
+    if not d:
+        return jsonify({"ready": False, "message": "First market read is being prepared (refreshes every 2h)."})
+    return jsonify(dict(_public(d), ready=True))
+
+
+@app.route("/api/owner/lab")
+@owner_only
+def api_owner_lab():
+    import strategy_lab
+    return jsonify(strategy_lab.public_view())
+
+
+@app.route("/api/owner/lab/<sid>/<action>", methods=["POST", "OPTIONS"])
+@owner_only
+def api_owner_lab_decide(sid, action):
+    import strategy_lab
+    from risk_engine import RiskConfig
+    if action not in ("approve", "reject"):
+        return jsonify({"error": "bad action"}), 400
+    try:
+        st = strategy_lab.decide(sid, action == "approve", RiskConfig.from_env().profile)
+    except KeyError:
+        return jsonify({"error": "not found"}), 404
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 409
+    return jsonify(st)
+
+
+@app.route("/api/owner/lab/propose", methods=["POST", "OPTIONS"])
+@owner_only
+def api_owner_lab_propose():
+    import strategy_lab
+    threading.Thread(target=lambda: strategy_lab.tick(force_propose=True), daemon=True).start()
+    return jsonify({"started": True})
+
+
+@app.route("/api/owner/fomo_theses")
+@owner_only
 def api_fomo_theses():
     """Fomo theses by tracked traders (empty when no FOMO API key is configured)."""
     try:
@@ -325,7 +433,7 @@ def api_persona_feed():
     """Ledger's voice: recent persona posts, mood and beliefs (for the website)."""
     try:
         import persona
-        return jsonify(persona.feed(limit=min(int(request.args.get("limit", 30)), 100)))
+        return jsonify(_public(persona.feed(limit=min(int(request.args.get("limit", 30)), 100))))
     except Exception as e:
         return jsonify({"posts": [], "mood": None, "beliefs": [], "error": str(e)[:200]})
 

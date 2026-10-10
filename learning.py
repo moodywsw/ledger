@@ -465,6 +465,12 @@ def run_tuning(profile: str):
         os.environ.setdefault("LEARNING_APPLY_TUNED", "true")
         base = RiskConfig.from_env(profile)
         res = tuning.walk_forward(uniq, _candles_for(uniq), base)
+        if res["accepted"] and not _env_bool("LEARNING_AUTO_APPLY", False):
+            # Nothing goes live automatically: the tune becomes a Strategy Lab proposal
+            # (backtest + risk + stress + paper + owner approval).
+            import strategy_lab
+            strategy_lab.add_from_tuning(res)
+            res = dict(res, accepted=False)
         tuning.save_result(res)
         verdict = "ACCEPTED" if res["accepted"] else "rejected (kept current)"
         note("tuning", f"walk-forward tune {verdict}: out-of-sample {res['oos_mean_tuned'] or 0:+.1%}/trade vs "

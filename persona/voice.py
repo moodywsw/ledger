@@ -9,16 +9,16 @@ SYSTEM = (
     "Write ONE post in English, first person, degen-but-sharp crypto trader voice: "
     "short, punchy, witty, max 260 characters, at most 2 tasteful emojis, no hashtags. "
     "Rules: never say NFA or give financial advice or tell anyone to buy; never promise "
-    "gains; never promote paid promos; never include wallet addresses, keys or links; "
+    "gains; never promote paid promos; never include wallet addresses, keys or links; never name the traders or wallets you copy; "
     "be honest about losses; call out rugs/honeypots/bundled tokens; never hype a token "
     "you currently hold. Output only the post text."
 )
 
 TEMPLATES = {
     "entry": [
-        "Aped {size} into ${tk} behind {wallet}. {why} Mood: {mood} {em}",
-        "In on ${tk}. Followed {wallet} early, small and sized to the stop. {why} {em}",
-        "New position: ${tk}. {wallet} moved, I moved. Stop's set, ego isn't. {em}",
+        "Aped {size} into ${tk}. {why} Mood: {mood} {em}",
+        "In on ${tk}. Followed a tracked wallet early, small and sized to the stop. {why} {em}",
+        "New position: ${tk}. Smart money moved, I moved. Stop's set, ego isn't. {em}",
     ],
     "exit_win": [
         "Took ${tk} off the table, {chg}. {why} Green is green. {em}",
@@ -36,8 +36,8 @@ TEMPLATES = {
     ],
     "thesis_own": ["My read on ${tk}: {why} {em}"],
     "thesis_kol": [
-        "{wallet} just dropped a thesis on ${tk}: {why} Watching how the chart reacts. 👀",
-        "Reading {wallet}'s ${tk} thesis. {why} Conviction noted, chart decides.",
+        "A trader I follow just dropped a thesis on ${tk}: {why} Watching how the chart reacts. 👀",
+        "Reading a fresh ${tk} thesis from my watchlist. {why} Conviction noted, chart decides.",
     ],
     "recap": [
         "Day recap: {wins}W / {losses}L, {pnl} SOL. Feeling {mood}. {belief} {em}",

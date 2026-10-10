@@ -31,6 +31,15 @@ def _quiet(now: float | None = None) -> bool:
     return a <= h < b if a <= b else (h >= a or h < b)
 
 
+def _scrub(text):
+    """Never name a copied trader or show a wallet in anything public."""
+    try:
+        import privacy
+        return privacy.scrub_text(text)
+    except Exception:
+        return text
+
+
 def _fmt_pct(x) -> str:
     try:
         return f"{float(x):+.0f}%"
@@ -71,10 +80,10 @@ class Persona:
         ranked.sort(reverse=True)
         if ranked:
             wr, n, w = ranked[0]
-            beliefs.append(f"{w} has been my best signal lately ({wr:.0%} wins over {n}).")
+            beliefs.append(f"One trader I follow has been my best signal lately ({wr:.0%} wins over {n}).")
             if len(ranked) > 1 and ranked[-1][0] < 0.4:
                 wr, n, w = ranked[-1]
-                beliefs.append(f"{w} has been cold for me ({wr:.0%} over {n}); smaller size there.")
+                beliefs.append(f"Another has gone cold on me ({wr:.0%} over {n}); smaller size there.")
         stops = [l for l in L if "stop" in (l["note"] or "").lower()]
         if len(stops) >= 3:
             beliefs.append("Stops keep me alive. Respect them, never widen them.")
@@ -86,6 +95,13 @@ class Persona:
         scams = [f for f in self.s["facts"][-100:] if values.is_scam_reason(f["text"])]
         if scams:
             beliefs.append(f"Spotted {len(scams)} rug/scam-flavoured setups recently. Safety checks first, always.")
+        try:
+            import market_thoughts
+            mr = market_thoughts.cached(max_age_h=12)
+            if mr:
+                beliefs.insert(0, f"Market read: {mr['regime']['label'].lower()}. {mr['stance']}")
+        except Exception:
+            pass
         beliefs.append("Never hype my own bags. Losses get posted the same as wins.")
         self.s["beliefs"], self.s["beliefs_ts"] = beliefs[:8], time.time()
         return self.s["beliefs"]
@@ -100,7 +116,7 @@ class Persona:
             return None
         self.s["seen_keys"].append(key)
         ctx = dict(ctx, mood_state=self.s["mood"])
-        text = values.clean(voice.write(kind, ctx, self.s["beliefs"]))
+        text = values.clean(_scrub(voice.write(kind, ctx, self.s["beliefs"])))
         if not text:
             return None
         sent = []
@@ -131,7 +147,7 @@ class Persona:
         ot = self.s["open_tokens"]
         if kind == "did" and "TRADE OPENED" in text:
             ot[tk] = {"wallet": meta.get("wallet"), "ts": time.time()}
-            self.publish("entry", {"tk": tk, "wallet": meta.get("wallet"),
+            self.publish("entry", {"tk": tk,
                                    "size": f"{meta['size_sol']:.2f} SOL" if meta.get("size_sol") else None,
                                    "why": "Wallet has edge, size fits the stop."}, key)
         elif kind == "did" and "TRADE CLOSED" in text:
@@ -141,7 +157,7 @@ class Persona:
                 if tk not in ot:
                     ot[tk] = {"wallet": meta.get("wallet"), "ts": time.time()}
                     spent = meta.get("usdc_spent")
-                    self.publish("entry", {"tk": tk, "wallet": meta.get("wallet"),
+                    self.publish("entry", {"tk": tk,
                                            "size": f"${spent:.0f}" if spent else None,
                                            "why": (meta.get("reason") or "Followed a tracked wallet.")[:80]}, key)
             elif meta.get("side") == "sell":
@@ -174,7 +190,7 @@ class Persona:
         win = (pnl or 0) >= 0
         why = (opinion or (f"Exit: {reason}." if reason else ""))[:120]
         self.publish("exit_win" if win else "exit_loss",
-                     {"tk": tk, "wallet": wallet, "chg": _fmt_pct(chg) if chg is not None else
+                     {"tk": tk, "chg": _fmt_pct(chg) if chg is not None else
                       (f"{pnl:+.2f} {unit}" if pnl is not None else ""), "why": why}, key)
 
     def react_kol_theses(self):
@@ -187,7 +203,7 @@ class Persona:
             for t in fomo_theses.recent_tracked(handles):
                 self.add_fact("fomo_thesis", t.get("symbol"), f"@{t['handle']}: {t.get('text', '')}")
                 if (t.get("score") or 0) >= float(os.environ.get("PERSONA_KOL_MIN_SCORE", "0.6")):
-                    self.publish("thesis_kol", {"tk": t.get("symbol") or "", "wallet": "@" + t["handle"],
+                    self.publish("thesis_kol", {"tk": t.get("symbol") or "",
                                                 "why": (t.get("text") or "")[:120]},
                                  key=f"kol:{t.get('id') or t['mint']}")
         except Exception as ex:
@@ -229,6 +245,15 @@ class Persona:
                 moodmod.set_regime(self.s["mood"], r.get("sol_24h"))
                 if r.get("sol_24h") is not None:
                     self.add_fact("market", "SOL", f"SOL {r['sol_24h']:+.1f}% / BTC {r['btc_24h']:+.1f}% 24h, regime {r['regime']}")
+            except Exception:
+                pass
+            try:
+                import market_thoughts
+                mr = market_thoughts.cached(max_age_h=12)
+                if mr:
+                    self.add_fact("market_read", "", f"{mr['regime']['label']}: {mr['summary']}"[:200])
+                    if mr["regime"]["key"] == "risk_off":
+                        self.s["mood"]["regime"] = "risk-off"
             except Exception:
                 pass
         day, hour = _day(), time.gmtime(now).tm_hour
@@ -284,8 +309,9 @@ def feed(limit: int = 30) -> dict:
         "name": "Ledger",
         "mood": {"label": moodmod.label(m), "emoji": moodmod.emoji(m),
                  **{k: (round(v, 3) if isinstance(v, float) else v) for k, v in m.items()}},
-        "beliefs": s["beliefs"],
-        "posts": [{**{k: p[k] for k in ("ts", "kind", "text", "outlets")}, "topic": p.get("topic")} for p in reversed(s["posts"][-limit:])],
+        "beliefs": [_scrub(b) for b in s["beliefs"]],
+        "posts": [{"ts": p["ts"], "kind": p["kind"], "text": _scrub(p["text"]), "outlets": p.get("outlets", []), "topic": p.get("topic")}
+                  for p in reversed(s["posts"][-limit:])],
         "lessons_count": len(s["lessons"]),
         "outlets": {"discord": outlets.discord_enabled(), "x": outlets.x_enabled(), "llm": voice.llm_backend()},
     }

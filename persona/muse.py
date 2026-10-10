@@ -9,7 +9,7 @@ import requests
 
 from . import mood as moodmod
 
-TOPICS = ["market", "culture", "narratives", "kols", "macro", "ai", "bot_life", "lessons", "headline", "trending"]
+TOPICS = ["market_read", "market", "culture", "narratives", "kols", "macro", "ai", "bot_life", "lessons", "headline", "trending"]
 RSS = [u.strip() for u in os.environ.get("PERSONA_RSS_FEEDS",
        "https://www.coindesk.com/arc/outboundfeeds/rss/,https://decrypt.co/feed,https://www.theblock.co/rss.xml").split(",") if u.strip()]
 UA = {"User-Agent": "LedgerBot/1.0 (+persona)"}
@@ -48,11 +48,24 @@ def headlines(n: int = 6) -> list:
     return out[:n]
 
 
+def market_read() -> dict | None:
+    try:
+        import market_thoughts
+        return market_thoughts.cached(max_age_h=12)
+    except Exception:
+        return None
+
+
 def gather() -> dict:
-    return {"fng": fear_greed(), "trending": trending(), "headlines": headlines()}
+    return {"fng": fear_greed(), "trending": trending(), "headlines": headlines(), "market_read": market_read()}
 
 
 T = {
+    "market_read": [
+        "My market read: {mr_regime}. {mr_assets} {mr_stance}",
+        "Desk notes: {mr_assets} Regime says {mr_regime}. {mr_stance}",
+        "Zooming out before I zoom in: {mr_summary}",
+    ],
     "market": [
         "Fear & Greed at {fng} ({fngl}). {fng_take} I trade candles, not feelings, but I'd be lying if I said I didn't feel it.",
         "Market feels {fngl_low} today. {fng_take} Keeping my size honest.",
@@ -108,6 +121,14 @@ def _fng_take(v):
     return "Middle of the road. Those are the days when stock-picking (token-picking?) matters most."
 
 
+def _mr_vals(mr) -> dict:
+    if not mr:
+        return {"mr_regime": "unclear", "mr_assets": "", "mr_stance": "", "mr_summary": ""}
+    assets = " ".join(f"${a['name']} {a['bias'].split(' ·')[0].lower()}." for a in mr.get("assets", []))
+    return {"mr_regime": mr["regime"]["label"].lower(), "mr_assets": assets, "mr_stance": mr.get("stance", ""),
+            "mr_summary": (mr.get("summary") or "")[:220]}
+
+
 def choose_topic(recent: list, ctx: dict, rng=random) -> str:
     avail = [t for t in TOPICS if t not in recent[-5:]]
     if not ctx.get("fng"):
@@ -116,6 +137,8 @@ def choose_topic(recent: list, ctx: dict, rng=random) -> str:
         avail = [t for t in avail if t != "trending"]
     if not ctx.get("headlines"):
         avail = [t for t in avail if t != "headline"]
+    if not ctx.get("market_read"):
+        avail = [t for t in avail if t != "market_read"]
     if not ctx.get("beliefs"):
         avail = [t for t in avail if t != "lessons"]
     return rng.choice(avail or ["culture", "bot_life", "ai"])
@@ -128,7 +151,7 @@ def template(topic: str, ctx: dict, recent_texts: list, rng=random) -> str:
     vals = {"fng": fng.get("value", "?"), "fngl": fng.get("label", "?"), "fngl_low": str(fng.get("label", "uncertain")).lower(),
             "fng_take": _fng_take(fng.get("value")), "trend": ", ".join(ctx.get("trending") or [])[:90],
             "hl": rng.choice(hl), "belief": rng.choice(ctx.get("beliefs") or ["size small, think big."]),
-            "lessons": ctx.get("lessons_count", 0), "mood": moodmod.label(m), "em": moodmod.emoji(m)}
+            "lessons": ctx.get("lessons_count", 0), **_mr_vals(ctx.get("market_read")), "mood": moodmod.label(m), "em": moodmod.emoji(m)}
     opts = T.get(topic, T["culture"])
     fresh = [o for o in opts if o.split("{")[0][:40] not in " ".join(recent_texts)] or opts
     try:
