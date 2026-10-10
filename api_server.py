@@ -589,6 +589,15 @@ def admin_page():
     return r
 
 
+@app.route("/api/discord/health")
+def api_discord_health():
+    try:
+        d = json.loads((Path(os.environ.get("DATA_DIR", ".")) / "discord_bot_status.json").read_text())
+    except Exception:
+        d = {"started": False}
+    return jsonify({k: d.get(k) for k in ("started", "ready", "guilds", "seen", "answered", "gated", "dm_ignored", "no_content", "errors", "last_error", "content_intent", "last_msg")})
+
+
 @app.route("/api/ask/recent")
 def api_ask_recent():
     import ask

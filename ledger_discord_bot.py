@@ -19,16 +19,31 @@ ASK_CHANNEL = os.environ.get("DISCORD_ASK_CHANNEL", "ask-mirko").lstrip("#").low
 _started = False
 
 
-def _build_client():
+STATS = {"started": False, "ready": False, "guilds": 0, "seen": 0, "answered": 0, "gated": 0, "dm_ignored": 0, "no_content": 0, "errors": 0, "last_error": None, "last_msg": None}
+_limited: dict = {}
+
+
+def _dump():
+    try:
+        import json, os
+        from pathlib import Path
+        Path(os.environ.get("DATA_DIR", "."), "discord_bot_status.json").write_text(json.dumps(STATS))
+    except Exception:
+        pass
+
+
+def _build_client(content: bool = True):
     import discord
     import ask
 
     intents = discord.Intents.default()
-    intents.message_content = True
+    intents.message_content = content
+    STATS["content_intent"] = content
     client = discord.Client(intents=intents, allowed_mentions=discord.AllowedMentions.none())
 
     @client.event
     async def on_ready():
+        STATS["ready"] = True; STATS["guilds"] = len(client.guilds); _dump()
         print(f"[DISCORD-BOT] Mirko is live as {client.user} · answers on @mention, DMs and #{ASK_CHANNEL}")
 
     _seen = set()
@@ -47,13 +62,22 @@ def _build_client():
         if not (is_dm or mentioned or in_channel):
             return
         import access, time as _t
+        STATS["seen"] += 1; STATS["last_msg"] = _t.time()
+        if is_dm:   # DMs only from members of a server Mirko shares with them
+            if not any(g.get_member(message.author.id) for g in client.guilds):
+                STATS["dm_ignored"] += 1
+                return
         if not access.discord_allowed(message.author):
+            STATS["gated"] += 1
             if not is_dm and _denied.get(message.author.id, 0) < _t.time() - 3600:   # at most one note per hour per user
                 _denied[message.author.id] = _t.time()
                 await message.reply("Mirko chat is invite-only here — ask the owner for the Mirko Access role.", mention_author=False, delete_after=20)
             return
         text = message.content.replace(f"<@{client.user.id}>", "").replace(f"<@!{client.user.id}>", "").strip()
         if not text:
+            if mentioned and not message.content:
+                STATS["no_content"] += 1
+                await message.reply("I can see the ping but not your words — owner: enable Message Content Intent for the bot.", mention_author=False)
             return
         try:   # another live instance (deploy overlap) may already have answered
             async for m in message.channel.history(limit=15, after=message):
@@ -61,15 +85,25 @@ def _build_client():
                     return
         except Exception:
             pass
-        async with message.channel.typing():
-            res = await asyncio.get_running_loop().run_in_executor(None, ask.answer, text, str(message.author.id), "discord", None, 100)
+        try:
+            async with message.channel.typing():
+                res = await asyncio.get_running_loop().run_in_executor(None, ask.answer, text, "dc:" + str(message.author.id), "discord", None, None)
+        except Exception as e:
+            STATS["errors"] += 1; STATS["last_error"] = f"{type(e).__name__}: {str(e)[:120]}"
+            print(f"[DISCORD-BOT] answer failed {STATS['last_error']}")
+            res = {"answer": "Head's buried in charts — ask me again in a minute."}
         try:
             async for m in message.channel.history(limit=15, after=message):
                 if m.author == client.user and m.reference and m.reference.message_id == message.id:
                     return
         except Exception:
             pass
+        if res.get("limited"):
+            if _limited.get(message.author.id, 0) > _t.time() - 3600:
+                return   # reply once per hour about limits
+            _limited[message.author.id] = _t.time()
         await message.reply(res["answer"][:1990], mention_author=False)
+        STATS["answered"] += 1; _dump()
 
     return client
 
@@ -87,12 +121,22 @@ def start():
         print(f"[DISCORD-BOT] disabled: {type(e).__name__}")
         return
     _started = True
+    STATS["started"] = True; _dump()
 
     def run():
+        nonlocal client
         try:
             asyncio.run(client.start(DISCORD_BOT_TOKEN))
         except Exception as e:   # bad token / missing intent -> log, never crash the trading loop
-            print(f"[DISCORD-BOT] stopped: {type(e).__name__}: {str(e)[:160]}")
+            STATS["last_error"] = f"{type(e).__name__}: {str(e)[:160]}"; _dump()
+            print(f"[DISCORD-BOT] stopped: {STATS['last_error']}")
+            if "PrivilegedIntents" in type(e).__name__:   # portal toggle off: mentions + DMs still carry content
+                print("[DISCORD-BOT] Message Content Intent disabled in portal; retrying in mention/DM-only mode")
+                try:
+                    client = _build_client(content=False)
+                    asyncio.run(client.start(DISCORD_BOT_TOKEN))
+                except Exception as e2:
+                    STATS["last_error"] = f"{type(e2).__name__}: {str(e2)[:160]}"; _dump()
     threading.Thread(target=run, name="discord-bot", daemon=True).start()
 
 

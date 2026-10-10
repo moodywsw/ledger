@@ -78,6 +78,8 @@ ROLE = os.environ.get("MIRKO_ACCESS_ROLE", "Mirko Access").lower()
 
 
 def discord_allowed(member) -> bool:
+    if os.environ.get("MIRKO_DISCORD_GATED", "0") != "1":
+        return True   # open to everyone in the server by default
     ids = {x.strip() for x in os.environ.get("MIRKO_ALLOWED_USER_IDS", "").split(",") if x.strip()}
     owner = os.environ.get("DISCORD_OWNER_ID", "").strip()
     uid = str(getattr(member, "id", ""))
