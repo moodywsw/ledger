@@ -79,6 +79,7 @@ from real_trading import (
     STUCK_POSITION_FORCED_RETRY_COOLDOWN_SECONDS,
 )
 import real_only_positions
+import trader_profile
 import trade_cards
 import learning
 import market_data
@@ -330,7 +331,8 @@ def load_wallets():
         return [], {}, set()
 
     data = json.loads(WALLETS_CONFIG_FILE.read_text())
-    entries = data.get("wallets", [])
+    # "active": false suspends a wallet (kept in file, not watched/copied).
+    entries = [e for e in data.get("wallets", []) if e.get("active", True)]
     watched = [e["address"] for e in entries]
     handles = {e["address"]: e["handle"] for e in entries}
     priority = {e["address"] for e in entries if e.get("priority")}
@@ -1647,6 +1649,11 @@ def copy_priority_wallet_entry(
     # below — those checks plus the LLM call can take several seconds,
     # long enough on a token this fresh for price to move meaningfully
     # in between, which was biasing entry_price stale vs. the real fill.
+    _tp = trader_profile.params_for(wallet)
+    if trader_profile.ENABLED and signal_block_time and time.time() - signal_block_time > _tp["max_entry_delay_s"]:
+        print(f"  [SKIP] {display_symbol}: {time.time() - signal_block_time:.0f}s after {trader_name}'s buy > their entry window {_tp['max_entry_delay_s']}s.")
+        return
+
     if get_sniper_entry_price(token) is None:
         print(f"  [SKIP] {display_symbol}: no price data yet for this copy.")
         return
@@ -3101,6 +3108,11 @@ EXIT_REASON_LABELS = {
     "trailing_stop": "📉 Trailing Stop — Profit Locked",
     "time_stop": "⏱️ Time Stop — Not Working",
     "max_hold": "⏱️ Max Hold Reached",
+    "first_tp_gem": "💎 First TP — Gem, moonbag kept",
+    "first_tp_pump": "🎯 First TP — Pump, full exit",
+    "first_tp_neutral": "🎯 First TP — full exit",
+    "moonbag_trail": "🌙 Moonbag Trailing Stop",
+    "trader_max_hold": "⏱️ Trader-pattern Max Hold",
     "no_price_writeoff": "💀 No Price Feed — Written Off",
 }
 
@@ -3147,7 +3159,11 @@ def manage_paper_positions_v2(state: LedgerState):
             "opened_ts": _opened_ts(pos), "peak_price": pos.get("peak_price") or pos["entry_price"],
             "tp_rungs_hit": pos.get("tp_rungs_hit") or [], "last_price_ts": pos.get("last_price_ts") or _opened_ts(pos),
         }
-        actions, updates = evaluate_exit(view, price, now, RISK)
+        _tv = dict(pos, mint=mint, opened_ts_x=_opened_ts(pos))
+        actions, updates = trader_profile.timing_exit(_tv, price, now, _dexscreener_best_pair, get_top10_holder_pct)
+        if not actions and not pos.get("moonbag"):
+            actions, updates2 = evaluate_exit(view, price, now, RISK)
+            updates = {**updates, **updates2}
         pos.update(updates)
         if price is not None:
             pos["last_price"] = price
@@ -3183,7 +3199,11 @@ def manage_real_only_positions_v2():
             "opened_ts": _opened_ts(pos), "peak_price": pos.get("peak_price") or pos["entry_price"],
             "tp_rungs_hit": pos.get("tp_rungs_hit") or [], "last_price_ts": pos.get("last_price_ts") or _opened_ts(pos),
         }
-        actions, updates = evaluate_exit(view, price, now, RISK)
+        _tv = dict(pos, mint=mint, opened_ts_x=_opened_ts(pos))
+        actions, updates = trader_profile.timing_exit(_tv, price, now, _dexscreener_best_pair, get_top10_holder_pct)
+        if not actions and not pos.get("moonbag"):
+            actions, updates2 = evaluate_exit(view, price, now, RISK)
+            updates = {**updates, **updates2}
         pos.update(updates)
         positions[mint] = pos
         real_only_positions.save_real_only_positions(positions)

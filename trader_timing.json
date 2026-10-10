@@ -1,0 +1,122 @@
+{
+ "498g1rVnFcnjBjpfw1xyqA1WvgQXUU8RWuELjxkjAayQ": {
+  "handle": "frank",
+  "stats": {
+   "n": 1,
+   "pre_run_med": 1.497,
+   "first_profit_s_med": null,
+   "first_profit_hit_rate": 0.0,
+   "first_profit_ret_med": null,
+   "t_peak_s_med": 44,
+   "peak_ret_med": 0.154
+  },
+  "params": {
+   "max_entry_delay_s": 20,
+   "tp_first_pct": 0.08,
+   "max_hold_s": 300,
+   "basis": "default (n<3)"
+  }
+ },
+ "AVAZvHLR2PcWpDf8BXY4rVxNHYRBytycHkcB5z5QNXYm": {
+  "handle": "ansem",
+  "stats": {
+   "n": 3,
+   "pre_run_med": 0.298,
+   "first_profit_s_med": 522,
+   "first_profit_hit_rate": 0.33,
+   "first_profit_ret_med": 0.033,
+   "t_peak_s_med": 8,
+   "peak_ret_med": 0.053
+  },
+  "params": {
+   "max_entry_delay_s": 30,
+   "tp_first_pct": 0.05,
+   "max_hold_s": 60,
+   "basis": "n=3"
+  }
+ },
+ "GsVfkZAoTLCCHtWN54kjaWw9dDXyTLY1MzJeEck9KpCo": {
+  "handle": "Lizzerd",
+  "stats": {
+   "n": 15,
+   "pre_run_med": 0.823,
+   "first_profit_s_med": 157.5,
+   "first_profit_hit_rate": 0.67,
+   "first_profit_ret_med": 0.131,
+   "t_peak_s_med": 488,
+   "peak_ret_med": 0.283
+  },
+  "params": {
+   "max_entry_delay_s": 15,
+   "tp_first_pct": 0.131,
+   "max_hold_s": 488,
+   "basis": "n=15"
+  }
+ },
+ "DxM1hfY8FQ8dNGrucuJzhJcF8KRbjk8WBwrgKvQ9spPv": {
+  "handle": "RC calendar",
+  "stats": {
+   "n": 47,
+   "pre_run_med": 0.857,
+   "first_profit_s_med": 133.0,
+   "first_profit_hit_rate": 0.77,
+   "first_profit_ret_med": 0.166,
+   "t_peak_s_med": 324,
+   "peak_ret_med": 0.502
+  },
+  "params": {
+   "max_entry_delay_s": 15,
+   "tp_first_pct": 0.166,
+   "max_hold_s": 324,
+   "basis": "n=47"
+  }
+ },
+ "49nvFkUxnxd4wXY5W9XygB93rzDUvugaxK5AkMqqxmgS": {
+  "handle": "fomo:OuterHeavyBat (unipcs alt)",
+  "stats": {
+   "n": 0
+  },
+  "params": {
+   "max_entry_delay_s": 20,
+   "tp_first_pct": 0.08,
+   "max_hold_s": 300,
+   "basis": "default (n<3)"
+  }
+ },
+ "5FGoPPj1nL8LCnfVnpTmreqQtqLuMXXAwuS1uahMrp8V": {
+  "handle": "fomo:DumbCrayonEater",
+  "stats": {
+   "n": 1,
+   "pre_run_med": 7.646,
+   "first_profit_s_med": 90,
+   "first_profit_hit_rate": 1.0,
+   "first_profit_ret_med": 0.198,
+   "t_peak_s_med": 1110,
+   "peak_ret_med": 0.368
+  },
+  "params": {
+   "max_entry_delay_s": 20,
+   "tp_first_pct": 0.08,
+   "max_hold_s": 300,
+   "basis": "default (n<3)"
+  }
+ },
+ "4CRX74nxAdmFY4Eh1WhTrmYqHoxwxGzwXfgzTWvhUfFn": {
+  "handle": "fomo:DegenCapitalLLC (unverified wallet)",
+  "stats": {
+   "n": 8,
+   "pre_run_med": 3.091,
+   "first_profit_s_med": 194,
+   "first_profit_hit_rate": 0.88,
+   "first_profit_ret_med": 0.126,
+   "t_peak_s_med": 1916.5,
+   "peak_ret_med": 0.359
+  },
+  "params": {
+   "max_entry_delay_s": 15,
+   "tp_first_pct": 0.126,
+   "max_hold_s": 1916,
+   "basis": "n=8"
+  }
+ }
+}
