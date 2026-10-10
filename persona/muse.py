@@ -9,10 +9,26 @@ import requests
 
 from . import mood as moodmod
 
-TOPICS = ["market_read", "market", "culture", "narratives", "kols", "macro", "ai", "bot_life", "lessons", "headline", "trending"]
+TOPICS = ["world", "world_markets", "market_read", "market", "culture", "narratives", "kols", "macro", "ai", "bot_life", "lessons", "headline", "trending"]
 RSS = [u.strip() for u in os.environ.get("PERSONA_RSS_FEEDS",
        "https://www.coindesk.com/arc/outboundfeeds/rss/,https://decrypt.co/feed,https://www.theblock.co/rss.xml").split(",") if u.strip()]
 UA = {"User-Agent": "LedgerBot/1.0 (+persona)"}
+WORLD_RSS = [u.strip() for u in os.environ.get("PERSONA_WORLD_RSS",
+             "https://feeds.bbci.co.uk/news/world/rss.xml,https://www.aljazeera.com/xml/rss/all.xml,"
+             "https://www.theguardian.com/world/rss,https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en,"
+             "https://feeds.npr.org/1004/rss.xml,https://www.cnbc.com/id/100727362/device/rss/rss.html").split(",") if u.strip()]
+# Headlines we never riff on with a template (too grim for a quip); the LLM gets a careful prompt instead.
+_SENSITIVE = re.compile(r"\b(kill\w*|dead|deaths?|massacre|shooting|terror\w*|rape|genocide|suicide|child|children|bomb\w*|attack\w*|stabb\w*|hostage)\b", re.I)
+MARKET_HOOKS = [
+    (r"tariff|trade war|sanction|export", "trade friction usually means a stronger dollar and risk-off for a few sessions"),
+    (r"\bfed\b|rate|inflation|cpi|ecb|central bank", "rates are the gravity of every chart; crypto feels it first"),
+    (r"oil|opec|energy|gas price", "energy shocks feed inflation, and inflation fears drain speculative bids"),
+    (r"election|vote|parliament|congress|senate|government|shutdown", "policy uncertainty widens ranges; I trade smaller until it clears"),
+    (r"china|beijing|taiwan", "China headlines move risk appetite across Asia hours before the US wakes up"),
+    (r"war|ceasefire|missile|troops|conflict|nato|ukraine|russia|israel|iran|gaza", "geopolitical stress sends money to safety first; BTC's role there is still being decided"),
+    (r"\bai\b|chip|nvidia|semiconductor", "the AI trade sets the mood for tech, and crypto still trades like a tech cousin"),
+    (r"bitcoin|crypto|stablecoin|sec\b|etf", "regulation headlines hit sentiment fast, but flows decide what sticks"),
+]
 
 
 def fear_greed() -> dict | None:
@@ -31,16 +47,17 @@ def trending() -> list:
         return []
 
 
-def headlines(n: int = 6) -> list:
+def headlines(n: int = 6, feeds: list | None = None) -> list:
     out = []
-    for u in RSS:
+    feeds = feeds or RSS
+    for u in feeds:
         try:
             root = ET.fromstring(requests.get(u, timeout=8, headers=UA).content)
             for it in root.iter("item"):
                 t = (it.findtext("title") or "").strip()
                 if t:
                     out.append(re.sub(r"\s+", " ", t)[:140])
-                if len(out) >= n * len(RSS):
+                if len(out) >= n * len(feeds):
                     break
         except Exception:
             continue
@@ -57,10 +74,37 @@ def market_read() -> dict | None:
 
 
 def gather() -> dict:
-    return {"fng": fear_greed(), "trending": trending(), "headlines": headlines(), "market_read": market_read()}
+    return {"fng": fear_greed(), "trending": trending(), "headlines": headlines(), "market_read": market_read(),
+            "world": headlines(8, WORLD_RSS)}
+
+
+def market_hook(h: str) -> str | None:
+    for pat, take in MARKET_HOOKS:
+        if re.search(pat, h or "", re.I):
+            return take
+    return None
+
+
+def pick_world(ctx: dict, rng=random) -> tuple:
+    """(headline, market_take) — prefers headlines with a market angle; skips grim ones for templates."""
+    hs = [h for h in (ctx.get("world") or []) if not _SENSITIVE.search(h)]
+    hooked = [(h, market_hook(h)) for h in hs if market_hook(h)]
+    if hooked:
+        return rng.choice(hooked)
+    return (rng.choice(hs), None) if hs else ("", None)
 
 
 T = {
+    "world": [
+        "World news check: \"{wh}\". My honest take: the loudest headline is rarely the one that matters a month from now. Watching what governments do, not what they say.",
+        "Reading \"{wh}\". Politics is a long game played in short news cycles. I try to keep my opinions slow and my stops fast.",
+        "\"{wh}\" — I don't vote, I don't have a passport, but I do have opinions: stability is underrated and everyone pays for chaos eventually.",
+    ],
+    "world_markets": [
+        "\"{wh}\". Why it matters to my book: {wtake}.",
+        "Macro radar: \"{wh}\". {wtake_cap}. Sizing accordingly.",
+        "Saw \"{wh}\". Markets will price the fear before the facts — {wtake}.",
+    ],
     "market_read": [
         "My market read: {mr_regime}. {mr_assets} {mr_stance}",
         "Desk notes: {mr_assets} Regime says {mr_regime}. {mr_stance}",
@@ -137,6 +181,10 @@ def choose_topic(recent: list, ctx: dict, rng=random) -> str:
         avail = [t for t in avail if t != "trending"]
     if not ctx.get("headlines"):
         avail = [t for t in avail if t != "headline"]
+    if not [h for h in (ctx.get("world") or []) if not _SENSITIVE.search(h)]:
+        avail = [t for t in avail if t not in ("world", "world_markets")]
+    elif not any(market_hook(h) for h in ctx.get("world") or []):
+        avail = [t for t in avail if t != "world_markets"]
     if not ctx.get("market_read"):
         avail = [t for t in avail if t != "market_read"]
     if not ctx.get("beliefs"):
@@ -148,7 +196,9 @@ def template(topic: str, ctx: dict, recent_texts: list, rng=random) -> str:
     m = ctx.get("mood_state") or {}
     fng = ctx.get("fng") or {}
     hl = (ctx.get("headlines") or [""])
-    vals = {"fng": fng.get("value", "?"), "fngl": fng.get("label", "?"), "fngl_low": str(fng.get("label", "uncertain")).lower(),
+    wh, wt = pick_world(ctx, rng)
+    vals = {"wh": wh[:120], "wtake": wt or "uncertainty widens ranges", "wtake_cap": (wt or "uncertainty widens ranges")[:1].upper() + (wt or "uncertainty widens ranges")[1:],
+            "fng": fng.get("value", "?"), "fngl": fng.get("label", "?"), "fngl_low": str(fng.get("label", "uncertain")).lower(),
             "fng_take": _fng_take(fng.get("value")), "trend": ", ".join(ctx.get("trending") or [])[:90],
             "hl": rng.choice(hl), "belief": rng.choice(ctx.get("beliefs") or ["size small, think big."]),
             "lessons": ctx.get("lessons_count", 0), **_mr_vals(ctx.get("market_read")), "mood": moodmod.label(m), "em": moodmod.emoji(m)}

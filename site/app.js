@@ -115,38 +115,14 @@ function renderMind(f) {
     : empty("Ledger is quiet for now — first thoughts land within a few hours.");
 }
 
-// ── Journal ─────────────────────────────────────────────────────────
-function classifyEntry(e) {
-  const isReal = e.kind === "did_real" || (e.kind === "refused" && e.meta && Object.prototype.hasOwnProperty.call(e.meta, "min_sol_for_gas"));
-  const isTrade = e.kind === "did" || (e.kind === "did_real" && e.meta && e.meta.status === "success");
-  return { isReal, isTrade };
-}
-function tradeClass(e) { const m = e.meta || {};
-  if (typeof m.pnl_sol === "number") return m.pnl_sol >= 0 ? "jtrade-profit" : "jtrade-loss";
-  if (typeof m.realized_pnl_usdc === "number") return m.realized_pnl_usdc >= 0 ? "jtrade-profit" : "jtrade-loss";
-  return "jtrade-open"; }
-let activityFilter = "real";
-function renderEntries(id, es, txt) {
-  $(id).innerHTML = es.length ? es.slice(0, 60).map(e => `<div class="row ${classifyEntry(e).isTrade ? tradeClass(e) : ""}"><div class="l">
-    <div class="t">${e.token_ticker ? esc(e.token_ticker) : esc(e.kind)}</div><div class="m">${esc(e.text)}</div></div><span class="jt">${ago(e.timestamp)}</span></div>`).join("") : empty(txt);
-}
-function renderJournal(entries) {
-  if (entries) LEDGER.journal = entries;
-  const want = activityFilter === "real", f = LEDGER.journal.filter(e => classifyEntry(e).isReal === want);
-  renderEntries("trades-body", f.filter(e => classifyEntry(e).isTrade), `No ${activityFilter} trades yet.`);
-  renderEntries("live-thoughts-body", f.filter(e => !classifyEntry(e).isTrade), `No ${activityFilter} activity yet.`);
-}
-$("activity-filter").addEventListener("click", e => { const b = e.target.closest(".filter-btn"); if (!b) return; activityFilter = b.dataset.filter;
-  document.querySelectorAll("#activity-filter .tab").forEach(x => x.classList.toggle("active", x === b)); renderJournal(); });
-
 function setConn(ok) { $("conn-dot").className = `dot ${ok ? "ok" : "err"}`; $("conn-status").textContent = ok ? "Live" : "Unreachable";
-  if (ok) $("last-update").textContent = `· ${new Date().toLocaleTimeString()}`; }
+}
 
 async function pollOnce() {
   const res = await Promise.allSettled([
     fetchJson("/api/state").then(renderState),
     fetchJson("/api/real_state").then(renderRealState),
-    fetchJson("/api/journal?limit=150").then(renderJournal),
+    fetchJson("/api/journal?limit=60").then(j => { LEDGER.journal = j; }),
     fetchJson("/api/overview").then(renderOverview),
     fetchJson("/api/persona/feed?limit=20").then(renderMind).catch(() => renderMind(null)),
     fetchJson("/api/market_thoughts").then(m => { if (m.ready) { LEDGER.market = m; $("chip-regime").textContent = `regime · ${m.regime.label}`; } }),
@@ -196,11 +172,12 @@ async function loadMarket() {
       <div class="muted">${esc(i.why)}</div></div>`).join("") : empty("No clean setup right now. Wait for a daily close outside the range.");
   const b = m.next_boom;
   $("boom-w").textContent = b && b.boom_window ? `window · ${b.boom_window}` : "";
-  $("mt-boom").innerHTML = b ? `<h3>${esc(b.emoji || "🚀")} ${esc(b.theme)}</h3><p class="boom-t">${esc(b.thesis || "")}</p>
-      <div class="grid2 inner"><div><div class="label pad">Why now</div><ul>${(b.why_now || []).slice(0, 4).map(w => `<li>${esc(w)}</li>`).join("")}</ul></div>
+  $("mt-boom").innerHTML = b ? `<h3>${esc(b.emoji || "🚀")} ${esc(b.theme)}</h3><p class="boom-t">${md(b.thesis || "")}</p>
+      <div class="grid2 inner"><div><div class="label pad">Why now</div><ul>${(b.why_now || []).slice(0, 4).map(w => `<li>${md(w)}</li>`).join("")}</ul></div>
       <div><div class="label pad">Exposure</div><div class="trend">${(b.crypto || []).map(c => `<span class="tchip"><b>$${esc(String(c).replace(/^\$/, ""))}</b></span>`).join("")}${(b.stocks || []).map(s => `<span class="tchip"><b>${esc(s)}</b></span>`).join("")}</div>
-      ${b.invalidation ? `<div class="label pad" style="margin-top:12px">Invalidation</div><div class="muted">${esc(b.invalidation)}</div>` : ""}</div></div>` : empty("No theme in rotation.");
+      ${b.invalidation ? `<div class="label pad" style="margin-top:12px">Invalidation</div><div class="muted">${md(b.invalidation)}</div>` : ""}</div></div>` : empty("No theme in rotation.");
 }
+const md = t => esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/\*/g, "");
 function levelBar(a) {
   const lv = [...a.support.map(v => ["s", v]), ...a.resistance.map(v => ["r", v]), ["p", a.price]];
   const vs = lv.map(x => x[1]), lo = Math.min(...vs) * 0.995, hi = Math.max(...vs) * 1.005, X = v => ((v - lo) / (hi - lo)) * 100;
@@ -222,7 +199,7 @@ async function ownerFetch(path, opts = {}) {
   if (r.status === 401) { store.del("ledgerAdminToken"); ownerLocked(true); throw new Error("unauthorized"); }
   const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`); return j;
 }
-function ownerLocked(l) { $("owner-locked").classList.toggle("hidden", !l); $("owner-body").classList.toggle("hidden", l); $("nav").querySelector(".owner-btn").textContent = l ? "🔒 Owner" : "🔓 Owner"; }
+function ownerLocked(l) { $("owner-locked").classList.toggle("hidden", !l); $("owner-body").classList.toggle("hidden", l); }
 async function ownerOpen() {
   if (!tok()) { ownerLocked(true); return; }
   try { await ownerFetch("/api/owner/check"); ownerLocked(false); loadOwner(); } catch {}

@@ -106,3 +106,19 @@
 @media(max-width:700px){.topbar{flex-wrap:wrap;gap:10px;padding:10px 14px}.nav{order:3;width:100%}.nav-btn{flex:1;padding:7px 6px}.conn{font-size:11px}.scan-stage{height:340px}.mt-hero{flex-direction:column;align-items:flex-start}.banner-shade{background:linear-gradient(0deg,rgba(7,9,13,.95) 30%,rgba(7,9,13,.2))}}
 @media(max-width:560px){.wrap{padding:14px}.switch-state{font-size:36px}.kpi .big{font-size:19px}.brand-sub{display:none}.scan-strip{grid-template-columns:1fr}.mini{min-height:96px}}
 .grid2{align-items:start}.pcard{align-self:start}
+.topbar{justify-content:center;position:sticky}.topbar .conn{position:absolute;right:22px}
+
+.mt-top{display:grid;grid-template-columns:1.35fr 1fr;gap:18px;align-items:stretch}.mt-top>section{margin:0}.ideas-card .ideas{grid-template-columns:repeat(auto-fill,minmax(230px,1fr))}
+.ideas-card{border-color:rgba(34,211,155,.3);box-shadow:0 0 40px rgba(34,211,155,.05) inset}.boom{border-color:rgba(245,184,75,.35)}
+.scan-stage{height:460px;background:#03040a}
+@media(max-width:900px){.mt-top{grid-template-columns:1fr}}
+@media(max-width:700px){.topbar{justify-content:space-between}.topbar .conn{position:static}.nav{order:0;width:auto;flex:1}.scan-stage{height:360px}}
+.hero{position:relative;overflow:hidden;padding-top:0}.hero-left,.hero-right{position:relative;z-index:1}
+.wolf{--dream:.35;position:relative;align-self:center;width:min(100%,360px);margin:-4px auto -26px;pointer-events:none}
+.wolf img{display:block;width:100%;height:auto;-webkit-mask-image:linear-gradient(180deg,#000 72%,transparent);mask-image:linear-gradient(180deg,#000 72%,transparent);transform-origin:50% 85%;animation:breathe 4.6s ease-in-out infinite}
+.wolf-glow{position:absolute;inset:8% 4% 18%;border-radius:50%;background:radial-gradient(closest-side,rgba(34,211,155,calc(.10 + var(--dream)*.22)),rgba(140,90,255,calc(.05 + var(--dream)*.16)) 55%,transparent);filter:blur(18px);animation:glow 4.6s ease-in-out infinite;transition:background 1.2s}
+.dream{position:absolute;left:50%;bottom:30px;transform:translateX(-50%);font-size:10.5px;letter-spacing:.08em;color:#9fb0c8;background:rgba(7,9,13,.6);border:1px solid rgba(124,140,255,.25);padding:3px 10px;border-radius:999px;white-space:nowrap;transition:opacity .6s}
+@keyframes breathe{0%,100%{transform:translateY(0) scale(1)}45%{transform:translateY(-3px) scale(1.022,1.016)}}
+@keyframes glow{0%,100%{opacity:.55;transform:scale(.97)}45%{opacity:1;transform:scale(1.04)}}
+@media(prefers-reduced-motion:reduce){.wolf img,.wolf-glow{animation:none}}
+.top{max-height:none}

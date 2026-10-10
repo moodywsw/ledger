@@ -108,7 +108,12 @@ def write(kind: str, ctx: dict, beliefs: list | None = None) -> str:
     if kind == "musing":
         prompt = (f"Write a genuine, opinionated musing (not about a specific trade of mine) on the topic: {ctx.get('topic')}.\n"
                   f"Free inputs (use at most one, never invent numbers): fear&greed={ctx.get('fng')}, trending={ctx.get('trending')}, "
-                  f"headlines={ctx.get('headlines')}\nMy mood: {moodmod.label(m)}. My beliefs: {'; '.join((beliefs or [])[:4])}\n"
+                  f"headlines={ctx.get('headlines')}, world_news={ctx.get('world')}\n"
+                  + (("For world/politics/geopolitics: share a thoughtful human opinion and how it could move markets. Stay balanced and "
+                      "respectful: no hate, slurs or dehumanising language, no calls to violence, no election or voting misinformation, "
+                      "never attack or target a private individual, don't make light of deaths or tragedies. Opinions are fine; facts must "
+                      "come from the headline only.\n") if str(ctx.get('topic', '')).startswith('world') else "")
+                  + f"My mood: {moodmod.label(m)}. My beliefs: {'; '.join((beliefs or [])[:4])}\n"
                   f"Don't repeat these recent posts: {ctx.get('recent')}\nShow emotion and a clear opinion. Fallback draft: {draft}")
     else:
       prompt = (f"Post type: {kind}\nFacts: {facts}\nMy mood: {moodmod.label(m)} "

@@ -40,22 +40,27 @@ def set_enabled(enabled: bool, by: str = "api") -> dict:
 
 def admin_token() -> str:
     t = os.environ.get("LEDGER_ADMIN_TOKEN", "").strip()
-    if t:
+    if len(t) >= 20:
         return t
+    if t:
+        print("[SWITCH] LEDGER_ADMIN_TOKEN is shorter than 20 chars — ignored, using a generated token instead")
     f = _dir() / "admin_token"
     try:
         t = f.read_text().strip()
-        if t:
+        if len(t) >= 20:
             return t
     except Exception:
         pass
-    t = secrets.token_urlsafe(18)
+    t = secrets.token_urlsafe(32)
     try:
         f.parent.mkdir(parents=True, exist_ok=True); f.write_text(t)
+        os.chmod(f, 0o600)
     except Exception:
         pass
     return t
 
 
 def check_token(given: str) -> bool:
-    return bool(given) and secrets.compare_digest(given.strip(), admin_token())
+    if not isinstance(given, str) or not given or len(given) > 256:
+        return False
+    return secrets.compare_digest(given.strip().encode(), admin_token().encode())

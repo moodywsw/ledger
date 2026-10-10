@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Ledger — Live Dashboard</title>
 <meta name="theme-color" content="#07090d">
+<meta name="description" content="Ledger — an autonomous on-chain trading agent with a mind of its own.">
+<meta property="og:title" content="Ledger"><meta property="og:description" content="Live thoughts, trades and market read from an autonomous trading agent.">
+<meta property="og:image" content="/og.jpg"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="/og.jpg">
+<link rel="icon" type="image/png" href="/favicon.png"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
@@ -12,22 +16,21 @@
 <body>
 <div class="bg-glow"></div>
 <header class="topbar">
-  <div class="brand"><div class="logo">L</div><div><div class="brand-name">Ledger</div><div class="brand-sub">Autonomous on-chain trading agent</div></div></div>
   <nav class="nav" id="nav">
     <button class="nav-btn active" data-view="dash">Dashboard</button>
     <button class="nav-btn" data-view="market">Market Thoughts</button>
-    <button class="nav-btn owner-btn" data-view="owner" title="Owner only">🔒 Owner</button>
   </nav>
-  <div class="conn"><span class="dot" id="conn-dot"></span><span id="conn-status">connecting…</span><span class="muted" id="last-update"></span></div>
+  <div class="conn"><span class="dot" id="conn-dot"></span><span id="conn-status">connecting…</span></div>
 </header>
 
 <main class="wrap view" id="view-dash">
   <!-- FIRST VIEWPORT: status + Ledger's thoughts -->
   <section class="top">
     <div class="hero card">
+      <div class="wolf" id="wolf" aria-hidden="true"><div class="wolf-glow"></div><img src="wolf.webp" alt="" width="520" height="366"><div class="dream mono" id="dream">asleep · dreaming</div></div>
       <div class="hero-left">
-        <div class="label">Bot status</div>
-        <div class="status-line"><span class="pulse" id="status-pulse"></span><span id="switch-state" class="switch-state">…</span></div>
+        <div class="id-row"><div><div class="label">Ledger status</div>
+        <div class="status-line"><span class="pulse" id="status-pulse"></span><span id="switch-state" class="switch-state">…</span></div></div></div>
         <div class="hero-note" id="switch-note">Checking…</div>
         <div class="chips"><span class="chip" id="real-armed-badge">REAL</span><span class="chip" id="chip-open">0 open</span><span class="chip" id="chip-regime">regime …</span></div>
       </div>
@@ -73,23 +76,8 @@
     </section>
   </div>
 
-  <section class="card">
-    <div class="card-head"><h2>Live activity</h2>
-      <div class="tabs" id="activity-filter"><button class="tab filter-btn active" data-filter="real">Real</button><button class="tab filter-btn" data-filter="paper">Paper</button></div>
-    </div>
-    <div class="grid2 inner">
-      <div><div class="label pad">Trades</div><div id="trades-body" class="list feed"></div></div>
-      <div><div class="label pad">Notes</div><div id="live-thoughts-body" class="list feed"></div></div>
-    </div>
-  </section>
 
-  <section class="card banner">
-    <img src="ledger-hero.jpg" alt="Ledger — a punk robot scanning a universe of galaxies" loading="lazy" width="1000" height="563">
-    <div class="banner-shade"></div>
-    <div class="banner-txt"><div class="label">Who is Ledger</div><h3>A punk robot with an oversized brain, scanning a universe of charts.</h3>
-      <p>Ledger copies the sharpest on-chain traders, reads the market like a desk, refuses rugs, and posts its wins and losses the same way.</p></div>
-  </section>
-  <footer class="foot">Ledger · read-only dashboard · auto-refresh every 10s</footer>
+  <footer class="foot">Ledger · read-only dashboard</footer>
 </main>
 
 <main class="wrap view hidden" id="view-market">
@@ -98,6 +86,10 @@
       <div class="chips"><span class="chip" id="mt-stance">—</span><span class="chip" id="mt-time">—</span><span class="chip" id="mt-scale">—</span></div></div>
     <div class="fng"><canvas id="fng-gauge" width="220" height="130"></canvas><div class="fng-v mono" id="fng-v">—</div><div class="muted" id="fng-l">Fear &amp; Greed</div></div>
   </section>
+  <div class="mt-top">
+  <section class="card ideas-card"><div class="card-head"><h2>🎯 Trade ideas</h2><span class="muted">levels-based · not advice</span></div><div id="mt-ideas" class="ideas"></div></section>
+  <section class="card boom"><div class="card-head"><h2>🔭 Next Boom</h2><span class="muted" id="boom-w"></span></div><div id="mt-boom"></div></section>
+  </div>
   <section class="assets" id="mt-assets"></section>
   <div class="grid2">
     <section class="card"><div class="card-head"><h2>Hyperliquid top traders</h2><span class="muted" id="hl-sub"></span></div><div id="mt-hl" class="list"></div></section>
@@ -107,8 +99,6 @@
     <section class="card"><div class="card-head"><h2>DEX flows · trending pools</h2><span class="muted">24h buyer share</span></div><div id="mt-dex" class="list"></div></section>
     <section class="card"><div class="card-head"><h2>Trending</h2><span class="muted">CoinGecko</span></div><div id="mt-trend" class="trend"></div></section>
   </div>
-  <section class="card"><div class="card-head"><h2>🎯 Trade ideas</h2><span class="muted">levels-based · not advice</span></div><div id="mt-ideas" class="ideas"></div></section>
-  <section class="card boom"><div class="card-head"><h2>🔭 Next Boom</h2><span class="muted" id="boom-w"></span></div><div id="mt-boom"></div></section>
   <footer class="foot">Free public data · Binance, Bybit, OKX, Coinbase, CoinGecko, alternative.me, Hyperliquid, GeckoTerminal · refreshed every 2h</footer>
 </main>
 

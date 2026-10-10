@@ -10,16 +10,53 @@
   let W = 0, H = 0, stars = [], gal = [], spider = { x: 0, y: 0, tx: 0, ty: 0, target: 0, dwell: 0, legs: [] }, tags = [], logLines = [], events = 0, visible = true, last = 0;
   const rnd = (a, b) => a + Math.random() * (b - a);
 
+  let far = null, mid = null, px = 0, py = 0, mx = 0, my = 0, drift = 0;
+  const off = (w, h) => { const c = document.createElement("canvas"); c.width = w * DPR; c.height = h * DPR; const x = c.getContext("2d"); x.setTransform(DPR, 0, 0, DPR, 0, 0); return [c, x]; };
+  const PAD = 60;
+  function nebula(x, w, h) {
+    const cols = [[110, 60, 200], [30, 140, 190], [200, 60, 140], [60, 90, 200], [180, 120, 60]];
+    x.globalCompositeOperation = "lighter";
+    for (let i = 0; i < (mobile ? 10 : 18); i++) { const c = cols[i % cols.length], cx = rnd(0, w), cy = rnd(0, h), r = rnd(80, 260);
+      for (let k = 0; k < 4; k++) { const ox = cx + rnd(-r, r) * .5, oy = cy + rnd(-r, r) * .3, rr = r * rnd(.4, 1), g = x.createRadialGradient(ox, oy, 0, ox, oy, rr);
+        g.addColorStop(0, `rgba(${c},${rnd(.025, .06)})`); g.addColorStop(1, "rgba(0,0,0,0)"); x.fillStyle = g; x.beginPath(); x.ellipse(ox, oy, rr, rr * rnd(.4, .9), rnd(0, 3), 0, 6.283); x.fill(); } }
+    // dark dust lanes
+    x.globalCompositeOperation = "source-over";
+    for (let i = 0; i < 6; i++) { const cx = rnd(0, w), cy = rnd(0, h), g = x.createRadialGradient(cx, cy, 0, cx, cy, rnd(60, 160)); g.addColorStop(0, "rgba(3,4,8,.35)"); g.addColorStop(1, "rgba(3,4,8,0)"); x.fillStyle = g; x.fillRect(cx - 200, cy - 200, 400, 400); }
+  }
+  function starfield(x, w, h, n, max) {
+    for (let i = 0; i < n; i++) { const t = Math.random(), s = Math.pow(Math.random(), 3) * max + .3, hue = t < .15 ? "255,210,170" : t < .3 ? "170,200,255" : "235,238,255";
+      x.fillStyle = `rgba(${hue},${rnd(.25, .9)})`; x.fillRect(rnd(0, w), rnd(0, h), s, s);
+      if (s > max * .7) { const X = rnd(0, w), Y = rnd(0, h), g = x.createRadialGradient(X, Y, 0, X, Y, s * 4); g.addColorStop(0, `rgba(${hue},.5)`); g.addColorStop(1, "rgba(0,0,0,0)"); x.fillStyle = g; x.fillRect(X - s * 4, Y - s * 4, s * 8, s * 8); } }
+  }
+  function bgGalaxy(x, cx, cy, size, kind) {
+    const rot = rnd(0, 6.283), tilt = rnd(.25, 1), warm = Math.random() < .5, core = warm ? "255,225,180" : "200,215,255", arm = warm ? "190,170,255" : "140,190,255";
+    const g = x.createRadialGradient(cx, cy, 0, cx, cy, size * (kind === "e" ? 1 : .45));
+    g.addColorStop(0, `rgba(${core},.55)`); g.addColorStop(.3, `rgba(${core},.14)`); g.addColorStop(1, "rgba(0,0,0,0)");
+    x.save(); x.translate(cx, cy); x.rotate(rot); x.scale(1, kind === "e" ? rnd(.5, .9) : tilt); x.translate(-cx, -cy); x.fillStyle = g; x.beginPath(); x.arc(cx, cy, size, 0, 6.283); x.fill();
+    if (kind === "s") { const arms = Math.random() < .6 ? 2 : 3, n = Math.round(size * 9);
+      for (let i = 0; i < n; i++) { const a = i % arms * 6.283 / arms, t = Math.random() * 2.6, r = size * .12 * Math.exp(.6 * t) * .55, th = a + t * 1.6 + rnd(-.35, .35);
+        x.fillStyle = Math.random() < .12 ? "rgba(255,150,200,.55)" : `rgba(${arm},${rnd(.15, .55)})`; x.fillRect(cx + Math.cos(th) * r + rnd(-1.5, 1.5), cy + Math.sin(th) * r + rnd(-1.5, 1.5), rnd(.5, 1.4), rnd(.5, 1.4)); } }
+    x.restore();
+  }
   function layout() {
     const r = cv.getBoundingClientRect(); W = r.width; H = r.height; cv.width = W * DPR; cv.height = H * DPR; ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    const fw = W + PAD * 2, fh = H + PAD * 2; let fx, mx2;
+    [far, fx] = off(fw, fh); fx.fillStyle = "#03040a"; fx.fillRect(0, 0, fw, fh); nebula(fx, fw, fh); starfield(fx, fw, fh, Math.min(2600, fw * fh / (mobile ? 420 : 260)), 1.4);
+    [mid, mx2] = off(fw, fh); starfield(mx2, fw, fh, mobile ? 120 : 260, 2.2);
+    const ng = mobile ? 26 : 60;
+    for (let i = 0; i < ng; i++) { const d = Math.pow(Math.random(), 2); bgGalaxy(mx2, rnd(0, fw), rnd(0, fh), 6 + d * (mobile ? 26 : 38), Math.random() < .62 ? "s" : "e"); }
     const pos = mobile ? [[.22, .2], [.75, .18], [.2, .55], [.8, .52], [.3, .85], [.72, .86]] : [[.12, .3], [.36, .18], [.62, .22], [.88, .32], [.25, .78], [.72, .78]];
-    const n = mobile ? 70 : 150;
-    gal = DOMAINS.map((d, i) => ({ ...d, x: pos[i][0] * W, y: pos[i][1] * H, r: Math.min(W, H) * (mobile ? .16 : .17), heat: .3, info: "",
-      dots: Array.from({ length: n }, () => { const a = rnd(0, 6.283), rr = Math.pow(Math.random(), .6); return { a, rr, s: rnd(.7, 2.2), tw: rnd(0, 6.283), sp: rnd(-.0006, .0006) }; }) }));
-    stars = Array.from({ length: mobile ? 60 : 140 }, () => ({ x: rnd(0, W), y: rnd(0, H), s: rnd(.2, 1), tw: rnd(0, 6) }));
+    const n = mobile ? 90 : 220;
+    gal = DOMAINS.map((d, i) => ({ ...d, x: pos[i][0] * W, y: pos[i][1] * H, r: Math.min(W, H) * (mobile ? .16 : .17), heat: .3, info: "", rot: rnd(0, 6), tilt: rnd(.55, .85),
+      dots: Array.from({ length: n }, (_, k) => { const arm = k % 2 * Math.PI, t = Math.random() * 2.4, rr = Math.min(1, .08 * Math.exp(.9 * t)), core = Math.random() < .3;
+        return core ? { a: rnd(0, 6.283), rr: Math.pow(Math.random(), 2) * .35, s: rnd(.6, 1.8), tw: rnd(0, 6.283), sp: rnd(.0004, .0009) }
+          : { a: arm + t * 1.9 + rnd(-.3, .3), rr, s: rnd(.6, 2), tw: rnd(0, 6.283), sp: .0005 / (rr + .3) }; }) }));
+    stars = Array.from({ length: mobile ? 25 : 60 }, () => ({ x: rnd(0, W), y: rnd(0, H), s: rnd(1, 2.2), tw: rnd(0, 6) }));
     spider.x = spider.tx = W / 2; spider.y = spider.ty = H / 2;
     spider.legs = Array.from({ length: 16 }, (_, i) => ({ a: i / 16 * 6.283, len: rnd(16, 30), ph: rnd(0, 6) }));
   }
+  cv.addEventListener("pointermove", e => { const r = cv.getBoundingClientRect(); mx = ((e.clientX - r.left) / r.width - .5) * 2; my = ((e.clientY - r.top) / r.height - .5) * 2; });
+  cv.addEventListener("pointerleave", () => { mx = my = 0; });
 
   // ── real-data tags per domain ──
   function facts(id) {
@@ -51,20 +88,31 @@
     const g = gal[spider.target], fs = facts(g.id); g.heat = heat(g);
     const pick = fs.sort(() => Math.random() - .5).slice(0, 2);
     pick.forEach((t, i) => tags.push({ t, x: spider.x + rnd(-80, 60), y: spider.y + rnd(-60, 40) + i * 22, life: 0, col: g.col }));
-    tags = tags.slice(-6); pushLog(`read  ${g.label.padEnd(11)} ${pick[0] || ""}`);
+    tags = tags.slice(-6);
+    const w = document.getElementById("wolf"), dr = document.getElementById("dream");  // his breathing glow follows the scan
+    if (w) w.style.setProperty("--dream", (0.25 + g.heat * 0.75).toFixed(2));
+    if (dr) dr.textContent = `asleep · dreaming of ${g.label}`;
+    pushLog(`read  ${g.label.padEnd(11)} ${pick[0] || ""}`);
   }
 
   function draw(t) {
-    ctx.clearRect(0, 0, W, H);
-    for (const s of stars) { ctx.fillStyle = `rgba(200,210,255,${.15 + .25 * Math.sin(t / 900 + s.tw) ** 2})`; ctx.fillRect(s.x, s.y, s.s, s.s); }
+    drift += reduce ? 0 : .02; px += (mx - px) * .04; py += (my - py) * .04;
+    const fxo = -PAD + Math.sin(drift / 40) * 8 - px * 10, fyo = -PAD + Math.cos(drift / 55) * 6 - py * 8;
+    ctx.drawImage(far, fxo, fyo, W + PAD * 2, H + PAD * 2);
+    ctx.drawImage(mid, -PAD + Math.sin(drift / 40) * 18 - px * 26, -PAD + Math.cos(drift / 55) * 14 - py * 20, W + PAD * 2, H + PAD * 2);
+    for (const s of stars) { const a = .2 + .8 * Math.sin(t / 700 + s.tw) ** 2; ctx.fillStyle = `rgba(230,236,255,${a})`; ctx.fillRect(s.x - px * 30, s.y - py * 24, s.s, s.s); }
+    ctx.globalCompositeOperation = "lighter";
     for (const g of gal) {
       const [r, gg, b] = g.col, glow = ctx.createRadialGradient(g.x, g.y, 0, g.x, g.y, g.r * 1.2);
-      glow.addColorStop(0, `rgba(${r},${gg},${b},${.16 + g.heat * .14})`); glow.addColorStop(1, "rgba(0,0,0,0)"); ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(g.x, g.y, g.r * 1.2, 0, 6.283); ctx.fill();
-      for (const d of g.dots) { d.a += d.sp * 16; const x = g.x + Math.cos(d.a) * d.rr * g.r, y = g.y + Math.sin(d.a) * d.rr * g.r * .8;
-        ctx.fillStyle = `rgba(${r},${gg},${b},${.35 + .65 * Math.abs(Math.sin(t / 1200 + d.tw))})`; ctx.fillRect(x, y, d.s, d.s); }
-      ctx.font = "600 12px JetBrains Mono, monospace"; ctx.fillStyle = `rgba(${r},${gg},${b},.95)`; ctx.fillText(g.label, g.x - g.r * .5, g.y - g.r * .85);
-      ctx.font = "10px JetBrains Mono, monospace"; ctx.fillStyle = "rgba(160,170,190,.7)"; ctx.fillText(g.info || `${Math.round(g.heat * 100)}% active`, g.x - g.r * .5, g.y - g.r * .85 + 14);
+      glow.addColorStop(0, `rgba(${r},${gg},${b},${.18 + g.heat * .16})`); glow.addColorStop(.25, `rgba(${r},${gg},${b},.06)`); glow.addColorStop(1, "rgba(0,0,0,0)"); ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(g.x, g.y, g.r * 1.2, 0, 6.283); ctx.fill();
+      const cr = Math.cos(g.rot), sr = Math.sin(g.rot);
+      for (const d of g.dots) { d.a += d.sp * 16; const ux = Math.cos(d.a) * d.rr * g.r, uy = Math.sin(d.a) * d.rr * g.r * g.tilt, x = g.x + ux * cr - uy * sr, y = g.y + ux * sr + uy * cr;
+        ctx.fillStyle = `rgba(${r},${gg},${b},${.3 + .7 * Math.abs(Math.sin(t / 1200 + d.tw))})`; ctx.fillRect(x, y, d.s, d.s); }
     }
+    ctx.globalCompositeOperation = "source-over";
+    for (const g of gal) { const [r, gg, b] = g.col;
+      ctx.font = "600 12px JetBrains Mono, monospace"; ctx.fillStyle = `rgba(${r},${gg},${b},.95)`; ctx.fillText(g.label, g.x - g.r * .5, g.y - g.r * .85);
+      ctx.font = "10px JetBrains Mono, monospace"; ctx.fillStyle = "rgba(160,170,190,.75)"; ctx.fillText(g.info || `${Math.round(g.heat * 100)}% active`, g.x - g.r * .5, g.y - g.r * .85 + 14); }
     // spider
     const dx = spider.tx - spider.x, dy = spider.ty - spider.y, dist = Math.hypot(dx, dy);
     if (dist > 2) { spider.x += dx * .02; spider.y += dy * .02; } else if (spider.dwell++ === 0) arrive(); else if (spider.dwell > 150) nextTarget();

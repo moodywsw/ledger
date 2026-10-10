@@ -36,6 +36,8 @@ from flask import Flask, jsonify, request, send_from_directory
 
 import bot_switch
 import privacy
+import security
+import re as _re
 from functools import wraps
 from journal_store import get_recent_journal
 from theses_store import get_theses
@@ -62,6 +64,58 @@ JUPITER_PRICE_API = "https://lite-api.jup.ag/price/v3"
 SITE_DIR = Path(__file__).resolve().parent / "site"
 
 app = Flask(__name__, static_folder=str(SITE_DIR), static_url_path="")
+app.config.update(MAX_CONTENT_LENGTH=4096, JSON_SORT_KEYS=False, PROPAGATE_EXCEPTIONS=False, DEBUG=False, TESTING=False)
+_SID = _re.compile(r"^[a-f0-9]{6,32}$")
+
+
+def _bucket(path: str, method: str) -> str:
+    if method == "POST":
+        return "write"
+    if path.startswith("/api/owner"):
+        return "owner"
+    return "api" if path.startswith("/api/") else "static"
+
+
+@app.before_request
+def _guard():
+    if request.method not in ("GET", "HEAD", "POST", "OPTIONS"):
+        return jsonify({"error": "method not allowed"}), 405
+    ip = security.client_ip(request)
+    b = _bucket(request.path, request.method)
+    if not security.allow(ip, b):
+        return jsonify({"error": "rate limited"}), 429, {"Retry-After": "60"}
+    if b in ("owner", "write"):
+        wait = security.locked_for(ip)
+        if wait > 0:
+            return jsonify({"error": "too many failed attempts, try later"}), 429, {"Retry-After": str(int(wait) + 1)}
+
+
+def _check_owner() -> bool:
+    ip = security.client_ip(request)
+    if privacy.is_owner(request):
+        security.record_success(ip)
+        return True
+    security.record_fail(ip)
+    return False
+
+
+@app.errorhandler(404)
+def _nf(_e):
+    return jsonify({"error": "not found"}), 404
+
+
+@app.errorhandler(413)
+def _big(_e):
+    return jsonify({"error": "payload too large"}), 413
+
+
+@app.errorhandler(Exception)
+def _err(e):
+    from werkzeug.exceptions import HTTPException
+    if isinstance(e, HTTPException):
+        return jsonify({"error": e.name}), e.code
+    print(f"[API] internal error on {request.path}: {type(e).__name__}")  # no message: may contain URLs/keys
+    return jsonify({"error": "internal error"}), 500
 
 
 @app.route("/")
@@ -71,11 +125,8 @@ def dashboard():
 
 @app.after_request
 def add_cors_headers(response):
-    # This is read-only, non-sensitive paper-trading data — open CORS
-    # so the static site (served from a different origin/port) can
-    # fetch it directly without needing a proxy.
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, X-Admin-Token"
+    # Same-origin only: the site is served by this app, so no CORS headers at all.
+    security.apply_headers(response, request.path)
     return response
 
 
@@ -112,7 +163,7 @@ def owner_only(fn):
     def inner(*a, **k):
         if request.method == "OPTIONS":
             return ("", 204)
-        if not privacy.is_owner(request):
+        if not _check_owner():
             return jsonify({"error": "unauthorized"}), 401
         resp = fn(*a, **k)
         r = app.make_response(resp)
@@ -199,7 +250,8 @@ def _real_state_full():
     try:
         balances = get_wallet_balances()
     except Exception as e:
-        balances_error = str(e)
+        balances_error = "unavailable"  # never echo exception text (RPC URLs can carry API keys)
+        print(f"[API] balance lookup failed: {type(e).__name__}")
 
     try:
         open_positions = get_open_real_positions_summary()
@@ -242,13 +294,14 @@ def api_bot_switch_get():
 def api_bot_switch_post():
     if request.method == "OPTIONS":
         return ("", 204)
-    auth = request.headers.get("Authorization", "")
-    token = auth[7:] if auth.lower().startswith("bearer ") else request.headers.get("X-Admin-Token", "")
-    if not bot_switch.check_token(token):
+    if not _check_owner():
         return jsonify({"error": "unauthorized"}), 401
-    body = request.get_json(silent=True) or {}
+    body = request.get_json(silent=True)
+    body = body if isinstance(body, dict) else {}
     if "enabled" in body:
-        enabled = bool(body["enabled"])
+        if not isinstance(body["enabled"], bool):
+            return jsonify({"error": "enabled must be true/false"}), 400
+        enabled = body["enabled"]
     else:
         enabled = not bot_switch.is_enabled()
     return jsonify(bot_switch.set_enabled(enabled, by="dashboard"))
@@ -256,7 +309,7 @@ def api_bot_switch_post():
 
 @app.route("/api/journal")
 def api_journal():
-    limit = request.args.get("limit", default=50, type=int)
+    limit = request.args.get("limit", default=50, type=int) or 50
     limit = max(1, min(limit, 500))  # sane bounds — never dump the whole file on a bad query param
     return jsonify(_public(get_recent_journal(limit=limit)))
 
@@ -395,7 +448,7 @@ def api_owner_lab():
 def api_owner_lab_decide(sid, action):
     import strategy_lab
     from risk_engine import RiskConfig
-    if action not in ("approve", "reject"):
+    if action not in ("approve", "reject") or not _SID.match(sid or ""):
         return jsonify({"error": "bad action"}), 400
     try:
         st = strategy_lab.decide(sid, action == "approve", RiskConfig.from_env().profile)
@@ -425,7 +478,7 @@ def api_fomo_theses():
         handles = {w.get("handle", "") for w in json.loads(WALLETS_FILE.read_text()).get("wallets", []) if w.get("active", True)}
         return jsonify({"enabled": True, "theses": fomo_theses.recent_tracked(handles)})
     except Exception as e:
-        return jsonify({"enabled": False, "theses": [], "error": str(e)[:200]})
+        return jsonify({"enabled": False, "theses": [], "error": "unavailable"})
 
 
 @app.route("/api/persona/feed")
@@ -433,18 +486,24 @@ def api_persona_feed():
     """Ledger's voice: recent persona posts, mood and beliefs (for the website)."""
     try:
         import persona
-        return jsonify(_public(persona.feed(limit=min(int(request.args.get("limit", 30)), 100))))
+        return jsonify(_public(persona.feed(limit=max(1, min(request.args.get("limit", default=30, type=int) or 30, 100)))))
     except Exception as e:
-        return jsonify({"posts": [], "mood": None, "beliefs": [], "error": str(e)[:200]})
+        return jsonify({"posts": [], "mood": None, "beliefs": [], "error": "unavailable"})
 
 
 def start_api_server():
     """Starts the Flask app in a daemon background thread — call once from ledger_bot.py's main()."""
     def run():
-        # use_reloader=False is required outside the main thread (Flask's
-        # reloader uses signals, which only work in the main thread) —
-        # debug stays off too, this is a long-running background service.
-        app.run(host="0.0.0.0", port=API_PORT, debug=False, use_reloader=False)
+        # Production WSGI server (waitress, pure Python, thread-safe in a background
+        # thread). Falls back to Flask's server only if waitress isn't installed.
+        try:
+            from waitress import serve
+            serve(app, host="0.0.0.0", port=API_PORT, threads=int(os.environ.get("API_THREADS", "6")),
+                  ident="", clear_untrusted_proxy_headers=False, max_request_body_size=4096,
+                  connection_limit=200, channel_timeout=30)
+        except ImportError:
+            print("[API] waitress missing — falling back to the Flask dev server")
+            app.run(host="0.0.0.0", port=API_PORT, debug=False, use_reloader=False)
 
     thread = threading.Thread(target=run, daemon=True)
     thread.start()

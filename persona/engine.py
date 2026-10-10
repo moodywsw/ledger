@@ -286,7 +286,8 @@ class Persona:
         if (ctx.get("fng") or {}).get("value") is not None:
             self.add_fact("market", "", f"Fear & Greed {ctx['fng']['value']} ({ctx['fng']['label']})")
         return self.publish("musing", {"topic": topic, "draft": draft, "headlines": (ctx.get("headlines") or [])[:3],
-                                       "trending": (ctx.get("trending") or [])[:5], "fng": ctx.get("fng"),
+                                       "trending": (ctx.get("trending") or [])[:5],
+                                       "world": [h for h in (ctx.get("world") or []) if not muse._SENSITIVE.search(h)][:3], "fng": ctx.get("fng"),
                                        "recent": recent_texts[-3:]}, key=f"muse:{int(now)}")
 
     def tick(self):
