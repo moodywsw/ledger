@@ -66,7 +66,7 @@ def scrub_text(text, keep: set | None = None):
     _refresh()
     keep = keep or set()
     text = _OLDNAME.sub("Mirko", text)   # old journal entries/posts still say Ledger
-    t = _EVM.sub(lambda m: m.group(0) if m.group(0) in keep else "[wallet]", text)
+    t = _EVM.sub(lambda m: m.group(0) if m.group(0) in keep and m.group(0).lower() not in _cache["addrs"] else "[wallet]", text)
     def sol(m):
         a = m.group(0)
         if a.lower() in _cache["addrs"]:

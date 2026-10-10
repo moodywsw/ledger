@@ -460,7 +460,19 @@ def api_market_thoughts():
     d = market_thoughts.cached()
     if not d:
         return jsonify({"ready": False, "message": "First market read is being prepared (refreshes every 2h)."})
-    return jsonify(dict(_public(d), ready=True))
+    keep = set()
+    def walk(o):   # token contracts (not trader wallets) may be shown
+        if isinstance(o, dict):
+            for k, v in o.items():
+                if k in ("address", "ca", "mint") and isinstance(v, str):
+                    keep.add(v)
+                else:
+                    walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+    walk(d)
+    return jsonify(dict(_public(d, keep), ready=True))
 
 
 @app.route("/api/predictions")
