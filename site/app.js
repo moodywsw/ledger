@@ -199,13 +199,15 @@ async function loadMarket() {
   const idea = i => (i = { ...i, risk: riskOf(i) }, `<article class="ic2 ${i.side === "Long" ? "long" : "short"}">
       <header>${icon(i.name, i.address || i.mint, i.chain)}<b class="ic-tk">${esc(i.name)}</b><span class="ic-side">${i.side === "Long" ? "▲ Long" : "▼ Short"}</span><span class="ic-venue">${esc(i.venue)}${i.chain ? " · " + esc(i.chain) : ""}${i.mcap ? " · " + big(i.mcap) : ""}</span>
         <span class="ic-risk" title="Risk 0-10">${riskEmo(i.risk)}${i.risk ?? "–"}</span></header>
-      <div class="ic-line mono">Entry <b>${fp(i.entry_lo)}–${fp(i.entry_hi)}</b> <span class="arr">→</span> TP <b class="tp">${fp(i.t1)}${i.t2 ? ` / ${fp(i.t2)}` : ""}</b> <span class="dot">·</span> SL <b class="sl">${fp(i.stop)}</b></div>
+      <div class="ic-line mono">Entry <b>${fp(i.entry_lo)}–${fp(i.entry_hi)}</b> <span class="arr">→</span> TP <b class="tp">${fp(i.t1)}${i.t2 ? ` / ${fp(i.t2)}` : ""}</b> <span class="sep2">·</span> SL <b class="sl">${fp(i.stop)}</b></div>
       <p class="ic-th2">${esc((i.thesis && i.thesis.why) || i.why || "")}${i.thesis && i.thesis.trigger ? `<span class="ic-trg"> Trigger: ${esc(i.thesis.trigger)}. Invalid: ${esc(i.thesis.invalid || "")}</span>` : ""}</p></article>`);
   const col = (xs, msg) => xs.length ? xs.map(idea).join("") : `<div class="empty sm">${msg}</div>`;
   $("mt-maj").innerHTML = col(m.trade_ideas || [], "No clean setup on the majors.");
   $("mt-mid").innerHTML = col(m.mid_caps || [], "No mid cap is accumulating cleanly.");
   $("mt-low").innerHTML = col(m.low_caps || [], "No low cap passes the filters.");
-  $("mt-micro").innerHTML = col(m.micro_caps || [], "No high-conviction micro cap today.");
+  const DG = (m.desk || {}).degen_picks || [];
+  $("mt-micro").innerHTML = (m.micro_caps || []).length ? col(m.micro_caps, "") : DG.length ? DG.map(x => `<article class="ic2 long degen"><header>${icon(x.name)}<b class="ic-tk">${esc(x.name)}</b><span class="ic-side">🎲 Degen</span><span class="ic-venue">${esc(x.chain || "")}</span><span class="ic-risk">🔴 9</span></header>
+      <p class="ic-th2">${esc(x.thesis || "")}<span class="ic-trg">☠ ${esc(x.risk || "")}</span></p></article>`).join("") : `<div class="empty sm">No micro cap worth the risk today.</div>`;
   const T = m.trenches;
   $("tr-mood").textContent = T ? T.mood : "—";
   const heat = !T ? "cold" : /fire|tailwind/i.test(T.mood) ? "hot" : /selective|choppy/i.test(T.mood) ? "warm" : "cold";
@@ -238,7 +240,7 @@ async function loadMarket() {
     return `<article class="card coin t-${tone}">
     <header><div class="a-id">${icon(a.name)}<span class="a-name">${a.name}</span><span class="a-px mono">${fp(a.price)}</span></div>
       <span class="bias b-${tone}">${esc(c.bias || a.bias.split(" ·")[0])}</span></header>
-    <div class="coin-kv"><span><small>Trend</small><b>${esc(c.trend || (a.ma50 ? (a.price > a.ma50 ? "Above 50D" : "Below 50D") : "—"))}</b></span><span><small>24h · 7d</small><b class="mono"><span class="${cls(a.chg24)}">${pc(a.chg24)}</span> · <span class="${cls(a.chg7)}">${pc(a.chg7)}</span></b></span>
+    <div class="coin-kv"><span><small>Trend</small><b>${esc(c.trend || (a.ma50 ? (a.price > a.ma50 ? "Above 50D" : "Below 50D") : "—"))}</b></span><span><small>24h · 7d</small><b class="mono nw"><span class="${cls(a.chg24)}">${pc(a.chg24)}</span> <span class="${cls(a.chg7)}">${pc(a.chg7)}</span></b></span>
       <span><small>Support</small><b class="mono pos">${esc(c.support || fp(S))}</b></span><span><small>Resistance</small><b class="mono neg">${esc(c.resistance || fp(R))}</b></span></div>
     ${levelBar(a)}
     <div class="coin-call"><span class="hud-label">Call</span>${esc(c.call || a.plan)}</div>
