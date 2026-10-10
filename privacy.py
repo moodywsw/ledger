@@ -22,6 +22,7 @@ SENSITIVE_KEYS = {"wallet", "wallets", "opened_by", "source_wallet", "handle", "
                   "signer", "copied_from", "address", "owner", "wallet_address", "kol", "copy_of", "leader",
                   "evm", "chains", "followed", "by_trader"}
 _SOL = re.compile(r"\b[1-9A-HJ-NP-Za-km-z]{32,44}\b")
+_OLDNAME = re.compile(r"\bLedger\b(?![_A-Za-z])")
 _EVM = re.compile(r"\b0x[0-9a-fA-F]{40}\b")
 _cache = {"ts": 0.0, "handles": [], "addrs": set(), "rx": None}
 
@@ -64,6 +65,7 @@ def scrub_text(text, keep: set | None = None):
         return text
     _refresh()
     keep = keep or set()
+    text = _OLDNAME.sub("Mirko", text)   # old journal entries/posts still say Ledger
     t = _EVM.sub(lambda m: m.group(0) if m.group(0) in keep else "[wallet]", text)
     def sol(m):
         a = m.group(0)

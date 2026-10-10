@@ -6,7 +6,7 @@ X_URL = "https://api.twitter.com/2/tweets"
 
 
 def discord_enabled() -> bool:
-    return bool(os.environ.get("LEDGER_PERSONA_WEBHOOK"))
+    return bool((os.environ.get("MIRKO_PERSONA_WEBHOOK") or os.environ.get("LEDGER_PERSONA_WEBHOOK")))
 
 
 def x_enabled() -> bool:
@@ -14,11 +14,11 @@ def x_enabled() -> bool:
 
 
 def post_discord(text: str) -> bool:
-    url = os.environ.get("LEDGER_PERSONA_WEBHOOK")
+    url = (os.environ.get("MIRKO_PERSONA_WEBHOOK") or os.environ.get("LEDGER_PERSONA_WEBHOOK"))
     if not url:
         return False
     try:
-        r = requests.post(url, json={"content": text, "username": "Ledger",
+        r = requests.post(url, json={"content": text, "username": "Mirko",
                                      "allowed_mentions": {"parse": []}}, timeout=10)
         return r.status_code < 300
     except Exception as e:

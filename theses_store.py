@@ -1,5 +1,5 @@
 """
-theses_store.py — Ledger's persistent per-token thesis store
+theses_store.py — Mirko's persistent per-token thesis store
 
 Unlike journal_store.py (append-only), this is a single dict keyed by
 ticker, rewritten in full on every update — theses.json holds ONE

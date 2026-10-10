@@ -1,4 +1,4 @@
-# Ledger — security summary
+# Mirko — security summary
 
 ## HTTP surface (api_server.py + security.py)
 - **Production server:** waitress WSGI (`requirements.txt`), with Flask debug off. There is a 4 KB request body cap, 200 connections and a 30 s channel timeout.
@@ -28,5 +28,5 @@
 ## Known/accepted
 - **Token in the boot log:** an auto-generated admin token is printed once per boot in the Railway log, which only the owner can see. That's how the owner gets it. To keep it out of logs, set `LEDGER_ADMIN_TOKEN` (32+ random chars) in Railway; the log then shows `(env)`.
 - **Repo contents:** `wallets.json` is in the git repo. Make the GitHub repo private if trader wallets must stay secret.
-- **Rate-limit scope:** limits are per process. Ledger runs as one process, which is fine.
+- **Rate-limit scope:** limits are per process. Mirko runs as one process, which is fine.
 - **Dependencies:** `pip-audit -r requirements.txt` found no known vulnerabilities (2026-10-10).

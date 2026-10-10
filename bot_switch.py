@@ -3,7 +3,7 @@
 State lives in $DATA_DIR/bot_switch.json (the Railway volume). Missing or
 unreadable file = ON (default behaviour unchanged).
 
-Admin token for the toggle API: LEDGER_ADMIN_TOKEN env if set; otherwise a
+Admin token for the toggle API: MIRKO_ADMIN_TOKEN (or legacy LEDGER_ADMIN_TOKEN) env if set; otherwise a
 random token is generated once into $DATA_DIR/admin_token and printed in the
 boot log so the owner can copy it from Railway logs.
 """
@@ -39,7 +39,7 @@ def set_enabled(enabled: bool, by: str = "api") -> dict:
 
 
 def admin_token() -> str:
-    t = os.environ.get("LEDGER_ADMIN_TOKEN", "").strip()
+    t = (os.environ.get("MIRKO_ADMIN_TOKEN") or os.environ.get("LEDGER_ADMIN_TOKEN") or "").strip()
     if len(t) >= 20:
         return t
     if t:

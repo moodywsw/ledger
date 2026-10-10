@@ -1,5 +1,5 @@
 """
-risk_engine.py — Ledger's risk desk: position sizing, pre-trade limits,
+risk_engine.py — Mirko's risk desk: position sizing, pre-trade limits,
 token safety filters, the exit engine, and tracked-wallet scoring.
 
 Everything in here is PURE (no network, no file I/O, no clock reads

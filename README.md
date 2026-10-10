@@ -1,6 +1,6 @@
-# Ledger
+# Mirko
 
-Ledger is a Solana memecoin trading agent. It watches a list of trader
+Mirko is a Solana memecoin trading agent. It watches a list of trader
 wallets, turns their buys into a thesis in its own voice, simulates trades
 against a paper balance, and (optionally) speaks live to a Discord channel
 and answers questions from a Discord bot grounded in its own trade history
@@ -66,7 +66,7 @@ set explicitly.
 |---|---|---|
 | `ALCHEMY_RPC_URL` | `ledger_bot.py` | Solana Mainnet RPC URL from an Alchemy app, e.g. `https://solana-mainnet.g.alchemy.com/v2/<key>` |
 | `HELIUS_API_KEY` | `test_wallet_feed.py` only | From https://helius.dev — no longer used by `ledger_bot.py` (migrated to Alchemy) |
-| `DISCORD_WEBHOOK_URL` | `ledger_bot.py` (optional) | Ledger's public voice; leave unset to run silently |
+| `DISCORD_WEBHOOK_URL` | `ledger_bot.py` (optional) | Mirko's public voice; leave unset to run silently |
 | `LEDGER_AVATAR_URL` | `ledger_bot.py` (optional) | Avatar for the Discord webhook posts |
 | `DISCORD_TRADE_FORMAT` | `ledger_bot.py` (optional) | `embed` (default) posts every ENTRY / TRIM / EXIT as a short embed card (scale-ins are not posted) (`trade_cards.py`, see `docs/DISCORD_CARDS.md`); `text` posts the same card as plain markdown. |
 | `DISCORD_BOT_TOKEN` | `ledger_discord_bot.py` | Needs the "Message Content" privileged intent enabled |
@@ -173,7 +173,7 @@ extensions are always enforced. `REAL_TRADING_ENABLED` still defaults to
 | `EDGE_UNKNOWN_WALLET_PCT`, `EDGE_WEAK_WALLET_PCT`, `EDGE_BASE_PCT`, `EDGE_MAX_PCT`, `EDGE_TOP_PCT` | per profile | Equity fraction per tier (see above). |
 | `EDGE_TARGET_R` / `EDGE_BENCH_R` / `EDGE_PRIOR_TRADES` / `EDGE_HALF_LIFE_DAYS` | `0.5` / `-0.25` / `5` / `7` | Edge scoring knobs. |
 | `SNIPER_POSITION_PCT`, `SNIPER_MIN_LIQUIDITY_USD`, `SNIPER_AGE_MIN_SECONDS`, `SNIPER_AGE_MAX_SECONDS` | per profile | Sniper sizing / liquidity floor / age window. |
-| `OWN_THESIS_POSITION_PCT` | per profile | Paper size of Ledger's own calls. |
+| `OWN_THESIS_POSITION_PCT` | per profile | Paper size of Mirko's own calls. |
 
 ### Sniper
 
@@ -198,7 +198,7 @@ extensions are always enforced. `REAL_TRADING_ENABLED` still defaults to
 | `LEARNING_DISCOVERY_EVERY_MIN` / `LEARNING_DISCOVERY_MIN_PROFIT_USD` | `240` / `1000` | Discovery cadence; min realized profit on a winning token's visible trades. |
 | `LEARNING_TUNE_EVERY_HOURS` / `LEARNING_TUNE_MIN_SIGNALS` / `LEARNING_APPLY_TUNED` | `24` / `60` / `true` | Walk-forward exit tuning (`tuning.py`); accepted only if it beats current params out of sample. |
 | `TUNE_MIN_IMPROVEMENT` / `TUNE_MIN_OOS` | `0.01` / `20` | Acceptance bar: +1pp/trade over ≥ 20 out-of-sample trades. |
-| `OWN_THESIS_ENABLED` / `OWN_THESIS_EVERY_MIN` / `OWN_THESIS_MAX_PER_DAY` | `true` / `240` / `3` | Cadence of Ledger's own 🧠 THESIS cards. |
+| `OWN_THESIS_ENABLED` / `OWN_THESIS_EVERY_MIN` / `OWN_THESIS_MAX_PER_DAY` | `true` / `240` / `3` | Cadence of Mirko's own 🧠 THESIS cards. |
 | `OWN_THESIS_MIN_SCORE` / `OWN_THESIS_PAPER_TRADE` | `4` / `true` | Confluence bar; also open a small paper position tagged `own_thesis` (never mirrored to real). |
 | `FOMO_API_KEY` | unset | ⚠️ fomo.family's Terms forbid automated/third-party data extraction; fomoapi.io is unofficial. Preferred: track a Fomo account's public **Solana wallet address** on-chain via `wallets.json` instead. |
 | `FOMO_API_KEY` (cont.) | unset | Unofficial fomoapi.io key (free: https://fomoapi.io/dashboard). Unset = Fomo inputs disabled. |
@@ -313,3 +313,7 @@ failure, and re-deriving wallet balances from the chain immediately before
 each order instead of trusting local state alone — was adapted from
 [omo](https://github.com/omotrades/omo) (MIT license), an open-source
 autonomous memecoin trader.
+
+## Name change: Ledger → Mirko
+The bot's public name is now **Mirko**. Code, module/file names, the Procfile, data files and env vars are unchanged.
+`MIRKO_ADMIN_TOKEN` and `MIRKO_PERSONA_WEBHOOK` are accepted as aliases. The old `LEDGER_ADMIN_TOKEN` / `LEDGER_PERSONA_WEBHOOK` still work, and the `MIRKO_*` names win if both are set.

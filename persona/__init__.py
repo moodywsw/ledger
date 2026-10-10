@@ -1,4 +1,4 @@
-"""Ledger's living persona: mood, memory, beliefs, voice and autoposting.
+"""Mirko's living persona: mood, memory, beliefs, voice and autoposting.
 
 Runs as a daemon thread inside the bot. It tails journal.jsonl (everything
 the bot already says/does), so the trading code needs no changes beyond

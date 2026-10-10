@@ -362,7 +362,7 @@ def feed(limit: int = 30) -> dict:
     s = store.load()
     m = s["mood"]
     return {
-        "name": "Ledger",
+        "name": "Mirko",
         "mood": {"label": moodmod.label(m), "emoji": moodmod.emoji(m),
                  **{k: (round(v, 3) if isinstance(v, float) else v) for k, v in m.items()}},
         "beliefs": [_scrub(b) for b in s["beliefs"]],

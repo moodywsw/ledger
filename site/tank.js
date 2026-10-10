@@ -1,4 +1,4 @@
-// Ledger's healing tank: bubbles rising forever inside the glass (canvas, clipped), light CPU.
+// Mirko's healing tank: bubbles rising forever inside the glass (canvas, clipped), light CPU.
 (() => {
   const cv = document.getElementById("bubbles"); if (!cv) return;
   const ctx = cv.getContext("2d"), reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;

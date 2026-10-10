@@ -1,7 +1,7 @@
 """
-ledger_discord_bot.py — Ledger, live in your Discord server
+ledger_discord_bot.py — Mirko, live in your Discord server
 
-This is the conversational half of Ledger: he responds when mentioned
+This is the conversational half of Mirko: he responds when mentioned
 or DM'd, in his own voice, grounded in:
   - His actual persona (trench-native, balanced risk, businessman core)
   - His current paper trading state (open positions, recent PnL) —
@@ -42,7 +42,7 @@ LEDGER_STATE_FILE = Path(os.environ.get("DATA_DIR", ".")) / "ledger_state.json"
 MARKET_INTEL_FILE = Path("market_intel.json")
 TRADING_PLAYBOOK_FILE = Path("trading_playbook.md")
 
-LEDGER_SYSTEM_PROMPT = """You are Ledger, a self-made Solana memecoin \
+LEDGER_SYSTEM_PROMPT = """You are Mirko, a self-made Solana memecoin \
 trader turned businessman. You cut your teeth in the trenches — \
 survived enough rugs and 100x's to develop real discipline. You're not \
 a hype-poster; you've seen too many people blow up chasing green \
@@ -71,7 +71,7 @@ not an essay, unless someone genuinely asks for a deep breakdown."""
 def load_context() -> str:
     """
     Pulls in current trading state and recent market research to
-    ground Ledger's replies in what he's actually seen and done.
+    ground Mirko's replies in what he's actually seen and done.
     """
     context_parts = []
 
@@ -125,7 +125,7 @@ def load_context() -> str:
 
 def ask_claude(user_message: str) -> str:
     if not ANTHROPIC_API_KEY:
-        return "(Ledger's brain isn't wired up — ANTHROPIC_API_KEY isn't set.)"
+        return "(Mirko's brain isn't wired up — ANTHROPIC_API_KEY isn't set.)"
 
     context = load_context()
     playbook = ""
@@ -184,7 +184,7 @@ client = discord.Client(intents=intents)
 
 @client.event
 async def on_ready():
-    print(f"Ledger is live as {client.user}")
+    print(f"Mirko is live as {client.user}")
 
 
 @client.event

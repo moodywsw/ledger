@@ -1,5 +1,5 @@
 """
-Ledger — Solana memecoin trench agent (paper trading scaffold)
+Mirko — Solana memecoin trench agent (paper trading scaffold)
 
 What this does right now:
   - Watches a list of wallet addresses for new buys (via Alchemy's
@@ -8,10 +8,10 @@ What this does right now:
   - Checks each watched wallet's TOTAL portfolio value (SOL + every
     token held, priced in USD via Jupiter) and flags whales — accounts
     at 6-figure+ total value — weighting their buys as stronger signals
-  - Turns each detected buy into a "thesis" in Ledger's voice
+  - Turns each detected buy into a "thesis" in Mirko's voice
   - Speaks publicly: every thesis, trade, and exit posts live to a
     Discord channel via webhook (see DISCORD_WEBHOOK_URL) under
-    Ledger's name — this is optional; leave it unset to run silently
+    Mirko's name — this is optional; leave it unset to run silently
   - Simulates a trade against a paper balance (NO real funds move)
   - Enforces hard risk limits so the logic is proven safe before
     it ever touches a real wallet
@@ -161,7 +161,7 @@ ANTHROPIC_MODEL = "claude-sonnet-5"
 BIRDEYE_API_KEY = os.environ.get("BIRDEYE_API_KEY", "")
 BIRDEYE_OHLCV_URL = "https://public-api.birdeye.so/defi/v3/ohlcv"
 
-# Discord webhook URL — this is Ledger's public voice. Get one from
+# Discord webhook URL — this is Mirko's public voice. Get one from
 # a Discord channel: Edit Channel -> Integrations -> Webhooks -> New
 # Webhook -> Copy URL. Leave blank to run silently (console only).
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
@@ -169,7 +169,7 @@ DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
 # webhook URLs separated by commas (e.g. "https://.../1,https://.../2")
 # to post every message to all of them.
 DISCORD_WEBHOOK_URLS = [u.strip() for u in DISCORD_WEBHOOK_URL.split(",") if u.strip()]
-LEDGER_DISCORD_NAME = "Ledger"
+LEDGER_DISCORD_NAME = "Mirko"
 # "embed" (default): every ENTRY / SCALE / TRIM / EXIT is a compact Discord
 # embed card (trade_cards.py). "text": the same card flattened to markdown.
 DISCORD_TRADE_FORMAT = os.environ.get("DISCORD_TRADE_FORMAT", "embed").strip().lower()
@@ -234,7 +234,7 @@ def speak(
     embed: dict = None, post_discord: bool = True,
 ):
     """
-    Ledger's public voice. Always prints a plain-text line to the
+    Mirko's public voice. Always prints a plain-text line to the
     console (for logs), and — if DISCORD_WEBHOOK_URL is configured —
     posts a normal Discord message (not an embed/card) built from
     markdown, in the requested layout: bold title, then each field
@@ -245,7 +245,7 @@ def speak(
     If `journal_kind` is passed, the exact same "{title} — {description}"
     text already being printed/posted also gets appended to the
     persistent journal (journal_store.log_journal) — this is the one
-    choke point where everything Ledger already says out loud becomes
+    choke point where everything Mirko already says out loud becomes
     durable, without generating any new text or duplicating the
     decision logic that produced title/description in the first place.
     """
@@ -1064,7 +1064,7 @@ MAX_INTEL_ENTRIES_KEPT = 30
 MARKET_RESEARCH_EVERY_N_CYCLES = 120  # ~every 4 hours at 120s/cycle
 
 MARKET_RESEARCH_PROMPT = """You're researching the current state of the \
-Solana memecoin market for a trader persona named Ledger. Search for \
+Solana memecoin market for a trader persona named Mirko. Search for \
 what's happening RIGHT NOW — the last 24-48 hours — and summarize in \
 a tight, practical way:
 
@@ -1138,7 +1138,7 @@ def save_market_intel(summary: str):
 
 def do_market_research_pass():
     """Runs one research pass and saves it — called periodically from main()."""
-    print("Ledger is researching the market for trend/gem signals...")
+    print("Mirko is researching the market for trend/gem signals...")
     try:
         summary = run_market_research()
         print(f"\n{summary}\n")
@@ -1146,7 +1146,7 @@ def do_market_research_pass():
         # Only journal entry point not wrapped in speak() — market
         # research never posts to Discord, but "read" is explicitly one
         # of the four journal kinds, and this is the only place in the
-        # codebase where Ledger actually "reads" something (vs. acting
+        # codebase where Mirko actually "reads" something (vs. acting
         # or commenting), so it gets logged directly here.
         log_journal(kind="read", text=summary)
     except requests.exceptions.HTTPError as e:
@@ -1449,7 +1449,7 @@ def extract_new_buys(transactions: list, wallet_address: str) -> list:
     return buys
 
 
-# ── Ledger's voice ───────────────────────────────────────────────────
+# ── Mirko's voice ───────────────────────────────────────────────────
 
 # ── Chart / market structure analysis ─────────────────────────────────
 #
@@ -1776,7 +1776,7 @@ def analyze_conviction(
     trigger_platform: str,
 ) -> dict:
     """
-    Ledger's actual judgment call — replaces the old static templates.
+    Mirko's actual judgment call — replaces the old static templates.
     Uses Claude to independently evaluate whether a detected buy is
     genuinely worth entering, instead of automatically mirroring every
     wallet buy. Considers the coin's own lore/theme (not just "a
@@ -1830,7 +1830,7 @@ def analyze_conviction(
     candles = get_ohlcv_candles(token)
     structure = detect_market_structure(candles)
 
-    prompt = f"""You are Ledger, a moderate-risk Solana memecoin trader — degen enough to actually play the trenches, disciplined enough not to blow up. A wallet you track just bought a token. Evaluate independently whether YOU would enter this position — do not simply mirror the wallet's action.
+    prompt = f"""You are Mirko, a moderate-risk Solana memecoin trader — degen enough to actually play the trenches, disciplined enough not to blow up. A wallet you track just bought a token. Evaluate independently whether YOU would enter this position — do not simply mirror the wallet's action.
 
 Your risk tolerance: you are NOT an ultra-conservative institutional trader. Passing on every setup because it isn't perfect defeats the entire point of being in the trenches — decent, coherent setups deserve a scout position, not a pass. Reserve "pass" for genuine red flags: no coherent theme or narrative at all, a clear downtrend with a confirmed bearish break of structure and nothing offsetting it, or a token that's obviously a low-effort copy of an already-established "real" version of a trend. A setup that's merely uncertain, early, or thin on information is exactly what a small scout-sized "buy" with a higher risk_score is for — that's the tool for uncertainty, not passing.
 
@@ -3092,7 +3092,7 @@ def close_real_only_position(token: str, exit_price: float, reason: str = None):
     real_only_positions.save_real_only_positions(positions)
 
 
-# Exit rules — coherent with Ledger's "balanced" persona: cuts losers
+# Exit rules — coherent with Mirko's "balanced" persona: cuts losers
 # fast, recovers initial capital early, then lets the rest ride with a
 # TRAILING stop instead of a fixed profit target. There's no hard
 # ceiling on the upside — a trailing stop locks in gains only once
@@ -3155,7 +3155,7 @@ def _position_price(mint: str, pos: dict):
 
 
 def _regime_scale(source: str) -> tuple:
-    """Market-regime filter from Ledger Market Thoughts: risk-off only ever SHRINKS new entries.
+    """Market-regime filter from Mirko Market Thoughts: risk-off only ever SHRINKS new entries.
     Hard rails, caps and safety filters are untouched. Owner-approved Strategy Lab scale wins."""
     try:
         import market_thoughts
@@ -3457,7 +3457,7 @@ def summarize_token_history(entries: list) -> str:
     Turns raw journal_store entries for one token into a compact,
     human-readable line per past encounter, newest first — this is
     what gets dropped into the entry-opinion prompt as real memory of
-    what Ledger already did with this exact token, instead of every
+    what Mirko already did with this exact token, instead of every
     repeat encounter reading as if it were the first. Informational
     only — never used to gate or block a copy decision.
     """
@@ -3483,13 +3483,13 @@ def summarize_token_history(entries: list) -> str:
 
 def get_entry_opinion(symbol: str, name: str, trader_name: str, platform_name: str, top10_pct: float, dev_pct: float, max_multiplier: float, history_context: str = None) -> dict:
     """
-    Ledger's actual take on a token being copied from a trusted
+    Mirko's actual take on a token being copied from a trusted
     trader, plus a genuine confidence-based sizing decision — not a
     fixed multiplier applied identically every time. Returns
     {"opinion": str, "confidence_multiplier": float}, where the
     multiplier ranges from 1.0 (baseline size) up to max_multiplier
     (maximum conviction). No mention of "priority" in the wording —
-    the trader is simply someone Ledger is copying, full stop.
+    the trader is simply someone Mirko is copying, full stop.
     """
     if not ANTHROPIC_API_KEY:
         return {"opinion": f"{trader_name} entered.", "confidence_multiplier": 1.0}
@@ -3500,9 +3500,9 @@ def get_entry_opinion(symbol: str, name: str, trader_name: str, platform_name: s
     if dev_pct is not None:
         context_bits.append(f"Dev holding: {dev_pct:.1f}%")
     if history_context:
-        context_bits.append(f"Ledger's history with this token: {history_context}")
+        context_bits.append(f"Mirko's history with this token: {history_context}")
 
-    prompt = f"""You are Ledger. A trader you copy just bought a token, and you're mirroring the entry. Give your own brief, genuine take on THIS specific token — not a generic template line — and decide how much conviction this specific setup deserves.
+    prompt = f"""You are Mirko. A trader you copy just bought a token, and you're mirroring the entry. Give your own brief, genuine take on THIS specific token — not a generic template line — and decide how much conviction this specific setup deserves.
 
 Token: {symbol} ({name})
 {chr(10).join(context_bits)}
@@ -3537,7 +3537,7 @@ Respond with ONLY valid JSON, no other text: {{"opinion": "<one short sentence, 
 def get_snipe_confidence(symbol: str, name: str, top10_pct: float, dev_pct: float, max_multiplier: float, history_context: str = None) -> dict:
     """
     Same idea as get_entry_opinion, but for a Sniper Mode launch —
-    no trader being copied, just Ledger's own read on the fresh
+    no trader being copied, just Mirko's own read on the fresh
     launch itself, plus a confidence multiplier (1.0-max_multiplier)
     for sizing.
     """
@@ -3550,9 +3550,9 @@ def get_snipe_confidence(symbol: str, name: str, top10_pct: float, dev_pct: floa
     if dev_pct is not None:
         context_bits.append(f"Dev holding: {dev_pct:.1f}%")
     if history_context:
-        context_bits.append(f"Ledger's history with this token: {history_context}")
+        context_bits.append(f"Mirko's history with this token: {history_context}")
 
-    prompt = f"""You are Ledger, sniping a fresh Pump.fun launch that already passed your safety filters. Give a brief, genuine take on THIS specific token, and decide how much conviction it deserves.
+    prompt = f"""You are Mirko, sniping a fresh Pump.fun launch that already passed your safety filters. Give a brief, genuine take on THIS specific token, and decide how much conviction it deserves.
 
 Token: {symbol} ({name})
 {chr(10).join(context_bits) if context_bits else "No holder data available yet."}
@@ -3593,7 +3593,7 @@ def get_exit_opinion(symbol: str, reason: str, pnl: float, change_pct: float) ->
     if not ANTHROPIC_API_KEY:
         return ""
 
-    prompt = f"""You are Ledger, reflecting briefly on a trade that just closed.
+    prompt = f"""You are Mirko, reflecting briefly on a trade that just closed.
 
 Token: {symbol}
 Exit reason: {reason}
@@ -3635,7 +3635,7 @@ def get_live_trade_judgment(pos: dict, current_price: float, change_pct: float, 
     symbol = pos.get("symbol") or pos.get("token", "")[:6]
     thesis = pos.get("thesis") or "No stored thesis for this entry."
 
-    prompt = f"""You are Ledger, checking in on a live sniper position — treat this trade on its own terms, not as a generic rule application.
+    prompt = f"""You are Mirko, checking in on a live sniper position — treat this trade on its own terms, not as a generic rule application.
 
 Token: {symbol}
 Original thesis at entry: {thesis}
@@ -3958,7 +3958,7 @@ def check_sniper_positions(state: LedgerState):
     a dev-sell trigger (exit immediately if the creator wallet appears
     to be dumping), and — instead of a single fixed stop-loss rule
     applied identically to every trade — a live, per-trade judgment
-    call: on a real drawdown, Ledger decides whether to average into
+    call: on a real drawdown, Mirko decides whether to average into
     the dip or cut losses, and posts a short comment either way. Also
     posts one brief live comment mid-hold on positions that haven't
     hit any trigger yet, so it's not silent between open and close.
@@ -4112,7 +4112,7 @@ def compute_performance_stats(state: LedgerState) -> dict:
     Analyzes closed/partial-closed trades to answer the question that
     actually matters: is this working, and for which kind of signal?
     This is what "learning from losses" means in practice here — not
-    a black-box that rewires itself, but real numbers Ledger (and you)
+    a black-box that rewires itself, but real numbers Mirko (and you)
     can look at and use to judge whether whale-backed signals are
     actually outperforming scout plays, or whether the strategy needs
     to change.
@@ -4448,7 +4448,7 @@ def evaluate_snipe_candidate(candidate: dict, state: "LedgerState"):
 
     # Selection is now based on genuine confidence instead of a coin
     # flip — a token that passed every mechanical filter still only
-    # gets bought if Ledger's own read on it clears a real conviction
+    # gets bought if Mirko's own read on it clears a real conviction
     # bar, not at random.
     prior_entries = get_token_history(symbol, limit=5)
     if SNIPER_MIN_CONFIDENCE_TO_ENTER > 0:
@@ -4856,9 +4856,9 @@ def main():
         print(f"[RESET] RESET_STATE_ON_BOOT is set — wiped {STATE_FILE}, starting fresh at {STARTING_PAPER_BALANCE_SOL} SOL. Remember to unset this variable so it doesn't wipe progress again on the next restart.")
 
     state = LedgerState.load()
-    print(f"Ledger booting up. Paper balance: {state.balance_sol} SOL")
+    print(f"Mirko booting up. Paper balance: {state.balance_sol} SOL")
     print(f"[SWITCH] bot is {'ON' if bot_switch.is_enabled() else 'OFF'} (new entries) — admin token source: "
-          f"{'LEDGER_ADMIN_TOKEN env' if os.environ.get('LEDGER_ADMIN_TOKEN') else 'auto-generated'}; token={bot_switch.admin_token() if not os.environ.get('LEDGER_ADMIN_TOKEN') else '(env)'}")
+          f"{'admin token env' if (os.environ.get('MIRKO_ADMIN_TOKEN') or os.environ.get('LEDGER_ADMIN_TOKEN')) else 'auto-generated'}; token={bot_switch.admin_token() if not (os.environ.get('MIRKO_ADMIN_TOKEN') or os.environ.get('LEDGER_ADMIN_TOKEN')) else '(env)'}")
     print(f"[RISK] profile={RISK.profile} sizing={RISK.sizing_mode} rails_applied={RISK.rails_applied or 'none'}")
     print(f"[RISK] exit engine={EXIT_ENGINE} paper={PAPER_TRADING_ENABLED} real_armed={REAL_TRADING_ENABLED} "
           f"position_check={POSITION_CHECK_SECONDS}s config={json.dumps(RISK.as_dict())}")

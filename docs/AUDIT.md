@@ -1,4 +1,4 @@
-# Ledger trading audit (branch `audit-hardening`)
+# Mirko trading audit (branch `audit-hardening`)
 
 > **Read this first.** No set of rules makes memecoin trading profitable by
 > default. Most Solana memecoins go to zero within hours, the tracked wallets

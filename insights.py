@@ -1,4 +1,4 @@
-"""Ledger's daily reading: the world of trading, distilled into a few beliefs.
+"""Mirko's daily reading: the world of trading, distilled into a few beliefs.
 
 Free, light sources (each optional, failures ignored):
 - SEC EDGAR submissions API: fresh 13F-HR filings from famous funds
@@ -19,7 +19,7 @@ from pathlib import Path
 import requests
 
 EVERY_H = float(os.environ.get("INSIGHTS_EVERY_H", "12"))
-UA = {"User-Agent": os.environ.get("SEC_USER_AGENT", "Ledger Research ledger-research@example.com")}
+UA = {"User-Agent": os.environ.get("SEC_USER_AGENT", "Mirko Research ledger-research@example.com")}
 FUNDS = {"Berkshire Hathaway": "0001067983", "Bridgewater": "0001350694", "Renaissance Technologies": "0001037389",
          "ARK Invest": "0001697748", "Pershing Square": "0001336528", "Scion (Burry)": "0001649339",
          "Duquesne (Druckenmiller)": "0001536411", "Tiger Global": "0001167483"}

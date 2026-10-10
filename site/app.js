@@ -1,4 +1,4 @@
-// Ledger dashboard v2 — vanilla JS, no build step. Same-origin API.
+// Mirko dashboard v2 — vanilla JS, no build step. Same-origin API.
 const API_BASE_URL = "";
 const POLL_INTERVAL_MS = 10_000;
 const $ = id => document.getElementById(id);
@@ -105,19 +105,19 @@ function renderOverview(o) {
       <div class="m">${esc(t.reason || "exit")} · ${ago(t.at)}</div></div><div class="mono ${cls(t.pnl_sol)}">${sol(t.pnl_sol)}</div></div>`).join("") : empty("No closed trades yet.");
 }
 
-// ── Ledger's thoughts (persona feed) ────────────────────────────────
+// ── Mirko's thoughts (persona feed) ────────────────────────────────
 const KIND = { musing: ["💭", "thought"], mood: ["🫀", "mood"], recap: ["📊", "recap"], entry: ["🟢", "entry"], exit_win: ["💰", "exit"],
   exit_loss: ["🩸", "exit"], refusal: ["🚩", "refused"], thesis_own: ["🧭", "thesis"], thesis_kol: ["👀", "watching"] };
 function renderMind(f) {
   const pill = $("mood-pill"), body = $("mind-feed");
-  if (!f) { pill.textContent = "offline"; body.innerHTML = empty("Ledger's thoughts will appear here."); return; }
+  if (!f) { pill.textContent = "offline"; body.innerHTML = empty("Mirko's thoughts will appear here."); return; }
   LEDGER.mood = f.mood; LEDGER.posts = f.posts || [];
   pill.textContent = `${f.mood.emoji || ""} ${f.mood.label || ""}`.trim();
   const ps = f.posts || [];
   body.innerHTML = ps.length ? ps.slice(0, 12).map((p, i) => { const [ic, lb] = KIND[p.kind] || ["💬", p.kind];
     return `<div class="thought ${i === 0 ? "latest" : ""} k-${esc(p.kind)}"><div class="th-meta"><span>${ic} ${esc(p.topic ? p.topic.replace("_", " ") : lb)}</span><span>${ago(new Date(p.ts * 1000))}</span></div><div class="th-text">${esc(p.text)}</div></div>`; }).join("")
     : (f.beliefs || []).length ? f.beliefs.map(b => `<div class="thought"><div class="th-meta"><span>🧭 belief</span></div><div class="th-text">${esc(b)}</div></div>`).join("")
-    : empty("Ledger is quiet for now — first thoughts land within a few hours.");
+    : empty("Mirko is quiet for now — first thoughts land within a few hours.");
 }
 
 function setConn(ok) { $("conn-dot").className = `dot ${ok ? "ok" : "err"}`; $("conn-status").textContent = ok ? "Live" : "Unreachable";
@@ -317,7 +317,7 @@ function renderSwitch(st) {
   switchEnabled = !!st.enabled;
   const s = $("switch-state"); s.textContent = switchEnabled ? "ON" : "OFF"; s.className = `switch-state ${switchEnabled ? "on" : "off"}`;
   $("status-pulse").className = `pulse ${switchEnabled ? "on" : "off"}`;
-  $("switch-note").textContent = switchEnabled ? "Ledger is watching the market and can open new positions." : "Paused — no new buys. Open positions are still managed (exits keep running).";
+  $("switch-note").textContent = switchEnabled ? "Mirko is watching the market and can open new positions." : "Paused — no new buys. Open positions are still managed (exits keep running).";
   const b = $("switch-btn"); b.disabled = false; b.className = `switch ${switchEnabled ? "on" : ""}`;
   $("switch-caption").textContent = switchEnabled ? "Tap to pause" : "Tap to resume";
 }

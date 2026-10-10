@@ -1,5 +1,5 @@
 """Persisted persona state (DATA_DIR/persona_state.json)."""
-import json, os, threading, time
+import json, re, os, threading, time
 from pathlib import Path
 
 LOCK = threading.RLock()
@@ -32,7 +32,10 @@ CAPS = {"lessons": 300, "facts": 200, "posts": 200, "seen_keys": 1000}
 def load() -> dict:
     with LOCK:
         try:
-            d = json.loads(path().read_text())
+            raw = path().read_text()
+            # rename migration: the bot is now called Mirko (old persisted posts/beliefs said Ledger)
+            raw = re.sub(r"\bLedger\b(?![_A-Za-z])", "Mirko", raw)
+            d = json.loads(raw)
         except Exception:
             d = {}
         out = json.loads(json.dumps(DEFAULT))

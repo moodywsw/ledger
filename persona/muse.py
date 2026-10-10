@@ -1,7 +1,7 @@
 """Musings: genuine non-trade thoughts (market, culture, narratives, KOLs, macro, AI, bot life).
 
 Inputs are all free: CoinGecko trending, alternative.me Fear & Greed, crypto RSS headlines,
-plus Ledger's own mood, beliefs and facts. Every fetch fails soft.
+plus Mirko's own mood, beliefs and facts. Every fetch fails soft.
 """
 import os, random, re, time
 import xml.etree.ElementTree as ET

@@ -1,10 +1,10 @@
 """
-market_intel.py — Ledger's autonomous research loop
+market_intel.py — Mirko's autonomous research loop
 
 Periodically asks Claude (with web search enabled) to research current
 Solana memecoin market conditions, trends, and narratives, and saves
 the findings to market_intel.json. This file is then loaded as context
-by ledger_discord_bot.py, so Ledger's conversational answers are
+by ledger_discord_bot.py, so Mirko's conversational answers are
 grounded in something researched recently — not just static persona
 text or training data.
 
@@ -41,7 +41,7 @@ MAX_ENTRIES_KEPT = 30  # keep the log from growing forever — rolls off old ent
 RESEARCH_INTERVAL_SECONDS = 4 * 60 * 60  # how often to run a fresh research pass
 
 RESEARCH_PROMPT = """You're researching the current state of the Solana \
-memecoin market for a trader persona named Ledger. Search for what's \
+memecoin market for a trader persona named Mirko. Search for what's \
 happening RIGHT NOW — the last 24-48 hours — and summarize in a tight, \
 practical way:
 
@@ -109,7 +109,7 @@ def get_latest_intel(n: int = 3) -> list:
 
 if __name__ == "__main__":
     while True:
-        print("Ledger is researching the market...")
+        print("Mirko is researching the market...")
         try:
             summary = run_research()
             print(f"\n{summary}\n")

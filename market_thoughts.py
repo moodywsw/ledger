@@ -1,4 +1,4 @@
-"""Ledger Market Thoughts — a super-trader market read that runs inside Ledger.
+"""Mirko Market Thoughts — a super-trader market read that runs inside Mirko.
 
 Ported from the standalone market-reads generator (read.py): same free, keyless
 sources (Binance/Bybit/OKX/Coinbase, CoinGecko, alternative.me, Hyperliquid,
@@ -650,7 +650,7 @@ def trenches_fallback(reads, fg, boom, trend) -> dict:
 
 
 def trenches(dex, lows, reads, fg, boom):
-    """Ledger's opinion on the memecoin trenches, from live DEX data (rule-based, honest)."""
+    """Mirko's opinion on the memecoin trenches, from live DEX data (rule-based, honest)."""
     pools = []
     for net, p in _POOLS:
         a = p.get("attributes") or {}
@@ -749,4 +749,4 @@ def start():
                 print(f"[MARKET] refresh error: {str(e)[:160]}")
             time.sleep(300)
     threading.Thread(target=loop, daemon=True, name="market-thoughts").start()
-    print(f"[MARKET] Ledger Market Thoughts on — refresh every {EVERY_H}h")
+    print(f"[MARKET] Mirko Market Thoughts on — refresh every {EVERY_H}h")

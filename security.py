@@ -1,4 +1,4 @@
-"""HTTP hardening for Ledger's API/site: rate limits, token lockout, security headers.
+"""HTTP hardening for Mirko's API/site: rate limits, token lockout, security headers.
 
 In-memory and per-process (the API runs in one process next to the bot), so no
 extra service is needed. Client IP = first X-Forwarded-For hop (Railway's edge

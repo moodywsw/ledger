@@ -1,4 +1,4 @@
-"""Ledger's paper portfolio — SIMULATED, no real orders ever.
+"""Mirko's paper portfolio — SIMULATED, no real orders ever.
 
 Three sleeves, each started with EUR 1,000:
   spot   — crypto spot: BTC/ETH/SOL weighted by the market read, up to 2 mid caps and
@@ -437,7 +437,7 @@ def tick(now: float | None = None, force=False):
 
 
 def commentary(s: dict) -> dict:
-    """Ledger's own words on why he holds what he holds."""
+    """Mirko's own words on why he holds what he holds."""
     sp, pe, st = (s["sleeves"][k] for k in ("spot", "perps", "stocks"))
     intro = ("Sniper with a long memory: I hold a patient core and hunt a few sharp entries around it. "
              "Spot: BTC/ETH/SOL are long-term holds sized by my market read with wide stops, plus swing trades in mid caps that are being accumulated "

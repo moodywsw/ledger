@@ -1,9 +1,9 @@
 """
-api_server.py — Ledger's read-only HTTP API
+api_server.py — Mirko's read-only HTTP API
 
 Serves the current paper-trading state, journal, and theses over
 plain HTTP/JSON, for the static dashboard in /site (or anything else
-that wants to read Ledger's state without touching the JSON files
+that wants to read Mirko's state without touching the JSON files
 directly). Runs as a Flask app in a background thread inside the SAME
 process as ledger_bot.py's main trading loop — no separate Railway
 service needed, per the deliberate choice to keep this a single dyno.
@@ -444,7 +444,7 @@ def api_portfolio_live():
 
 @app.route("/api/portfolio")
 def api_portfolio():
-    """Ledger's SIMULATED paper portfolio (no real orders)."""
+    """Mirko's SIMULATED paper portfolio (no real orders)."""
     import paper_portfolio
     return jsonify(_public(paper_portfolio.public_view()))
 
@@ -496,7 +496,7 @@ def api_fomo_theses():
 
 @app.route("/api/persona/feed")
 def api_persona_feed():
-    """Ledger's voice: recent persona posts, mood and beliefs (for the website)."""
+    """Mirko's voice: recent persona posts, mood and beliefs (for the website)."""
     try:
         import persona
         return jsonify(_public(persona.feed(limit=max(1, min(request.args.get("limit", default=30, type=int) or 30, 100)))))
@@ -520,4 +520,4 @@ def start_api_server():
 
     thread = threading.Thread(target=run, daemon=True)
     thread.start()
-    print(f"[API] Ledger's HTTP API listening on port {API_PORT}")
+    print(f"[API] Mirko's HTTP API listening on port {API_PORT}")

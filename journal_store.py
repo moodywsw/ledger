@@ -1,7 +1,7 @@
 """
-journal_store.py — Ledger's append-only public journal
+journal_store.py — Mirko's append-only public journal
 
-A continuous, diary-style record of everything Ledger already says out
+A continuous, diary-style record of everything Mirko already says out
 loud via speak() in ledger_bot.py (trade opens/closes, refusals,
 pauses, live commentary) — this module doesn't decide WHAT to log or
 generate any new text, it just captures what's already been produced
@@ -90,7 +90,7 @@ def get_recent_journal(limit: int = 50) -> list:
 def get_token_history(token_ticker: str, limit: int = 5) -> list:
     """
     Returns up to `limit` most recent journal entries for one specific
-    token ticker, newest first — everything Ledger has already said or
+    token ticker, newest first — everything Mirko has already said or
     done about this exact token in past encounters, not just the most
     recent overall activity. Same full-file read as get_recent_journal
     (fine at this scale), filtered to the ticker before truncating, so

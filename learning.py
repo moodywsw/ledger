@@ -1,5 +1,5 @@
 """
-learning.py — Ledger's learning loop. Nothing here retrains a model: it
+learning.py — Mirko's learning loop. Nothing here retrains a model: it
 keeps score of what actually made money and moves capital toward it.
 
   (a) Scoring       wallets, signal sources and entry-feature buckets are

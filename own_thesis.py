@@ -1,5 +1,5 @@
 """
-own_thesis.py — Ledger forms its own calls (not copies).
+own_thesis.py — Mirko forms its own calls (not copies).
 
 Every OWN_THESIS_EVERY_MIN (default 240) at most OWN_THESIS_MAX_PER_DAY
 (default 3), it:

@@ -8,7 +8,7 @@ tests/test_trade_cards.py. ledger_bot.speak() posts the returned dict as
   ENTRY  🟢        blue   🪙 token + ticker, 📋 CA + links, 💵 entry price/MC, 💰 size, 🧠 one-line thesis
   EXIT   ✅ / 🔴   green / red by PnL   🪙 token, 📋 CA + links, 📈/📉 PnL (% · SOL · USD), 💵 entry → exit MC
   TRIM   ✅ / 🔴   same as EXIT, for a partial take-profit / partial stop
-  THESIS 🧠        violet  Ledger's own call: 🪙 token, 📋 CA + links, ≤3 reasons, ❌ invalidation, 🎯 conviction
+  THESIS 🧠        violet  Mirko's own call: 🪙 token, 📋 CA + links, ≤3 reasons, ❌ invalidation, 🎯 conviction
 
 Scale-ins (top-ups, dip buys) are intentionally NOT posted.
 """
@@ -134,7 +134,7 @@ COLOR_THESIS = 0xA78BFA  # violet
 def thesis_card(*, mint: str, symbol: str, name: str | None = None, why: list | None = None,
                 mcap_usd: float | None = None, invalidation: str | None = None,
                 conviction: str | None = None, **_unused) -> dict:
-    """Ledger's own call. Labelled 'Thesis' (no NFA boilerplate): 🧠 title,
+    """Mirko's own call. Labelled 'Thesis' (no NFA boilerplate): 🧠 title,
     📋 CA + links, ≤3 short reasons, ❌ invalidation, 🎯 conviction."""
     lines = _header(mint)
     for w in (why or [])[:3]:

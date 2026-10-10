@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Ledger — Live Dashboard</title>
+<title>Mirko — Live Dashboard</title>
 <meta name="theme-color" content="#07090d">
-<meta name="description" content="Ledger — an autonomous on-chain trading agent with a mind of its own.">
-<meta property="og:title" content="Ledger"><meta property="og:description" content="Live thoughts, trades and market read from an autonomous trading agent.">
+<meta name="description" content="Mirko — an autonomous on-chain trading agent with a mind of its own.">
+<meta property="og:title" content="Mirko"><meta property="og:description" content="Live thoughts, trades and market read from an autonomous trading agent.">
 <meta property="og:image" content="/og.jpg"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="/og.jpg">
 <link rel="icon" type="image/png" href="/favicon.png"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -31,7 +31,7 @@
       <div class="hero-main">
         <div class="tank" id="wolf" aria-hidden="true"><img class="t-base" src="tank.webp" alt="" width="360" height="590"><div class="tank-glow"></div><canvas class="bubbles" id="bubbles"></canvas><img class="t-wolf" src="wolf.webp" alt="" width="226" height="388"><span class="led"></span></div>
         <div class="hero-left">
-          <div class="label">Ledger status</div>
+          <div class="label">Mirko status</div>
           <div class="status-line"><span class="pulse" id="status-pulse"></span><span id="switch-state" class="switch-state">…</span></div>
           <div class="hero-note" id="switch-note">Checking…</div>
           <div class="dream mono" id="dream">dreaming</div>
@@ -45,8 +45,8 @@
       </div>
     </div>
     <section class="card scan-card">
-      <div class="card-head"><h2>🧠 Ledger's brain</h2></div>
-      <div class="scan-stage"><canvas id="scan" aria-label="Animated map of what Ledger is scanning"></canvas></div>
+      <div class="card-head"><h2>🧠 Mirko's brain</h2></div>
+      <div class="scan-stage"><canvas id="scan" aria-label="Animated map of what Mirko is scanning"></canvas></div>
       <div class="scan-strip">
         <div class="mini"><div class="mini-h">SCAN LOG <span id="scan-rate">— reads/min</span></div><div class="mini-b mono" id="scan-log"></div></div>
         <div class="mini"><div class="mini-h">COVERAGE <span>6 domains</span></div><canvas id="radar" class="mini-c radar"></canvas></div>
@@ -79,18 +79,18 @@
   </div>
 
 
-  <footer class="foot">Ledger · read-only dashboard</footer>
+  <footer class="foot">Mirko · read-only dashboard</footer>
 </main>
 
 <main class="wrap view hidden" id="view-market">
   <section class="card mt-hero">
-    <div><div class="label">Ledger Market Thoughts</div><h1 id="mt-regime">Preparing the first read…</h1><p id="mt-summary" class="mt-summary"></p>
+    <div><div class="label">Mirko Market Thoughts</div><h1 id="mt-regime">Preparing the first read…</h1><p id="mt-summary" class="mt-summary"></p>
       <div class="chips"><span class="chip" id="mt-stance">—</span><span class="chip" id="mt-time">—</span><span class="chip" id="mt-scale">—</span></div></div>
     <div class="fng"><canvas id="fng-gauge" width="220" height="130"></canvas><div class="fng-v mono" id="fng-v">—</div><div class="muted" id="fng-l">Fear &amp; Greed</div></div>
   </section>
   <div class="mt-top">
   <section class="card ideas-card"><div class="card-head"><h2>🎯 Trade ideas</h2><span class="muted">levels-based · not advice</span></div><div id="mt-ideas" class="ideas"></div>
-    <div class="trench-in"><div class="ideas-h">⛏ Ledger on the trenches <span class="muted" id="tr-mood"></span></div><div id="mt-trench"></div></div></section>
+    <div class="trench-in"><div class="ideas-h">⛏ Mirko on the trenches <span class="muted" id="tr-mood"></span></div><div id="mt-trench"></div></div></section>
   <section class="card boom"><div class="card-head"><h2>🔭 Next Boom</h2><span class="muted" id="boom-w"></span></div><div id="mt-boom"></div></section>
   </div>
   <section class="assets" id="mt-assets"></section>
@@ -99,7 +99,7 @@
     <section class="card collapsible" data-key="mtmacro" data-fold="1"><div class="card-head"><h2>Macro pulse</h2><span class="muted">Coinbase premium · total market</span><button class="fold" aria-label="Expand">+</button></div><div class="fold-body"><div id="mt-deriv" class="list"></div></div></section>
     <section class="card collapsible" data-key="mtdex" data-fold="1"><div class="card-head"><h2>DEX flows · trending pools</h2><span class="muted">24h buyer share</span><button class="fold" aria-label="Expand">+</button></div><div class="fold-body"><div id="mt-dex" class="list"></div></div></section>
     <section class="card collapsible" data-key="mttrend" data-fold="1"><div class="card-head"><h2>Trending</h2><span class="muted">CoinGecko</span><button class="fold" aria-label="Expand">+</button></div><div class="fold-body"><div id="mt-trend" class="trend"></div></div></section>
-    <section class="card collapsible" data-key="mtinsight" data-fold="1"><div class="card-head"><h2>What Ledger read today</h2><span class="muted">funds · policy · tech</span><button class="fold" aria-label="Expand">+</button></div><div class="fold-body"><div id="mt-insights" class="list"></div></div></section>
+    <section class="card collapsible" data-key="mtinsight" data-fold="1"><div class="card-head"><h2>What Mirko read today</h2><span class="muted">funds · policy · tech</span><button class="fold" aria-label="Expand">+</button></div><div class="fold-body"><div id="mt-insights" class="list"></div></div></section>
   </div>
   <footer class="foot">Free public data · Binance, Bybit, OKX, Coinbase, CoinGecko, alternative.me, Hyperliquid, GeckoTerminal, SEC EDGAR, ARK, central-bank &amp; news RSS · refreshed every 2h</footer>
 </main>
@@ -112,7 +112,7 @@
   </section>
   <section class="sleeves" id="pf-sleeves"></section>
   <section class="card collapsible" data-key="pftrades"><div class="card-head"><h2>Trade history</h2><button class="fold" aria-label="Minimize">–</button></div><div class="fold-body"><div id="pf-trades" class="list feed"></div></div></section>
-  <section class="card pf-comment"><div class="card-head"><h2>🗣 Ledger's commentary</h2></div><div id="pf-comment"></div></section>
+  <section class="card pf-comment"><div class="card-head"><h2>🗣 Mirko's commentary</h2></div><div id="pf-comment"></div></section>
   <footer class="foot">Paper portfolio — simulated. Crypto decisions every 4h, stocks once per US trading day, stops checked every 15 min. Not advice.</footer>
 </main>
 

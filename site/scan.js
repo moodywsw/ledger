@@ -1,4 +1,4 @@
-// Ledger's mind — live scan. Vanilla canvas, driven by real data in window.LEDGER.
+// Mirko's mind — live scan. Vanilla canvas, driven by real data in window.LEDGER.
 (() => {
   const cv = document.getElementById("scan"); if (!cv) return;
   const ctx = cv.getContext("2d"), reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
