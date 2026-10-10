@@ -144,7 +144,7 @@ def _desc(mint: str, thesis: str | None = None) -> str:
 def _finish(card: dict, logo_url: str | None) -> dict:
     if logo_url and str(logo_url).startswith("https://"):
         card["thumbnail"] = {"url": logo_url}
-    card["footer"] = {"text": "Mirko · on-chain"}
+    card["footer"] = {"text": "Mirko · on-chain · mirkobot.xyz"}
     card["timestamp"] = _now_iso()
     return card
 
