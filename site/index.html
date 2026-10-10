@@ -20,6 +20,7 @@
     <button class="nav-btn active" data-view="dash">Dashboard</button>
     <button class="nav-btn" data-view="market">Market Thoughts</button>
     <button class="nav-btn" data-view="portfolio">Portfolio</button>
+    <button class="nav-btn" data-view="predictions">Predictions</button>
   </nav>
   <div class="conn"><span class="dot" id="conn-dot"></span><span id="conn-status">connecting…</span></div>
 </header>
@@ -32,9 +33,9 @@
       <div class="hud-grid">
         <div class="tank" id="wolf" aria-hidden="true"><img class="t-base" src="tank.webp" alt="" width="360" height="590"><div class="tank-glow"></div><canvas class="bubbles" id="bubbles"></canvas><div class="t-float"><img class="t-wolf" src="wolf.webp" alt="" width="226" height="403"></div><img class="t-cap" src="tank-cap.webp" alt="" width="360" height="86"><span class="led"></span></div>
         <div class="hud-side">
-          <div class="hud-cell"><div class="hud-label">ENGINE</div><div class="status-line"><span class="pulse" id="status-pulse"></span><span id="switch-state" class="switch-state">…</span></div></div>
-          <div class="hud-cell"><div class="hud-label">CONVICTION</div><div class="conv"><canvas id="gauge" width="120" height="70"></canvas><b class="mono conv-v" id="gauge-v">—</b></div><div class="conv-d" id="conv-d">reading the market…</div></div>
-          <div class="hud-cell hud-toggle"><div class="hud-label">CONTROL</div><div class="hero-right"><button id="switch-btn" class="switch" type="button" disabled aria-label="Toggle bot"><span class="knob"></span></button><div class="switch-caption mono" id="switch-caption">…</div></div></div>
+          <div class="hud-cell"><div class="hud-label" title="Read-only for the public">ENGINE</div><div class="status-line"><span class="pulse" id="status-pulse"></span><span id="switch-state" class="switch-state">…</span></div></div>
+          <div class="hud-cell conv-cell"><div class="hud-label">CONVICTION · <span id="conv-asset">MARKET</span></div><div class="conv"><canvas id="gauge" width="120" height="70"></canvas><b class="mono conv-v" id="gauge-v">—</b></div><div class="conv-d" id="conv-d">reading the market…</div></div>
+          <div class="hud-cell hud-toggle hidden" id="hud-control"><div class="hud-label">CONTROL</div><div class="hero-right"><button id="switch-btn" class="switch" type="button" disabled aria-label="Toggle bot"><span class="knob"></span></button><div class="switch-caption mono" id="switch-caption">…</div></div></div>
         </div>
       </div>
     </div>
@@ -52,11 +53,11 @@
   </section>
 
   <section class="kpis">
-    <div class="card kpi"><div class="label">Wallet (USDC)</div><div class="big mono" id="stat-real-balance">—</div><div class="sub">Gas <span class="mono" id="stat-real-gas">—</span></div></div>
-    <div class="card kpi"><div class="label">Real realized PnL</div><div class="big mono" id="stat-real-pnl">—</div><div class="sub">Exposure <span class="mono" id="stat-exposure">—</span></div></div>
+    <div class="card kpi"><div class="label">Wallet</div><div class="big mono" id="stat-real-balance">—</div><div class="sub">USDC · exposure <span class="mono" id="stat-exposure">—</span></div></div>
+    <div class="card kpi"><div class="label">Realized PnL</div><div class="big mono" id="stat-real-pnl">—</div><div class="sub">USDC, real wallet</div></div>
     <div class="card kpi"><div class="label">Engine PnL · today</div><div class="big mono" id="pnl-today">—</div><div class="sub">7d <span class="mono" id="pnl-7d">—</span> · all <span class="mono" id="pnl-all">—</span></div></div>
-    <div class="card kpi"><div class="label">Win / loss</div><div class="big mono" id="winloss">—</div><div class="sub">Paper balance <span class="mono" id="stat-balance">—</span></div></div>
-    <div class="card kpi eq-card"><div class="label">Equity · SOL</div><div id="equity-chart" class="chart"></div><div class="eq-tip mono" id="eq-tip"></div></div>
+    <div class="card kpi"><div class="label">Win / loss</div><div class="big mono" id="winloss">—</div><div class="sub">closed trades</div></div>
+    <div class="card kpi eq-card"><div class="label">Equity · USDC</div><div id="equity-chart" class="chart"></div><div class="eq-tip mono" id="eq-tip"></div></div>
   </section>
 
 
@@ -86,12 +87,11 @@
   <section class="card ideas-card"><div class="card-head"><h2>🎯 Trade ideas</h2><span class="muted">levels-based · not advice</span></div>
     <div class="ideas-cols"><div><div class="ideas-h">Majors</div><div id="mt-maj" class="ideas-col"></div></div><div><div class="ideas-h">Mid caps · accumulation</div><div id="mt-mid" class="ideas-col"></div></div></div>
     <div class="ideas-cols"><div><div class="ideas-h">Low caps · on-chain accumulation</div><div id="mt-low" class="ideas-col"></div></div><div><div class="ideas-h">Micro caps · high conviction only</div><div id="mt-micro" class="ideas-col"></div></div></div>
-    <div class="trench-in"><div class="ideas-h">⛏ Mirko on the trenches <span class="muted" id="tr-mood"></span></div><div id="mt-trench"></div></div></section>
+    <div class="trench-in" id="trench-box"><div class="tr-head"><span class="tr-title">⛏ Mirko on the trenches</span><span class="tr-badge" id="tr-mood">—</span></div><div id="mt-trench"></div></div></section>
   <section class="card boom"><div class="card-head"><h2>🔭 Next Boom</h2><div class="tabs" id="boom-tabs"><button class="tab active" data-b="cur">Current</button><button class="tab" data-b="prev">Previous booms</button></div></div><div class="muted sm" id="boom-w"></div><div id="mt-boom"></div><div id="mt-boom-prev" class="hidden"></div></section>
   </div>
   <div class="grid2 mt-lower">
     <section class="card collapsible" data-key="mthl" data-fold="1"><div class="card-head"><h2>Hyperliquid top traders</h2><span class="muted"><span id="hl-sub"></span></span><button class="fold" aria-label="Expand">+</button></div><div class="fold-body"><div id="mt-hl" class="list"></div></div></section>
-    <section class="card collapsible" data-key="mtmacro" data-fold="1"><div class="card-head"><h2>Macro pulse</h2><span class="muted">Coinbase premium · total market</span><button class="fold" aria-label="Expand">+</button></div><div class="fold-body"><div id="mt-deriv" class="list"></div></div></section>
     <section class="card collapsible" data-key="mtdex" data-fold="1"><div class="card-head"><h2>DEX flows · trending pools</h2><span class="muted">24h buyer share</span><button class="fold" aria-label="Expand">+</button></div><div class="fold-body"><div id="mt-dex" class="list"></div></div></section>
     <section class="card collapsible" data-key="mttrend" data-fold="1"><div class="card-head"><h2>Trending</h2><span class="muted">CoinGecko</span><button class="fold" aria-label="Expand">+</button></div><div class="fold-body"><div id="mt-trend" class="trend"></div></div></section>
     <section class="card collapsible" data-key="mtinsight" data-fold="1"><div class="card-head"><h2>What Mirko read today</h2><span class="muted">funds · policy · tech</span><button class="fold" aria-label="Expand">+</button></div><div class="fold-body"><div id="mt-insights" class="list"></div></div></section>
@@ -109,6 +109,18 @@
   <section class="card collapsible" data-key="pftrades"><div class="card-head"><h2>Trade history</h2><button class="fold" aria-label="Minimize">–</button></div><div class="fold-body"><div id="pf-trades" class="list feed"></div></div></section>
   <section class="card pf-comment"><div class="card-head"><h2>🗣 Mirko's commentary</h2></div><div id="pf-comment"></div></section>
   <footer class="foot">Paper portfolio — simulated. Crypto decisions every 4h, stocks once per US trading day, stops checked every 15 min. Not advice.</footer>
+</main>
+
+<main class="wrap view hidden" id="view-predictions">
+  <section class="card pr-hero">
+    <div><div class="label">Mirko's predictions · <span class="paper-flag">PAPER</span></div><h1 class="mono" id="pr-total">—</h1><div class="muted" id="pr-sub">Simulated stakes. Nothing real is placed.</div></div>
+    <div class="pr-stats" id="pr-stats"></div>
+  </section>
+  <div class="pr-tabs tabs" id="pr-tabs"><button class="tab active" data-p="sports">⚽ Sports</button><button class="tab" data-p="poly">🔮 Polymarket</button><button class="tab" data-p="done">✅ Settled</button></div>
+  <section id="pr-sports" class="pr-grid"></section>
+  <section id="pr-poly" class="pr-grid hidden"></section>
+  <section id="pr-done" class="pr-grid hidden"></section>
+  <footer class="foot">Paper predictions · ESPN public data &amp; Polymarket Gamma API · kickoff times in Lisbon time · not betting advice</footer>
 </main>
 
 <main class="wrap view hidden" id="view-owner">

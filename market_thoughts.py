@@ -431,7 +431,7 @@ def trade_ideas(assets, hl):
     return out
 
 
-SCHEMA = 4
+SCHEMA = 5
 BOOM_DEFAULT = {"theme": "AI infrastructure", "emoji": "🤖", "thesis": "Compute, power and data centres keep absorbing capital; the picks-and-shovels trade is the patient one.",
                 "boom_window": "Nov 2026 – Dec 2027", "why_now": ["Hyperscaler capex guidance keeps rising", "Power and cooling are the new bottleneck"],
                 "crypto": ["TAO", "RENDER", "FET"], "stocks": ["NVDA", "AVGO", "VRT", "CEG"], "invalidation": "Capex cuts from two or more hyperscalers."}
@@ -530,13 +530,17 @@ def build():
     reads = [asset_read(assets[n], derivs.get(n), ((hl or {}).get("coins") or {}).get(n)) for n, _ in ASSETS if n in assets]
     reg = regime(assets, glob, fg) if assets else {"label": "Unknown", "key": "chop", "score": 0, "notes": []}
     summary, stance = outlook(reads, reg, fg, cbp, dex)
+    stocks_conv = safe("stock conviction", stock_convictions) or []
+    for lst in (mids, lows, micros):
+        for i in lst:
+            i["risk"] = risk_score(i)
     ins = _insights()
     if ins and ins.get("beliefs"):
         summary += " Daily reading: " + ins["beliefs"][0]
     return {"ts": time.time(), "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(), "regime": reg,
             "assets": reads, "fng": fg, "global": glob, "coinbase_premium": cbp, "trending": trend,
-            "hyperliquid": hl, "dex_flows": dex, "trade_ideas": trade_ideas(assets, hl) if assets else [],
-            "summary": summary, "stance": stance, "next_boom": boom_with_history(next_boom() or BOOM_DEFAULT), "mid_caps": mids, "low_caps": lows, "micro_caps": micros,
+            "hyperliquid": hl, "dex_flows": dex, "trade_ideas": [{**i, "risk": risk_score(i)} for i in (trade_ideas(assets, hl) if assets else [])],
+            "summary": summary, "stance": stance, "next_boom": boom_with_history(next_boom() or BOOM_DEFAULT), "mid_caps": mids, "low_caps": lows, "micro_caps": micros, "stocks_conv": stocks_conv,
             "trenches": safe("trenches", trenches, dex, lows, reads, fg, next_boom()) or trenches_fallback(reads, fg, next_boom(), trend),
             "insights": ins, "schema": SCHEMA,
             "size_scale": regime_scale_for(reg["key"]), "warnings": LOG[-12:]}
@@ -787,6 +791,37 @@ def trenches(dex, lows, reads, fg, boom):
             "accumulate": [{"sym": l["name"], "chain": l["chain"], "why": l["why"]} for l in acc[:3]],
             "long_term": lt or ["BTC"],
             "rules": "Trenches rules: size for zero, take first profits early, never chase a green candle you didn't see build."}
+
+
+CONV_STOCKS = ["NVDA", "TSLA", "COIN", "MSTR"]
+
+
+def stock_convictions() -> list:
+    """Per-stock conviction 0-100 from Yahoo daily candles: trend vs 20D/50D and 1M momentum."""
+    out = []
+    for sym in CONV_STOCKS:
+        try:
+            r = get(f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}", {"range": "6mo", "interval": "1d"})["chart"]["result"][0]
+            cl = [c for c in r["indicators"]["quote"][0]["close"] if c]
+        except Exception:
+            continue
+        if len(cl) < 60:
+            continue
+        px, s20, s50 = cl[-1], sum(cl[-20:]) / 20, sum(cl[-50:]) / 50
+        m1 = (px / cl[-21] - 1) * 100
+        score = (1 if px > s20 else -1) + (1 if px > s50 else -1) + (1 if s20 > s50 else -1) + max(-2, min(2, m1 / 8))
+        tone = "bull" if score >= 1.5 else "bear" if score <= -1.5 else "neutral"
+        out.append({"name": sym, "price": round(px, 2), "chg1m": round(m1, 1), "score": round(score, 2), "tone": tone,
+                    "conv": int(max(5, min(95, 50 + score * 9))),
+                    "note": {"bull": "uptrend, buying dips", "bear": "downtrend, selling rips", "neutral": "range, waiting"}[tone]})
+        time.sleep(0.3)
+    return out
+
+
+def risk_score(i: dict) -> int:
+    base = {"mid": 4, "low": 7, "micro": 8}.get(i.get("tier"), 2)
+    base += (1 if i.get("venue") == "Perp" else 0) + (1 if (i.get("rr") or 0) < 1.5 else 0) + (1 if i.get("spec") else 0)
+    return int(max(0, min(10, base)))
 
 
 def regime_scale_for(key: str) -> float:

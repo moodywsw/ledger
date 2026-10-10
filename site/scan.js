@@ -7,7 +7,8 @@
     { id: "market", label: "market", col: [124, 140, 255] }, { id: "smart", label: "smart money", col: [34, 211, 230] },
     { id: "kols", label: "KOLs", col: [255, 110, 199] }, { id: "risk", label: "risk", col: [255, 92, 122] },
     { id: "memory", label: "memory", col: [245, 184, 75] }, { id: "news", label: "news", col: [160, 120, 255] },
-    { id: "social", label: "social media", col: [80, 230, 140] }, { id: "politics", label: "politics", col: [255, 150, 90] }];
+    { id: "social", label: "social media", col: [80, 230, 140] }, { id: "politics", label: "politics", col: [255, 150, 90] },
+    { id: "agents", label: "agents", col: [190, 240, 255] }];
   let W = 0, H = 0, stars = [], gal = [], spider = { x: 0, y: 0, tx: 0, ty: 0, target: 0, dwell: 0, legs: [] }, tags = [], logLines = [], events = 0, visible = true, last = 0;
   const rnd = (a, b) => a + Math.random() * (b - a);
 
@@ -47,8 +48,8 @@
     [mid, mx2] = off(fw, fh); starfield(mx2, fw, fh, mobile ? 120 : 260, 2.2);
     const ng = mobile ? 26 : 60;
     for (let i = 0; i < ng; i++) { const d = Math.pow(Math.random(), 2); bgGalaxy(mx2, rnd(0, fw), rnd(0, fh), 6 + d * (mobile ? 26 : 38), Math.random() < .62 ? "s" : "e"); }
-    const pos = mobile ? [[.2, .14], [.72, .12], [.25, .38], [.8, .36], [.2, .63], [.75, .6], [.3, .87], [.75, .87]]
-      : [[.14, .2], [.42, .14], [.72, .16], [.86, .46], [.16, .56], [.5, .5], [.3, .84], [.72, .82]];
+    const pos = mobile ? [[.2, .14], [.72, .12], [.25, .38], [.8, .36], [.2, .63], [.75, .6], [.3, .87], [.75, .87], [.5, .5]]
+      : [[.14, .2], [.42, .14], [.72, .16], [.86, .46], [.16, .56], [.5, .5], [.3, .84], [.72, .82], [.88, .14]];
     const n = mobile ? 90 : 220;
     gal = DOMAINS.map((d, i) => ({ ...d, x: pos[i][0] * W, y: pos[i][1] * H, r: Math.min(W, H) * (mobile ? .12 : .13), heat: .3, info: "", rot: rnd(0, 6), tilt: rnd(.55, .85),
       dots: Array.from({ length: n }, (_, k) => { const arm = k % 2 * Math.PI, t = Math.random() * 2.4, rr = Math.min(1, .08 * Math.exp(.9 * t)), core = Math.random() < .3;
@@ -76,6 +77,8 @@
     const S = L.social;
     if (id === "social" && S) { (S.hot_tickers || []).slice(0, 3).forEach(t => out.push(`reddit · $${t}`)); (S.x || []).slice(0, 3).forEach(x => out.push(`X · @${x.user}`));
       if (S.tone) out.push(`crowd · ${S.tone.crypto > .1 ? "greedy" : S.tone.crypto < -.1 ? "fearful" : "mixed"}`); }
+    const C = L.council;
+    if (id === "agents" && C && C.lines) C.lines.filter(l => l.agent !== "Mirko").forEach(l => out.push(`${l.agent} · ${l.text.split(" ").slice(0, 4).join(" ")}…`));
     if (id === "politics" && S) { ((S.reddit || {}).politics || []).slice(0, 3).forEach(h => out.push(`politics · ${h.split(" ").slice(0, 3).join(" ")}…`)); }
     return out.length ? out : [`${id} · scanning`];
   }
@@ -100,7 +103,9 @@
     tags = tags.slice(-6);
     const w = document.getElementById("wolf"), dr = document.getElementById("dream");  // his breathing glow follows the scan
     if (w) w.style.setProperty("--dream", (0.25 + g.heat * 0.75).toFixed(2));
-    pushLog(`read  ${g.label.padEnd(11)} ${pick[0] || ""}`);
+    const SRC = { market: "binance+coingecko", smart: "hyperliquid+dex", kols: "coingecko trending", risk: "own journal", memory: "own memory",
+      news: "rss feeds", social: "reddit+x", politics: "r/politics+worldnews", agents: "agent council" };
+    pushLog(`${g.label.padEnd(12)} ← ${SRC[g.id] || "scan"} · ${pick[0] || ""}`);
   }
 
   function draw(t) {
@@ -141,6 +146,33 @@
 
   // ── mini panels ──
   const radar = document.getElementById("radar"), gauge = document.getElementById("gauge");
+  let convIdx = 0;
+  function convList() {
+    const L = window.LEDGER || {}, m = L.market && L.market.regime ? L.market : null, md = L.mood || {}, out = [];
+    if (m) {
+      const reg = m.regime;
+      let c = .5 + Math.max(-1, Math.min(1, Math.abs(reg.score) / 4)) * .25 + ((md.confidence ?? .5) - .5) * .5 - (md.tilt || 0) * .2;
+      out.push({ k: "MARKET", v: Math.round(Math.max(.05, Math.min(.98, c)) * 100), tone: reg.key === "risk_on" ? "bull" : reg.key === "risk_off" ? "bear" : "neutral",
+        d: `${reg.label} · ${reg.key === "risk_off" ? "defensive size" : reg.key === "risk_on" ? "full size" : "normal size"}` });
+      const order = ["BTC", "ETH", "SOL"];
+      (m.assets || []).sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name)).forEach(a => out.push({ k: a.name, v: Math.round(Math.max(5, Math.min(95, 50 + a.score * 8))), tone: a.tone,
+        d: a.tone === "bull" ? "trending up, buying dips" : a.tone === "bear" ? "weak, selling rips" : "range, waiting for a breakout" }));
+      (m.stocks_conv || []).forEach(x => out.push({ k: x.name, v: x.conv, tone: x.tone, d: `${x.note} · 1M ${x.chg1m > 0 ? "+" : ""}${x.chg1m}%` }));
+    }
+    return out;
+  }
+  function drawConv() {
+    const items = convList(); if (!items.length) return;
+    const it = items[convIdx % items.length], conv = it.v / 100;
+    const col = it.v >= 65 ? "#22d39b" : it.v >= 45 ? "#f5b84b" : "#ff5c7a";
+    const c = gauge.getContext("2d"), w = gauge.width = gauge.clientWidth * DPR, h = gauge.height = gauge.clientHeight * DPR, cx = w / 2, cy = h * .9, R = Math.min(w / 2, h) * .78;
+    c.clearRect(0, 0, w, h); c.lineWidth = 7 * DPR; c.lineCap = "round"; c.strokeStyle = "#1a2230"; c.beginPath(); c.arc(cx, cy, R, Math.PI, 0); c.stroke();
+    c.strokeStyle = col; c.shadowColor = col; c.shadowBlur = 8 * DPR; c.beginPath(); c.arc(cx, cy, R, Math.PI, Math.PI + Math.PI * conv); c.stroke();
+    const v = document.getElementById("gauge-v"); v.textContent = it.v; v.style.color = col;
+    const a = document.getElementById("conv-asset"); if (a) { a.textContent = it.k; a.style.color = col; }
+    const d = document.getElementById("conv-d"); if (d) d.textContent = it.d;
+  }
+  setInterval(() => { if (!document.hidden && gauge) { convIdx++; try { drawConv(); } catch (e) {} } }, 5000);
   function minis() {
     if (!ready) return;
     const L = window.LEDGER || {}, m = L.market && L.market.regime && Array.isArray(L.market.assets) ? L.market : null;
@@ -154,21 +186,7 @@
       while (cells.length < 40) cells.push(vals.length ? vals[cells.length % vals.length] * (0.6 + 0.4 * Math.random()) : (Math.random() - .5) * .3);
       heatEl.innerHTML = cells.map(v => `<i style="background:${v >= 0 ? `rgba(34,211,155,${.15 + Math.min(1, v) * .8})` : `rgba(255,92,122,${.15 + Math.min(1, -v) * .8})`}"></i>`).join("");
       document.getElementById("heat-n").textContent = m ? `${vals.length} signals` : "—"; }
-    if (gauge) {
-      const reg = m ? m.regime : null, md = L.mood || {};
-      let conv = .5 + (reg ? Math.max(-1, Math.min(1, Math.abs(reg.score) / 4)) * .25 : 0) + ((md.confidence ?? .5) - .5) * .5 - (md.tilt || 0) * .2;
-      conv = Math.max(.05, Math.min(.98, conv));
-      const c = gauge.getContext("2d"), w = gauge.width = gauge.clientWidth * DPR, h = gauge.height = gauge.clientHeight * DPR, cx = w / 2, cy = h * .9, R = Math.min(w / 2, h) * .78;
-      c.clearRect(0, 0, w, h); c.lineWidth = 7 * DPR; c.lineCap = "round"; c.strokeStyle = "#1a2230"; c.beginPath(); c.arc(cx, cy, R, Math.PI, 0); c.stroke();
-      c.strokeStyle = conv > .6 ? "#22d39b" : conv < .4 ? "#ff5c7a" : "#f5b84b"; c.beginPath(); c.arc(cx, cy, R, Math.PI, Math.PI + Math.PI * conv); c.stroke();
-      document.getElementById("gauge-v").textContent = `${Math.round(conv * 100)}`;
-      const d = document.getElementById("conv-d");
-      if (d && m && m.assets && m.assets.length) {
-        const a = [...m.assets].sort((x, y) => Math.abs(y.score) - Math.abs(x.score))[0];
-        const what = a.tone === "bull" ? `${a.name} trending up, buying dips` : a.tone === "bear" ? `${a.name} weak, selling rips` : `${a.name} range, waiting for a breakout`;
-        d.textContent = `${what} · ${m.regime.key === "risk_off" ? "defensive size" : m.regime.key === "risk_on" ? "full size" : "normal size"}`;
-      }
-    }
+    if (gauge) drawConv();
     const rate = document.getElementById("scan-rate"); while (evts.length && evts[0] < Date.now() - 60000) evts.shift(); if (rate) rate.textContent = `${evts.length} reads/min`;
     gal.forEach(g => { g.heat = heat(g); });
   }

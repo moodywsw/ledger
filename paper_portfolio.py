@@ -562,7 +562,7 @@ def tick(now: float | None = None, force=False):
     return s
 
 
-def commentary(s: dict) -> dict:
+def commentary(s: dict, include_poly: bool = False) -> dict:
     """Mirko's own words on why he holds what he holds."""
     sp, pe, st = (s["sleeves"][k] for k in ("spot", "perps", "stocks"))
     intro = ("Sniper with a long memory: I hold a patient core and hunt a few sharp entries around it. "
@@ -571,16 +571,18 @@ def commentary(s: dict) -> dict:
              "Perps: breakout and breakdown snipes plus level-based ideas, max 3x, tight stops, half off at 1R and the stop goes to breakeven. "
              "Penny stocks: catalyst snipes on volume spikes with 8% stops, and a few patient trend holds. "
              "Discipline first: cash is a position, I never chase a candle I didn't see build, and every trade has an exit before it has an entry. "
-             "Polymarket: I bet small on real-world questions only where my probability clearly differs from the crowd's. "
              "My daily reading (fund filings, central banks, policy, tech) tilts how much risk I take.")
-    return {"intro": intro, "sleeves": {k: s["sleeves"][k].get("note", "") for k in s["sleeves"]},
-            "positions": [{"sleeve": k, "sym": p["sym"] if p.get("kind") == "poly" else sym, "why": p.get("why", "")} for k in s["sleeves"] for sym, p in s["sleeves"][k]["positions"].items()]}
+    ks = [k for k in s["sleeves"] if include_poly or k != "poly"]
+    return {"intro": intro, "sleeves": {k: s["sleeves"][k].get("note", "") for k in ks},
+            "positions": [{"sleeve": k, "sym": p["sym"] if p.get("kind") == "poly" else sym, "why": p.get("why", "")} for k in ks for sym, p in s["sleeves"][k]["positions"].items()]}
 
 
-def public_view() -> dict:
+def public_view(include_poly: bool = False) -> dict:
     s = load(); fx = s.get("fx") or 0.86
     sleeves = {}
     for name, sl in s["sleeves"].items():
+        if name == "poly" and not include_poly:
+            continue   # Polymarket lives on the Predictions tab
         pos = []
         for sym, p in sl["positions"].items():
             v = pos_value(p, None, fx)
@@ -593,11 +595,12 @@ def public_view() -> dict:
         sleeves[name] = {"value_eur": round(val, 2), "cash_eur": round(sl["cash"], 2), "pnl_pct": round((val / sl["start"] - 1) * 100, 2),
                          "positions": sorted(pos, key=lambda x: -x["value_eur"]), "last_decision": sl["last_decision"], "note": sl.get("note", "")}
     tot = sum(v["value_eur"] for v in sleeves.values())
+    start_tot = sum(s["sleeves"][k]["start"] for k in sleeves)
     hist = s["history"][-500:]
     return {"simulated": True, "currency": "EUR", "created": s["created"], "total_eur": round(tot, 2),
-            "pnl_pct": round((tot / sum(sl["start"] for sl in s["sleeves"].values()) - 1) * 100, 2), "start_eur": sum(sl["start"] for sl in s["sleeves"].values()), "sleeves": sleeves,
-            "history": [{"t": h["ts"], "v": h["total"]} for h in hist[:: max(1, len(hist) // 200)]],
-            "trades": list(reversed(s["trades"][-60:])), "commentary": commentary(s)}
+            "pnl_pct": round((tot / start_tot - 1) * 100, 2), "start_eur": start_tot, "sleeves": sleeves,
+            "history": [{"t": h["ts"], "v": round(sum(h.get(k, 0) for k in sleeves), 2)} for h in hist[:: max(1, len(hist) // 200)]],
+            "trades": [t for t in reversed(s["trades"][-80:]) if include_poly or t.get("sleeve") != "poly"][:60], "commentary": commentary(s, include_poly)}
 
 
 _live = {"ts": 0.0, "data": None}

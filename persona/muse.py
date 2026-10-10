@@ -9,7 +9,7 @@ import requests
 
 from . import mood as moodmod
 
-TOPICS = ["social", "politics_social", "reading", "world", "world_markets", "market_read", "market", "culture", "narratives", "kols", "macro", "ai", "bot_life", "lessons", "headline", "trending"]
+TOPICS = ["council", "social", "politics_social", "reading", "world", "world_markets", "market_read", "market", "culture", "narratives", "kols", "macro", "ai", "bot_life", "lessons", "headline", "trending"]
 RSS = [u.strip() for u in os.environ.get("PERSONA_RSS_FEEDS",
        "https://www.coindesk.com/arc/outboundfeeds/rss/,https://decrypt.co/feed,https://www.theblock.co/rss.xml").split(",") if u.strip()]
 UA = {"User-Agent": "LedgerBot/1.0 (+persona)"}
@@ -75,7 +75,26 @@ def market_read() -> dict | None:
 
 def gather() -> dict:
     return {"fng": fear_greed(), "trending": trending(), "headlines": headlines(), "market_read": market_read(),
-            "world": headlines(8, WORLD_RSS), "reading": _reading(), **_social()}
+            "world": headlines(8, WORLD_RSS), "reading": _reading(), **_social(), "council": _council()}
+
+
+def _council_vals(lines: list, rng) -> dict:
+    others = [l for l in lines if l.get("agent") != "Mirko"]
+    pick = rng.sample(others, min(2, len(others))) if others else []
+    fmt = lambda l: f"{l['emoji']} {l['agent']}: \"{l['text']}\""
+    me = next((l["text"].replace("Heard you all. ", "") for l in lines if l.get("agent") == "Mirko"), "patience.")
+    return {"c1": fmt(pick[0]) if pick else "", "c2": fmt(pick[1]) if len(pick) > 1 else "", "cm": me}
+
+
+def _council() -> list:
+    try:
+        import council
+        d = council.cached() or {}
+        if time.time() - d.get("ts", 0) > 4 * 3600:
+            return []
+        return d.get("lines") or []
+    except Exception:
+        return []
 
 
 def _social() -> dict:
@@ -115,6 +134,10 @@ def pick_world(ctx: dict, rng=random) -> tuple:
 
 
 T = {
+    "council": [
+        "Agent council just met. {c1} {c2} My call: {cm}",
+        "Debated the tape with my agents. {c1} {cm}",
+    ],
     "social": [
         "Scrolled the timelines so you don't have to. {sb}",
         "Reddit thread of the hour: \"{sp}\". {sb}",
@@ -219,6 +242,8 @@ def choose_topic(recent: list, ctx: dict, rng=random) -> str:
         avail = [t for t in avail if t not in ("world", "world_markets")]
     elif not any(market_hook(h) for h in ctx.get("world") or []):
         avail = [t for t in avail if t != "world_markets"]
+    if not ctx.get("council"):
+        avail = [t for t in avail if t != "council"]
     if not ctx.get("social_beliefs"):
         avail = [t for t in avail if t != "social"]
     if not ctx.get("politics_posts"):
@@ -242,6 +267,7 @@ def template(topic: str, ctx: dict, recent_texts: list, rng=random) -> str:
             "fng_take": _fng_take(fng.get("value")), "trend": ", ".join(ctx.get("trending") or [])[:90],
             "hl": rng.choice(hl), "belief": rng.choice(ctx.get("beliefs") or ["size small, think big."]),
             "lessons": ctx.get("lessons_count", 0), "rd": rng.choice(ctx.get("reading") or ["patience pays."]),
+            **_council_vals(ctx.get("council") or [], rng),
             "sb": rng.choice(ctx.get("social_beliefs") or ["the crowd is mixed."]), "sp": rng.choice(ctx.get("social_posts") or ["gm"])[:120],
             "pp": rng.choice(ctx.get("politics_posts") or ["politics as usual"])[:120], "ht": ", ".join((ctx.get("hot_tickers") or ["none"])[:4]), **_mr_vals(ctx.get("market_read")), "mood": moodmod.label(m), "em": moodmod.emoji(m)}
     opts = T.get(topic, T["culture"])

@@ -463,6 +463,20 @@ def api_market_thoughts():
     return jsonify(dict(_public(d), ready=True))
 
 
+@app.route("/api/predictions")
+def api_predictions():
+    """Mirko's PAPER predictions: sports (ESPN data) + Polymarket. Nothing real is ever placed."""
+    import sports, paper_portfolio
+    pv = paper_portfolio.public_view(include_poly=True)
+    return jsonify(_public({"paper": True, "sports": sports.public_view(), "polymarket": pv["sleeves"].get("poly")}))
+
+
+@app.route("/api/council")
+def api_council():
+    import council
+    return jsonify(_public(council.public_view()))
+
+
 @app.route("/api/social")
 def api_social():
     import social

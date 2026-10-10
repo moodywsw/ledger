@@ -6,6 +6,8 @@ const $ = id => document.getElementById(id);
 function esc(s) { const d = document.createElement("div"); d.textContent = s ?? ""; return d.innerHTML; }
 function num(v, d = 4) { return (v === null || v === undefined || isNaN(v)) ? "—" : Number(v).toFixed(d); }
 function sol(v, d = 4) { return v == null ? "—" : `${v > 0 ? "+" : ""}${num(v, d)} SOL`; }
+const solPx = () => { const a = ((LEDGER.market || {}).assets || []).find(x => x.name === "SOL"); return a ? a.price : null; };
+function usdc(vSol, signed = true) { const p = solPx(); return vSol == null || !p ? "—" : usd(vSol * p, signed); }
 function solPlain(v, d = 3) { return v == null ? "—" : `${num(v, d)} SOL`; }
 function usd(v, signed = false) { if (v == null) return "—"; const s = signed && v > 0 ? "+" : ""; return `${s}${v < 0 ? "-" : ""}$${Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
 function pct(v) { return v == null ? "—" : `${v > 0 ? "+" : ""}${(v * 100).toFixed(1)}%`; }
@@ -24,7 +26,7 @@ function showView(v) {
   document.querySelectorAll(".view").forEach(x => x.classList.toggle("hidden", x.id !== `view-${v}`));
   document.querySelectorAll(".nav-btn").forEach(b => b.classList.toggle("active", b.dataset.view === v));
   if (location.hash !== `#${v}`) history.replaceState(null, "", v === "dash" ? location.pathname : `#${v}`);
-  if (v === "market") loadMarket(); if (v === "portfolio") loadPortfolio(); if (v === "owner") ownerOpen();
+  if (v === "market") loadMarket(); if (v === "portfolio") loadPortfolio(); if (v === "predictions") loadPredictions(); if (v === "owner") ownerOpen();
   window.dispatchEvent(new Event("ledger:view"));
 }
 $("nav").addEventListener("click", e => { const b = e.target.closest(".nav-btn"); if (b) showView(b.dataset.view); });
@@ -65,7 +67,7 @@ function renderEquity(points) {
     const i = Math.max(0, Math.min(eqPts.length - 1, Math.round((cx / r.width) * (eqPts.length - 1)))), p = eqPts[i], g = el._geo;
     const X = g.x(i), Y = g.y(p.v); const l = el.querySelector("#eq-x"), d = el.querySelector("#eq-dot");
     l.setAttribute("x1", X); l.setAttribute("x2", X); l.setAttribute("opacity", ".6"); d.setAttribute("cx", X); d.setAttribute("cy", Y); d.setAttribute("opacity", "1");
-    tip.innerHTML = `<b class="${cls(p.v)}">${sol(p.v, 3)}</b><span>${p.t.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>`;
+    tip.innerHTML = `<b class="${cls(p.v)}">${usdc(p.v)}</b><span>${p.t.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>`;
     tip.style.opacity = 1; tip.style.left = `${Math.min(r.width - 110, Math.max(0, (X / g.W) * r.width - 55))}px`; };
   const out = () => { tip.style.opacity = 0; el.querySelectorAll("#eq-x,#eq-dot").forEach(n => n.setAttribute("opacity", "0")); };
   el.addEventListener("mousemove", move); el.addEventListener("touchmove", move, { passive: true }); el.addEventListener("touchstart", move, { passive: true });
@@ -74,7 +76,6 @@ function renderEquity(points) {
 
 // ── Renderers ───────────────────────────────────────────────────────
 function renderState(state) {
-  setVal("stat-balance", solPlain(state.balance_sol, 2));
   const ps = state.open_positions || [];
   $("stat-open-count").textContent = ps.length; const co = $("chip-open"); if (co) co.textContent = `${ps.length} open`;
   $("positions-body").innerHTML = ps.length ? ps.map(p => `
@@ -84,25 +85,25 @@ function renderState(state) {
       <div class="rows mono">
         <span>Entry</span><span>$${price(p.avg_entry)}</span>
         <span>Now</span><span>$${price(p.current_price)}</span>
-        <span>Size</span><span>${solPlain(p.size_sol, 3)}</span>
-        <span>PnL</span><span class="${cls(p.pnl_current_sol)}">${sol(p.pnl_current_sol)}</span>
+        <span>Size</span><span>${usdc(p.size_sol, false)}</span>
+        <span>PnL</span><span class="${cls(p.pnl_current_sol)}">${usdc(p.pnl_current_sol)}</span>
         <span>Opened</span><span>${p.opened_at ? ago(p.opened_at) : "—"}</span>
       </div>
     </div>`).join("") : empty("No open positions — waiting for a signal.");
 }
 function renderRealState(r) {
   const b = $("real-armed-badge"); if (b) b.textContent = r.armed ? "REAL MONEY · ARMED" : "REAL · UNARMED"; if (b) b.className = `chip ${r.armed ? "real" : "warn"}`;
-  setVal("stat-real-balance", usd(r.balance_usdc)); setVal("stat-real-gas", solPlain(r.balance_sol, 3));
+  setVal("stat-real-balance", usd(r.balance_usdc));
   setVal("stat-real-pnl", usd(r.realized_pnl_usdc, true), cls(r.realized_pnl_usdc)); setVal("stat-exposure", usd(r.exposure_usdc));
 }
 function renderOverview(o) {
   LEDGER.overview = o;
-  setVal("pnl-today", sol(o.pnl_sol.today, 3), cls(o.pnl_sol.today)); setVal("pnl-7d", sol(o.pnl_sol.d7, 3), cls(o.pnl_sol.d7)); setVal("pnl-all", sol(o.pnl_sol.all, 3), cls(o.pnl_sol.all));
+  setVal("pnl-today", usdc(o.pnl_sol.today), cls(o.pnl_sol.today)); setVal("pnl-7d", usdc(o.pnl_sol.d7), cls(o.pnl_sol.d7)); setVal("pnl-all", usdc(o.pnl_sol.all), cls(o.pnl_sol.all));
   const tot = o.wins + o.losses; $("winloss").textContent = tot ? `${o.wins} / ${o.losses} · ${Math.round(o.wins / tot * 100)}%` : "—";
   renderEquity(o.equity);
   $("closed-body").innerHTML = o.closed_trades.length ? o.closed_trades.slice(0, 12).map(t => `
     <div class="row"><div class="l"><div class="t">${esc(t.symbol)} <span class="muted">${t.action === "partial_close" ? "partial" : ""}</span></div>
-      <div class="m">${esc(t.reason || "exit")} · ${ago(t.at)}</div></div><div class="mono ${cls(t.pnl_sol)}">${sol(t.pnl_sol)}</div></div>`).join("") : empty("No closed trades yet.");
+      <div class="m">${esc(t.reason || "exit")} · ${ago(t.at)}</div></div><div class="mono ${cls(t.pnl_sol)}">${usdc(t.pnl_sol)}</div></div>`).join("") : empty("No closed trades yet.");
 }
 
 // ── Mirko's thoughts (persona feed) ────────────────────────────────
@@ -114,10 +115,13 @@ function renderMind(f) {
   LEDGER.mood = f.mood; LEDGER.posts = f.posts || [];
   pill.textContent = `${f.mood.emoji || ""} ${f.mood.label || ""}`.trim();
   const ps = f.posts || [];
-  body.innerHTML = ps.length ? ps.slice(0, 12).map((p, i) => { const [ic, lb] = KIND[p.kind] || ["💬", p.kind];
-    return `<div class="thought ${i === 0 ? "latest" : ""} k-${esc(p.kind)}"><div class="th-meta"><span>${ic} ${esc(p.topic ? p.topic.replace("_", " ") : lb)}</span><span>${ago(new Date(p.ts * 1000))}</span></div><div class="th-text">${esc(p.text)}</div></div>`; }).join("")
+  const list = ps.slice(0, 30).reverse();   // chat-like: oldest at top, newest at the bottom
+  const newest = list.length ? list[list.length - 1].ts : 0, atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+  body.innerHTML = list.length ? list.map((p, i) => { const [ic, lb] = KIND[p.kind] || ["💬", p.kind];
+    return `<div class="thought ${i === list.length - 1 ? "latest" : ""} k-${esc(p.kind)}"><div class="th-meta"><span class="th-tag">${ic} ${esc(p.topic ? p.topic.replace(/_/g, " ") : lb)}</span><span class="th-time">${ago(new Date(p.ts * 1000))}</span></div><div class="th-text">${esc(p.text)}</div></div>`; }).join("")
     : (f.beliefs || []).length ? f.beliefs.map(b => `<div class="thought"><div class="th-meta"><span>🧭 belief</span></div><div class="th-text">${esc(b)}</div></div>`).join("")
     : empty("Mirko is quiet for now — first thoughts land within a few hours.");
+  if (newest !== LEDGER._lastPost || atBottom) { LEDGER._lastPost = newest; requestAnimationFrame(() => { body.scrollTop = body.scrollHeight; }); }
 }
 
 function setConn(ok) { $("conn-dot").className = `dot ${ok ? "ok" : "err"}`; $("conn-status").textContent = ok ? "Live" : "Unreachable";
@@ -133,6 +137,7 @@ async function pollOnce() {
     fetchJson("/api/market_thoughts").then(m => { if (m.ready) LEDGER.market = m; }),
   ]);
   setConn(res.slice(0, 2).some(r => r.status === "fulfilled"));
+  if (!LEDGER.councilTs || Date.now() - LEDGER.councilTs > 600_000) { LEDGER.councilTs = Date.now(); fetchJson("/api/council").then(x => { LEDGER.council = x; }).catch(() => {}); }
   if (!LEDGER.socialTs || Date.now() - LEDGER.socialTs > 600_000) { LEDGER.socialTs = Date.now(); fetchJson("/api/social").then(x => { LEDGER.social = x; }).catch(() => {}); }
   window.dispatchEvent(new Event("ledger:data"));
 }
@@ -152,17 +157,23 @@ async function loadMarket() {
   $("mt-scale").textContent = m.size_scale < 1 ? `memecoin size ×${m.size_scale}` : "full size allowed";
   $("mt-stance").className = `chip ${m.regime.key === "risk_off" ? "warn" : m.regime.key === "risk_on" ? "real" : ""}`;
   if (m.fng) { $("fng-v").textContent = m.fng.v; $("fng-l").textContent = `${m.fng.cls} · yesterday ${m.fng.prev}`; drawFng(m.fng.v); }
-  const idea = i => `<div class="idea ${i.side === "Long" ? "long" : "short"}">
-      <div class="i-h"><b>${i.side} ${esc(i.name)}</b><span class="cn">${esc(i.venue)}</span>${i.tier ? `<span class="tier ${i.tier}">${i.tier} cap</span>` : ""}${i.chain ? `<span class="cn">${esc(i.chain)}</span>` : ""}<span class="mono muted">R:R ${i.rr ?? "—"}</span></div>
-      <div class="i-g mono"><span>Entry</span><b>${fp(i.entry_lo)}–${fp(i.entry_hi)}</b><span>Stop</span><b class="neg">${fp(i.stop)}</b><span>Target</span><b class="pos">${fp(i.t1)}${i.t2 ? ` → ${fp(i.t2)}` : ""}</b>${i.mcap ? `<span>Mcap</span><b>${big(i.mcap)}</b>` : ""}</div>
-      <div class="muted">${esc(i.why)}${i.spec ? " · <b>speculative, small size</b>" : ""}</div></div>`;
+  const riskEmo = r => r == null ? "" : r <= 3 ? "🟢" : r <= 6 ? "🟡" : r <= 8 ? "🟠" : "🔴";
+  const riskOf = i => i.risk ?? Math.max(0, Math.min(10, ({ mid: 4, low: 7, micro: 8 }[i.tier] ?? 2) + (i.venue === "Perp" ? 1 : 0) + ((i.rr || 0) < 1.5 ? 1 : 0) + (i.spec ? 1 : 0)));
+  const idea = i => (i = { ...i, risk: riskOf(i) }, `<article class="ic ${i.side === "Long" ? "long" : "short"}">
+      <header><span class="ic-tk">${esc(i.name)}</span><span class="ic-side">${i.side.toUpperCase()}</span><span class="ic-venue">${esc(i.venue)}${i.chain ? " · " + esc(i.chain) : ""}</span>
+        <span class="ic-risk" title="Risk score 0-10">${riskEmo(i.risk)} ${i.risk ?? "–"}<small>/10</small></span></header>
+      <dl class="ic-kv mono"><dt>Entry</dt><dd>${fp(i.entry_lo)} – ${fp(i.entry_hi)}</dd><dt>Stop</dt><dd class="neg">${fp(i.stop)}</dd>
+        <dt>Target</dt><dd class="pos">${fp(i.t1)}${i.t2 ? ` → ${fp(i.t2)}` : ""}</dd><dt>R:R</dt><dd>${i.rr ?? "—"}</dd>${i.mcap ? `<dt>Mcap</dt><dd>${big(i.mcap)}</dd>` : ""}</dl>
+      <p class="ic-why">${esc(i.why)}${i.spec ? " · speculative, small size" : ""}</p></article>`);
   const col = (xs, msg) => xs.length ? xs.map(idea).join("") : `<div class="empty sm">${msg}</div>`;
   $("mt-maj").innerHTML = col(m.trade_ideas || [], "No clean setup on the majors.");
   $("mt-mid").innerHTML = col(m.mid_caps || [], "No mid cap is accumulating cleanly.");
   $("mt-low").innerHTML = col(m.low_caps || [], "No low cap passes the filters.");
   $("mt-micro").innerHTML = col(m.micro_caps || [], "No high-conviction micro cap today.");
   const T = m.trenches;
-  $("tr-mood").textContent = T ? T.mood : "";
+  $("tr-mood").textContent = T ? T.mood : "—";
+  const heat = !T ? "cold" : /fire|tailwind/i.test(T.mood) ? "hot" : /selective|choppy/i.test(T.mood) ? "warm" : "cold";
+  $("trench-box").className = `trench-in heat-${heat}`;
   const li = xs => xs && xs.length ? `<ul>${xs.map(x => typeof x === "string" ? `<li><b>${esc(x)}</b></li>` : `<li><b>${esc(x.sym)}</b> <span class="cn">${esc(x.chain || "")}</span><br>${esc(x.why)}</li>`).join("")}</ul>` : `<div class="muted">Nothing convincing.</div>`;
   $("mt-trench").innerHTML = T ? `<p class="tr-take">${esc(T.take)}</p><div class="tr-grid">
       <div class="tr-col"><h4>🚀 Could pump</h4>${li(T.could_pump)}</div><div class="tr-col"><h4>🩸 Could dump</h4>${li(T.could_dump)}</div>
@@ -194,7 +205,7 @@ async function loadMarket() {
     return `<div class="row col"><div class="hl-top"><b>${c}</b><span class="mono muted">${h.longs}L / ${h.shorts}S · net ${big(h.long_ntl - h.short_ntl).replace("$-", "-$")}</span></div>
       <div class="lsbar"><i style="width:${Math.round(ls * 100)}%"></i></div>
       <div class="mono muted sm">${Math.round(ls * 100)}% long by notional · avg long ${fp(h.long_entry)} · avg short ${fp(h.short_entry)}</div></div>`; }).join("") : empty("Hyperliquid data unavailable this round.");
-  $("mt-deriv").innerHTML = ""
+  if ($("mt-deriv")) $("mt-deriv").innerHTML = ""
     + (m.coinbase_premium != null ? `<div class="row"><div class="l"><div class="t">Coinbase premium</div><div class="m mono ${cls(m.coinbase_premium)}">${pc(m.coinbase_premium, 3)}</div></div></div>` : "")
     + (m.global ? `<div class="row"><div class="l"><div class="t">Total market</div><div class="m mono">${big(m.global.mcap)} · ${pc(m.global.mcap_chg)} · BTC dom ${m.global.btc_dom.toFixed(1)}%</div></div></div>` : "");
   $("mt-dex").innerHTML = (m.dex_flows || []).length ? m.dex_flows.map(d => `<div class="row"><div class="l"><div class="t">${esc(d.pair)} <span class="cn">${esc(d.chain)}</span></div>
@@ -245,16 +256,17 @@ async function loadPortfolio() {
     $("pf-chart").innerHTML = `<svg viewBox="0 0 ${Wd} ${Hh}" preserveAspectRatio="none"><path d="${d}" fill="none" stroke="${col}" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>`; }
   else $("pf-chart").innerHTML = `<div class="empty sm">The chart starts with the next 15-minute snapshot.</div>`;
   const book = b => b ? `<span class="tier">${esc(b)}</span>` : "";
-  $("pf-sleeves").innerHTML = sl.map(([k, v]) => `<div class="card sleeve collapsible" data-key="pf-${k}" data-fold="1">
+  $("pf-sleeves").innerHTML = sl.map(([k, v]) => `<div class="card sleeve collapsible" data-key="pf-${k}" data-fold="0">
     <div class="card-head"><div><div class="label"><span class="sw" style="background:${SLV[k][1]}"></span>${SLV[k][0]}</div>
       <div class="big mono">${eur(v.value_eur)} <span class="${cls(v.pnl_pct)}" style="font-size:14px">${pc(v.pnl_pct, 2)}</span></div>
       <div class="muted">cash ${eur(v.cash_eur)} · ${v.positions.length} positions${v.last_decision ? ` · decided ${ago(new Date(v.last_decision * 1000))}` : ""}</div></div>
       <button class="fold" aria-label="Expand">+</button></div>
-    <div class="fold-body"><div class="list">${v.positions.length ? v.positions.map(p => `<div class="row col"><div class="pfpos">
-      <div><b>${esc(p.title || p.sym)}</b> ${book(p.book)}${p.kind === "poly" ? ` <span class="tier ${p.side === "YES" ? "mid" : "low"}">${esc(p.side)}</span>` : p.side !== "Spot" ? ` <span class="cn">${esc(p.side)} ${p.lev}x</span>` : ""}</div>
-      <div class="mono" id="lv-${k}-${esc(p.sym)}"><span class="${cls(p.pnl_pct)}">${pc(p.pnl_pct, 1)}</span> · ${eur(p.value_eur)}</div>
-      <div class="mono muted sm">${p.kind === "poly" ? `${esc(p.side)} @ ${Math.round(p.entry_usd * 100)}¢ · now <span id="lp-${k}-${esc(p.sym)}">${Math.round((p.last_usd || 0) * 100)}¢</span> · Mirko ${Math.round((p.mirko_p || 0) * 100)}%${p.end ? ` · resolves ${new Date(p.end).toLocaleDateString()}` : ""}` : `entry $${price(p.entry_usd)} · now <span id="lp-${k}-${esc(p.sym)}">$${price(p.last_usd)}</span>`}${p.stop_usd ? ` · stop $${price(p.stop_usd)}` : ""}${p.target_usd ? ` · target $${price(p.target_usd)}` : ""}</div><div></div>
-      <div class="why">💭 ${esc(p.why)}</div></div></div>`).join("") : empty("Flat. Waiting for a setup.")}</div>
+    <div class="fold-body"><div class="pf-list">${v.positions.length ? v.positions.map(p => `<article class="pp-card">
+      <header><div class="pp-name"><b>${esc(p.sym)}</b>${book(p.book)}${p.side !== "Spot" ? `<span class="tier">${esc(p.side)} ${p.lev}x</span>` : ""}</div>
+        <div class="pp-val mono" id="lv-${k}-${esc(p.sym)}"><span class="${cls(p.pnl_pct)}">${pc(p.pnl_pct, 1)}</span> · ${eur(p.value_eur)}</div></header>
+      <dl class="kv mono"><dt>Entry</dt><dd>$${price(p.entry_usd)}</dd><dt>Now</dt><dd id="lp-${k}-${esc(p.sym)}">$${price(p.last_usd)}</dd>
+        ${p.stop_usd ? `<dt>Stop</dt><dd class="neg">$${price(p.stop_usd)}</dd>` : ""}${p.target_usd ? `<dt>Target</dt><dd class="pos">$${price(p.target_usd)}</dd>` : ""}</dl>
+      <p class="pp-why">${esc(p.why)}</p></article>`).join("") : empty("Flat. Waiting for a setup.")}</div>
       ${v.note ? `<div class="muted sm" style="margin-top:8px">${esc(v.note)}</div>` : ""}</div></div>`).join("");
   initFold($("pf-sleeves"));
   pfLive();
@@ -276,6 +288,47 @@ const pfOpen = () => !document.hidden && !$("view-portfolio").classList.contains
 setInterval(() => { if (pfOpen()) pfLive(); }, 20_000);
 setInterval(() => { if (pfOpen()) loadPortfolio(); }, 300_000);
 
+// ── Predictions (paper) ─────────────────────────────────────────────
+const lis = iso => new Date(iso).toLocaleString("en-GB", { timeZone: "Europe/Lisbon", weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+const SPORT = { soccer: "⚽", nba: "🏀", ufc: "🥊" };
+const pctp = p => `${Math.round(p * 100)}%`;
+const res = r => r === "won" ? '<span class="res won">WON</span>' : r === "lost" ? '<span class="res lost">LOST</span>' : r === "void" ? '<span class="res void">VOID</span>' : "";
+function betCard(b, settled) {
+  const m = b.main;
+  return `<article class="bet">
+    <header><span class="bet-lg">${SPORT[b.sport] || "🎯"} ${esc(b.league)}</span><span class="bet-ko mono">${settled ? esc(b.final || "") : lis(b.kickoff) + " Lisbon"}</span></header>
+    <h3>${esc(b.title)}</h3>
+    <div class="bet-main"><div><div class="hud-label">Main pick · ${esc(m.market)}</div><div class="bet-pick">${esc(m.pick)} ${res(m.result)}</div></div>
+      <div class="bet-prob"><b class="mono">${pctp(m.p)}</b><span class="mono muted">@ ${m.odds} · €${m.stake}</span></div></div>
+    <div class="conf"><i style="width:${Math.round(m.p * 100)}%"></i></div>
+    <ul class="bet-side">${(b.side || []).map(x => `<li><span>${esc(x.market)} ${res(x.result)}</span><span class="mono muted">${pctp(x.p)} · €${x.stake}</span></li>`).join("")}</ul>
+    <p class="bet-why">💭 ${esc(m.why)}${settled && b.pnl != null ? ` · <b class="${cls(b.pnl)}">${b.pnl > 0 ? "+" : ""}€${b.pnl.toFixed(2)}</b>` : ""}</p></article>`;
+}
+async function loadPredictions() {
+  let P; try { P = await fetchJson("/api/predictions"); } catch { return; }
+  const S = P.sports || {}, pm = P.polymarket || { positions: [] };
+  const tot = (S.value || 0) + (pm.value_eur || 0), start = (S.start || 0) + 1000;
+  $("pr-total").innerHTML = `${eur(tot)} <span class="${cls(tot - start)}" style="font-size:18px">${pc((tot / start - 1) * 100, 2)}</span>`;
+  $("pr-sub").textContent = `Paper bankroll €${start.toLocaleString()} (sports €${S.start || 1000} · Polymarket €1,000). Nothing real is placed.`;
+  $("pr-stats").innerHTML = [["Open", (S.open || []).length + (pm.positions || []).length], ["Settled", S.n_settled ?? 0],
+    ["Hit rate", S.hit_rate == null ? "—" : pctp(S.hit_rate)], ["Main picks", S.main_hit_rate == null ? "—" : pctp(S.main_hit_rate)], ["PnL", `€${(S.pnl || 0).toFixed(2)}`]]
+    .map(([k, v]) => `<div class="pr-stat"><span class="hud-label">${k}</span><b class="mono">${v}</b></div>`).join("");
+  $("pr-sports").innerHTML = (S.open || []).length ? S.open.map(b => betCard(b, false)).join("") : empty("No big fixtures in the next 72h. Mirko only bets the important ones.");
+  $("pr-done").innerHTML = (S.settled || []).length ? S.settled.map(b => betCard(b, true)).join("") : empty("Nothing settled yet — results land ~2h after the final whistle.");
+  $("pr-poly").innerHTML = (pm.positions || []).length ? pm.positions.map(p => `<article class="bet poly">
+    <header><span class="bet-lg">🔮 Polymarket</span><span class="bet-ko mono">${p.end ? "resolves " + new Date(p.end).toLocaleDateString("en-GB", { timeZone: "Europe/Lisbon" }) : ""}</span></header>
+    <h3>${esc(p.title || p.sym)}</h3>
+    <div class="bet-main"><div><div class="hud-label">Mirko says</div><div class="bet-pick">${esc(p.side)}</div></div>
+      <div class="bet-prob"><b class="mono">${Math.round((p.mirko_p || 0) * 100)}%</b><span class="mono muted">market ${Math.round(p.entry_usd * 100)}¢ → ${Math.round((p.last_usd || 0) * 100)}¢</span></div></div>
+    <div class="conf"><i style="width:${Math.round((p.mirko_p || 0) * 100)}%"></i></div>
+    <p class="bet-why">💭 ${esc(p.why)} · stake €${(p.value_eur || 0).toFixed(2)} now <span class="${cls(p.pnl_pct)}">${pc(p.pnl_pct, 1)}</span></p></article>`).join("")
+    : empty("Mirko picks up to 4 live Polymarket questions once a day.");
+}
+$("pr-tabs").addEventListener("click", e => { const t = e.target.closest(".tab"); if (!t) return;
+  document.querySelectorAll("#pr-tabs .tab").forEach(x => x.classList.toggle("active", x === t));
+  ["sports", "poly", "done"].forEach(k => $(`pr-${k}`).classList.toggle("hidden", k !== t.dataset.p)); });
+setInterval(() => { if (!document.hidden && !$("view-predictions").classList.contains("hidden")) loadPredictions(); }, 120_000);
+
 // ── Owner view (same admin token as the switch) ─────────────────────
 const tok = () => store.get("ledgerAdminToken");
 async function ownerFetch(path, opts = {}) {
@@ -289,7 +342,7 @@ async function ownerOpen() {
   try { await ownerFetch("/api/owner/check"); ownerLocked(false); loadOwner(); } catch {}
 }
 $("unlock-btn").addEventListener("click", async () => { const t = prompt("Admin token (from Railway boot log line [SWITCH] ... token=...):"); if (!t) return;
-  store.set("ledgerAdminToken", t.trim()); try { await ownerFetch("/api/owner/check"); ownerLocked(false); loadOwner(); } catch { alert("Wrong admin token."); } });
+  store.set("ledgerAdminToken", t.trim()); try { await ownerFetch("/api/owner/check"); ownerLocked(false); loadOwner(); ownerControl(); } catch { alert("Wrong admin token."); } });
 $("lock-btn").addEventListener("click", () => { store.del("ledgerAdminToken"); ownerLocked(true); });
 async function loadOwner() {
   try { const o = await ownerFetch("/api/owner/overview"); const tr = [...o.traders].sort((a, b) => (b.active - a.active) || (b.trades - a.trades));
@@ -331,6 +384,11 @@ function renderSwitch(st) {
   const b = $("switch-btn"); b.disabled = false; b.className = `switch ${switchEnabled ? "on" : ""}`;
   $("switch-caption").textContent = switchEnabled ? "Tap to pause" : "Tap to resume";
 }
+async function ownerControl() {
+  const t = tok(); if (!t) { $("hud-control").classList.add("hidden"); return; }
+  try { await ownerFetch("/api/owner/check"); $("hud-control").classList.remove("hidden");  }
+  catch { $("hud-control").classList.add("hidden"); }
+}
 async function pollSwitch() { try { renderSwitch(await fetchJson("/api/bot_switch")); } catch (e) { console.error(e); } }
 $("switch-btn").addEventListener("click", async () => {
   let token = tok();
@@ -342,11 +400,11 @@ $("switch-btn").addEventListener("click", async () => {
     const r = await fetch(`${API_BASE_URL}/api/bot_switch`, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token.trim()}` }, body: JSON.stringify({ enabled: target }) });
     if (r.status === 401) { store.del("ledgerAdminToken"); alert("Wrong admin token."); }
     else if (!r.ok) alert(`Failed: HTTP ${r.status}`);
-    else { store.set("ledgerAdminToken", token.trim()); renderSwitch(await r.json()); }
+    else { store.set("ledgerAdminToken", token.trim()); renderSwitch(await r.json()); ownerControl(); }
   } finally { b.disabled = false; pollSwitch(); }
 });
 
 pollOnce(); setInterval(() => { if (!document.hidden) pollOnce(); }, POLL_INTERVAL_MS);
-pollSwitch(); setInterval(() => { if (!document.hidden) pollSwitch(); }, POLL_INTERVAL_MS);
+ownerControl(); pollSwitch(); setInterval(() => { if (!document.hidden) pollSwitch(); }, POLL_INTERVAL_MS);
 setInterval(() => { if (!document.hidden && !$("view-market").classList.contains("hidden")) loadMarket(); }, 120_000);
-{ const h = (location.hash || "").slice(1); showView(["dash", "market", "portfolio", "owner"].includes(h) ? h : "dash"); }
+{ const h = (location.hash || "").slice(1); showView(["dash", "market", "portfolio", "predictions", "owner"].includes(h) ? h : "dash"); }
