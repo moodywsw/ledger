@@ -307,7 +307,7 @@ async function loadPortfolio() {
   $("pf-trades").innerHTML = (P.trades || []).length ? P.trades.map(t => `<div class="row"><div class="l"><div class="t">${esc(t.action)} ${esc(t.sym)} <span class="cn">${SLV[t.sleeve][0]}</span></div>
       <div class="m">${esc(noRR(t.why))}</div></div><div class="mono" style="text-align:right">${eur(t.eur)}${t.pnl_pct != null ? `<br><span class="${cls(t.pnl_pct)}">${pc(t.pnl_pct, 1)}</span>` : ""}<br><span class="jt">${ago(new Date(t.ts * 1000))}</span></div></div>`).join("") : empty("No trades yet.");
   const C = P.commentary || {};
-  $("pf-comment").innerHTML = `<p>${esc(C.intro || "")}</p><ul>${Object.entries(C.sleeves || {}).filter(([, n]) => n).map(([k, n]) => `<li><b>${SLV[k][0]}:</b> ${esc(n)}</li>`).join("")}</ul>
+  if ($("pf-comment")) $("pf-comment").innerHTML = `<p>${esc(C.intro || "")}</p><ul>${Object.entries(C.sleeves || {}).filter(([, n]) => n).map(([k, n]) => `<li><b>${SLV[k][0]}:</b> ${esc(n)}</li>`).join("")}</ul>
     ${(C.positions || []).length ? `<div class="label pad" style="margin-top:12px">Why I hold each position</div><ul>${C.positions.map(p => `<li><b>${esc(p.sym)}</b> — ${esc(noRR(p.why))}</li>`).join("")}</ul>` : ""}`;
 }
 const noRR = t => String(t || "").replace(/\s*\(?R:R[^)\n]*\)?\.?/g, "").trim();
@@ -372,7 +372,7 @@ function readPts(t) {
   }
   return `<ul class="rpts">${rows.map(r => `<li><span class="rp-i">${r[0]}</span><span class="rp-k">${r[1]}</span><span class="rp-v">${r[2]}</span></li>`).join("")}</ul>`;
 }
-const CATS = [["all", "All", "✦"], ["read", "Mirko's read", "🧠"], ["football", "Football", "⚽"], ["ucl", "Champions League", "⭐"], ["nba", "NBA", "🏀"], ["nfl", "NFL", "🏈"], ["ufc", "UFC", "🥊"],
+const CATS = [["all", "All", "✦"], ["botd", "Bet of the Day", "🔥"], ["read", "Mirko's read", "🧠"], ["football", "Football", "⚽"], ["ucl", "Champions League", "⭐"], ["nba", "NBA", "🏀"], ["nfl", "NFL", "🏈"], ["ufc", "UFC", "🥊"],
   ["tennis", "Tennis", "🎾"], ["f1", "F1", "🏎"], ["poly", "Politics", "🗳"], ["hist", "History", "📜"]];
 const CICON = Object.fromEntries(CATS.map(c => [c[0], c[2]]));
 const pctp = p => `${Math.round(p * 100)}%`;
@@ -382,8 +382,7 @@ function money(odds, stake, p) {
   const imp = 1 / odds, edge = (p - imp) * 100, pay = stake * odds;
   if (!(+stake)) return `<div class="bet-money lean mono"><span><small>Odds</small><b>${odds.toFixed(2)}</b><i>${Math.round(imp * 100)}% impl.</i></span><span><small>Mirko</small><b>${Math.round(p * 100)}%</b></span><span class="lean-t"><small>Lean only</small><b>No value at this price · no stake</b></span></div>`;
   return `<div class="bet-money mono"><span><small>Odds</small><b>${odds.toFixed(2)}</b><i>${Math.round(imp * 100)}% impl.</i></span><span><small>Stake</small><b>€${(+stake).toFixed(0)}</b></span>
-    <span><small>Payout</small><b>€${pay.toFixed(2)}</b><i class="pos">+€${(pay - stake).toFixed(2)}</i></span><span><small>Mirko</small><b>${Math.round(p * 100)}%</b></span>
-    <span><small>Edge</small><b class="${edge >= 0 ? "pos" : "neg"}">${edge >= 0 ? "+" : ""}${edge.toFixed(1)}pt</b></span></div>`;
+    <span><small>Payout</small><b>€${pay.toFixed(2)}</b><i class="pos">+€${(pay - stake).toFixed(2)}</i></span><span><small>Mirko</small><b>${Math.round(p * 100)}%</b></span></div>`;
 }
 function betCard(b) {
   const m = b.main, side = b.side || [];
@@ -412,10 +411,22 @@ function polyCard(p) {
 function renderPred() {
   const P = PR.data; if (!P) return;
   const S = P.sports || {}, pm = P.polymarket || { positions: [] }, open = S.open || [];
-  const n = c => c === "read" ? open.length : c === "all" ? open.length + (pm.positions || []).length : c === "poly" ? (pm.positions || []).length : c === "hist" ? (S.settled || []).length : open.filter(b => b.cat === c).length;
+  const BD = S.botd || { slips: [] };
+  const n = c => c === "botd" ? (BD.slips || []).length : c === "read" ? open.length : c === "all" ? open.length + (pm.positions || []).length : c === "poly" ? (pm.positions || []).length : c === "hist" ? (S.settled || []).length : open.filter(b => b.cat === c).length;
   $("pr-cats").innerHTML = CATS.map(([k, l, i]) => `<button class="cat ${PR.cat === k ? "active" : ""} ${n(k) ? "" : "zero"}" data-c="${k}"><span>${i}</span>${l}<b>${n(k)}</b></button>`).join("");
   const hist = PR.cat === "hist";
   $("pr-board").classList.toggle("hidden", hist); $("pr-hist").classList.toggle("hidden", !hist);
+  if (PR.cat === "botd") {
+    const slip = x => `<article class="slip ${x.type} st-${x.status}"><header><span class="sl-t">${x.type === "single" ? "🎯 Single" : `🔗 ${x.legs.length}-leg parlay`}</span>${x.status !== "open" ? res(x.status === "won" ? "won" : x.status === "lost" ? "lost" : "void") : `<span class="mono muted sm">${when(x.legs[0].kickoff)}</span>`}</header>
+      <ol class="sl-legs">${x.legs.map(l => `<li><div><b>${esc(l.pick)}</b><small>${esc(l.title)} · ${esc(l.league || "")}</small></div><span class="mono">@${l.odds.toFixed(2)}</span>${l.result ? res(l.result) : ""}</li>`).join("")}</ol>
+      <div class="bet-money mono"><span><small>Odds</small><b>${x.odds.toFixed(2)}</b><i>${Math.round(100 / x.odds)}% impl.</i></span><span><small>Stake</small><b>€${x.stake.toFixed(0)}</b></span>
+        <span><small>Payout</small><b>€${x.payout.toFixed(2)}</b><i class="pos">+€${(x.payout - x.stake).toFixed(2)}</i></span><span><small>Mirko</small><b>${Math.round(x.p * 100)}%</b></span></div>
+      <p class="bet-why">${esc(x.reason || x.why)}</p></article>`;
+    const H = S.botd_hist || [];
+    $("pr-board").innerHTML = ((BD.slips || []).length ? `<div class="botd-head"><span class="hud-label">Today · ${esc(BD.date || "")}</span><span class="muted sm">1 single + 2 value parlays from Mirko's own priced legs. Odds: Kalshi / Polymarket references.</span></div>` + BD.slips.map(slip).join("") : empty("Today's Bet of the Day lands once tomorrow's fixtures are priced."))
+      + (H.length ? `<div class="botd-head"><span class="hud-label">Previous days</span></div>` + H.slice(0, 9).map(slip).join("") : "");
+    return;
+  }
   if (PR.cat === "read") {
     $("pr-board").innerHTML = `<div class="reads">${open.map(b => `<article class="rd-card"><div class="rd-meta"><span>${CICON[b.cat] || "🎯"} ${esc(b.league)}</span><span class="mono">${when(b.kickoff)}</span></div>
       <h3>${esc(b.title)}</h3><div class="rd-pick"><span class="hud-label">My bet</span><b>${esc(b.main.pick || b.main.market)}</b><span class="mono">${pctp(b.main.p)} · @${b.main.odds} · €${b.main.stake}</span></div>

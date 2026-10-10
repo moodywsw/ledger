@@ -535,3 +535,11 @@ body{line-height:1.5;-webkit-font-smoothing:antialiased;text-rendering:optimizeL
 @media (prefers-reduced-motion:reduce){.t-glass::before{animation:none}}
 .bet-money.lean{grid-template-columns:auto auto 1fr}.lean-t b{color:#ffd166;white-space:normal!important;font-size:12px}
 .ta-attr{margin-left:auto;color:#5d6b80;font-size:10px;text-decoration:none}
+.bet-money{grid-template-columns:repeat(4,minmax(0,1fr))}@media(max-width:480px){.bet-money{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.botd-head{grid-column:1/-1;display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;margin:4px 2px}
+.slip{border:1px solid rgba(255,140,60,.35);border-radius:16px;padding:14px 16px;background:linear-gradient(160deg,rgba(255,140,60,.07),rgba(255,255,255,.015));min-width:0}
+.slip.parlay{border-color:rgba(192,132,252,.35);background:linear-gradient(160deg,rgba(192,132,252,.07),rgba(255,255,255,.015))}
+.slip header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}.sl-t{font-weight:700;font-size:13px;letter-spacing:.03em}
+.sl-legs{list-style:none;margin:0;padding:0;counter-reset:l}.sl-legs li{display:flex;gap:10px;align-items:center;padding:7px 0;border-bottom:1px dashed rgba(255,255,255,.07)}
+.sl-legs li div{flex:1;min-width:0}.sl-legs b{display:block;font-size:14px}.sl-legs small{color:#8fa0b8;font-size:11px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.slip.st-won{border-color:rgba(34,211,155,.6)}.slip.st-lost{opacity:.75}

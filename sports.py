@@ -726,8 +726,108 @@ def tick(now: float | None = None, force=False):
             if place(b, p):
                 counts[p["cat"]] = counts.get(p["cat"], 0) + 1
         b["last_scan"] = now
+    try:
+        tick_botd(b, now)
+    except Exception as e:
+        print(f"[BOTD] {type(e).__name__}: {e}")
     save(b)
     return b
+
+
+# ---------- Bet of the Day: 1 single + 2 value parlays, built from Mirko's own priced legs ----------
+def _legs_pool(b, now):
+    out = []
+    for x in b["bets"]:
+        ko = kickoff_ts(x["kickoff"])
+        if not (now + 600 < ko < now + 36 * 3600):
+            continue
+        for l in [x["main"], *x["side"]]:
+            if l.get("p") and l.get("odds") and l["odds"] >= 1.15 and not l.get("player"):
+                out.append({"bet_id": x["id"], "key": l.get("key"), "title": x["title"], "league": x.get("league"), "kickoff": x["kickoff"],
+                            "market": l["market"], "pick": l.get("pick") or l["market"], "odds": l["odds"], "p": l["p"], "ev": l["p"] * l["odds"]})
+    return out
+
+
+def build_botd(b, now):
+    pool = _legs_pool(b, now)
+    if not pool:
+        return []
+    slips, used = [], set()
+    single = max([l for l in pool if l["p"] >= 0.55] or pool, key=lambda l: (l["ev"], l["p"]))
+    slips.append({"type": "single", "legs": [single], "stake": 15.0})
+    used.add(single["bet_id"])
+    strong = sorted([l for l in pool if l["p"] >= 0.6 and l["ev"] >= 0.97], key=lambda l: (-l["ev"], -l["p"]))
+    for n in (2, 3):
+        legs, ev_ids = [], set(used)
+        for l in strong:
+            if l["bet_id"] in ev_ids:
+                continue
+            legs.append(l); ev_ids.add(l["bet_id"])
+            if len(legs) == n:
+                break
+        if len(legs) >= 2:
+            slips.append({"type": "parlay", "legs": legs, "stake": 8.0})
+            used |= {l["bet_id"] for l in legs}
+    for sl in slips:
+        o = p = 1.0
+        for l in sl["legs"]:
+            o *= l["odds"]; p *= l["p"]
+        sl.update(odds=round(o, 2), p=round(p, 3), payout=round(sl["stake"] * o, 2), status="open", id=f"botd:{time.strftime('%Y%m%d')}:{len(sl['legs'])}:{sl['type']}",
+                  why=" + ".join(f"{l['pick']} ({round(l['p'] * 100)}% vs {round(100 / l['odds'])}% implied)" for l in sl["legs"]))
+    try:
+        import llm
+        d, via = llm.reason_json("You are Mirko, a sharp, honest sports bettor. Short punchy reasoning, digits, no hype.",
+                                 "Write a 1-2 sentence reason for each slip (why these legs, what could break it). Slips: "
+                                 + json.dumps([{"type": s["type"], "legs": [{k: l[k] for k in ("title", "pick", "odds", "p")} for l in s["legs"]]} for s in slips])
+                                 + '\nJSON: {"reasons": ["...", "..."]}', 800)
+        for sl, r in zip(slips, (d or {}).get("reasons") or []):
+            if isinstance(r, str) and len(r) > 20:
+                sl["reason"] = r[:400]
+    except Exception:
+        pass
+    return slips
+
+
+def _leg_result(b, l):
+    for x in b["bets"] + b["settled"]:
+        if x["id"] == l["bet_id"]:
+            for y in [x["main"], *x["side"]]:
+                if y.get("key") == l["key"] and y.get("market") == l["market"]:
+                    return y.get("result")
+    return None
+
+
+def tick_botd(b, now):
+    day = time.strftime("%Y-%m-%d", time.localtime(now))
+    bd = b.setdefault("botd", {"date": "", "slips": []})
+    hist = b.setdefault("botd_hist", [])
+    for sl in bd["slips"] + hist:
+        if sl.get("status") != "open":
+            continue
+        rs = [_leg_result(b, l) for l in sl["legs"]]
+        for l, r in zip(sl["legs"], rs):
+            l["result"] = r
+        if "lost" in rs:
+            sl.update(status="lost", returned=0.0)
+        elif all(r in ("won", "void") for r in rs):
+            o = 1.0
+            for l, r in zip(sl["legs"], rs):
+                o *= l["odds"] if r == "won" else 1.0
+            sl.update(status="won" if "won" in rs else "void", returned=round(sl["stake"] * o, 2))
+        if sl.get("status") != "open":
+            b["cash"] += sl["returned"]; sl["pnl"] = round(sl["returned"] - sl["stake"], 2); sl["settled_at"] = now
+    if bd["date"] != day and now - b.get("botd_try", 0) > 1800:
+        b["botd_try"] = now
+        slips = build_botd(b, now)
+        if slips:
+            hist.extend(bd["slips"])
+            b["botd_hist"] = hist[-90:]
+            for sl in slips:
+                if b["cash"] >= sl["stake"]:
+                    b["cash"] -= sl["stake"]
+                else:
+                    sl["status"] = "skipped"
+            b["botd"] = {"date": day, "slips": slips}
 
 
 def _cat(x):
@@ -745,8 +845,10 @@ def public_view() -> dict:
     for x in st:
         c = by.setdefault(x["cat"], {"n": 0, "won": 0, "pnl": 0.0})
         c["n"] += 1; c["won"] += x["main"].get("result") == "won"; c["pnl"] = round(c["pnl"] + x.get("pnl", 0), 2)
-    open_val = sum(x["stake"] for x in b["bets"])
-    return {"mode": "paper", "start": b["start"], "cash": round(b["cash"], 2), "open_stake": round(open_val, 2),
+    bd = b.get("botd") or {"date": "", "slips": []}
+    botd_open = sum(x["stake"] for x in bd["slips"] + b.get("botd_hist", []) if x.get("status") == "open")
+    open_val = sum(x["stake"] for x in b["bets"]) + botd_open
+    return {"botd": bd, "botd_hist": list(reversed([x for x in b.get("botd_hist", []) if x.get("status") not in ("open", "skipped")][-30:])), "mode": "paper", "start": b["start"], "cash": round(b["cash"], 2), "open_stake": round(open_val, 2),
             "value": round(b["cash"] + open_val, 2), "pnl": round(sum(x.get("pnl", 0) for x in st), 2),
             "hit_rate": round(sum(l["result"] == "won" for l in legs) / len(legs), 3) if legs else None,
             "main_hit_rate": round(sum(m["result"] == "won" for m in mains) / len(mains), 3) if mains else None,
