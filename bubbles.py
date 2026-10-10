@@ -29,3 +29,25 @@ def get() -> dict:
         except Exception as e:
             print(f"[BUBBLES] {type(e).__name__}")
         return _c["d"] or {"ts": 0, "items": []}
+
+
+_logos = {"ts": 0, "m": {}}
+
+
+def logos() -> dict:
+    """symbol -> CoinGecko image URL for the top 250 coins (refreshed daily)."""
+    if _logos["m"] and time.time() - _logos["ts"] < 86400:
+        return _logos["m"]
+    try:
+        m = {}
+        for page in (1, 2):
+            for x in requests.get(f"{CG}/coins/markets", timeout=15, headers={"accept": "application/json"},
+                                  params={"vs_currency": "usd", "order": "market_cap_desc", "per_page": 250, "page": page}).json():
+                s = x.get("symbol", "").upper()
+                if s and s not in m and str(x.get("image", "")).startswith("https://coin-images.coingecko.com/"):
+                    m[s] = x["image"].replace("/large/", "/small/")
+        if m:
+            _logos.update(ts=time.time(), m=m)
+    except Exception as e:
+        print(f"[LOGOS] {type(e).__name__}")
+    return _logos["m"]

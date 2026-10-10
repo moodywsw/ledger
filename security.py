@@ -19,6 +19,7 @@ LIMITS = {                 # bucket -> (requests, window seconds)
     "api": (int(os.environ.get("RL_API_PER_MIN", "240")), 60),
     "owner": (30, 60),
     "write": (10, 60),
+    "ta": (6, 60),
     "static": (600, 60),
 }
 FAIL_FREE = 5              # failed token attempts before lockout
@@ -83,7 +84,7 @@ def record_success(ip: str):
 
 
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; "
-       "style-src-attr 'unsafe-inline'; font-src https://fonts.gstatic.com; img-src 'self' data:; "
+       "style-src-attr 'unsafe-inline'; font-src https://fonts.gstatic.com; img-src 'self' data: https://coin-images.coingecko.com https://assets.coingecko.com https://cdn.dexscreener.com https://dd.dexscreener.com; "
        "connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; "
        "upgrade-insecure-requests")
 

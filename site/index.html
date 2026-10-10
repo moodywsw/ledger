@@ -21,6 +21,7 @@
     <button class="nav-btn" data-view="market">Market Thoughts</button>
     <button class="nav-btn" data-view="portfolio">Portfolio</button>
     <button class="nav-btn" data-view="predictions">Predictions</button>
+    <button class="nav-btn" data-view="ta">Mirko TA</button>
     <button class="nav-btn" data-view="ask">Ask Mirko</button>
   </nav>
   <div class="conn"><span class="dot" id="conn-dot"></span><span id="conn-status">connecting…</span></div>
@@ -32,7 +33,7 @@
     <div class="hero card hud">
       <div class="hud-head"><span class="hud-label">MIRKO // STATUS</span></div>
       <div class="hud-grid">
-        <div class="tank" id="wolf" aria-hidden="true"><img class="t-base" src="tank.webp" alt="" width="360" height="590"><div class="tank-glow"></div><canvas class="bubbles" id="bubbles"></canvas><div class="t-float"><img class="t-wolf" src="wolf.webp" alt="" width="226" height="403"></div><img class="t-cap" src="tank-cap.webp" alt="" width="360" height="86"><span class="led"></span></div>
+        <div class="tank" id="wolf" aria-hidden="true"><img class="t-base" src="tank.webp" alt="" width="360" height="590"><div class="tank-glow"></div><canvas class="bubbles" id="bubbles"></canvas><div class="t-float"><img class="t-wolf" src="wolf.webp" alt="" width="226" height="403"></div><div class="t-glass"></div><img class="t-cap" src="tank-cap.webp" alt="" width="360" height="86"><span class="led"></span></div>
         <div class="hud-side">
           <div class="hud-cell"><div class="hud-label" title="Read-only for the public">ENGINE</div><div class="status-line"><span class="pulse" id="status-pulse"></span><span id="switch-state" class="switch-state">…</span></div></div>
           <div class="hud-cell conv-cell"><div class="hud-label">CONVICTION</div><div class="conv-asset mono" id="conv-asset">MARKET</div><div class="conv"><canvas id="gauge" width="120" height="70"></canvas><b class="mono conv-v" id="gauge-v">—</b></div><div class="conv-d" id="conv-d">reading the market…</div></div>
@@ -140,6 +141,18 @@
   <footer class="foot">Paper predictions · ESPN public data, Kalshi &amp; Polymarket public markets as reference odds · not betting advice</footer>
 </main>
 
+<main class="wrap view hidden" id="view-ta">
+  <section class="card ta-card">
+    <div class="ta-top"><div><div class="label">Mirko TA · charts + read</div><h2>Drop a ticker or contract address</h2></div>
+      <form class="ta-form" id="ta-form" autocomplete="off"><input id="ta-q" maxlength="64" placeholder="SOL, PEPE, or a Solana / EVM CA…" spellcheck="false"><button class="btn" type="submit">Analyse</button></form></div>
+    <div class="ta-picks" id="ta-picks"></div>
+    <div class="ta-meta" id="ta-meta"></div>
+    <div class="ta-chart" id="ta-chart"></div><div class="ta-rsi" id="ta-rsi"></div>
+    <div class="ta-legend mono"><span class="lg e20">EMA20</span><span class="lg e50">EMA50</span><span class="lg e200">EMA200</span><span class="lg sr">S/R</span><span class="lg tl">Trendlines</span><span class="lg bu">Bull path</span><span class="lg ba">Base</span><span class="lg be">Bear path</span></div>
+  </section>
+  <section class="card ta-read hidden" id="ta-read"></section>
+</main>
+
 <main class="wrap view hidden" id="view-ask">
   <section class="card ask-card">
     <div class="ask-head"><img src="wolf.webp" alt="" class="ask-av"><div><div class="label">Ask Mirko · same brain as his trades</div><h2>Ask me anything about the market, my positions or my picks</h2>
@@ -169,5 +182,7 @@
 <script src="scan.js"></script>
 <script src="tank.js"></script>
 <script src="bubbles.js"></script>
+<script src="lwc.js"></script>
+<script src="ta.js"></script>
 </body>
 </html>

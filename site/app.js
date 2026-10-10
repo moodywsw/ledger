@@ -195,7 +195,7 @@ async function loadMarket() {
   const riskEmo = r => r == null ? "" : r <= 3 ? "🟢" : r <= 6 ? "🟡" : r <= 8 ? "🟠" : "🔴";
   const riskOf = i => i.risk ?? Math.max(0, Math.min(10, ({ mid: 4, low: 7, micro: 8 }[i.tier] ?? 2) + (i.venue === "Perp" ? 1 : 0) + ((i.rr || 0) < 1.5 ? 1 : 0) + (i.spec ? 1 : 0)));
   const idea = i => (i = { ...i, risk: riskOf(i) }, `<article class="ic ${i.side === "Long" ? "long" : "short"}">
-      <header><span class="ic-tk">${esc(i.name)}</span><span class="ic-side">${i.side.toUpperCase()}</span><span class="ic-venue">${esc(i.venue)}${i.chain ? " · " + esc(i.chain) : ""}</span>
+      <header>${icon(i.name, i.address || i.mint, i.chain)}<span class="ic-tk">${esc(i.name)}</span><span class="ic-side">${i.side.toUpperCase()}</span><span class="ic-venue">${esc(i.venue)}${i.chain ? " · " + esc(i.chain) : ""}</span>
         <span class="ic-risk" title="Risk score 0-10">${riskEmo(i.risk)} ${i.risk ?? "–"}<small>/10</small></span></header>
       <dl class="ic-kv mono"><dt>Entry</dt><dd>${fp(i.entry_lo)} – ${fp(i.entry_hi)}</dd><dt>Stop</dt><dd class="neg">${fp(i.stop)}</dd>
         <dt>Target</dt><dd class="pos">${fp(i.t1)}${i.t2 ? ` → ${fp(i.t2)}` : ""}</dd>${i.mcap ? `<dt>Mcap</dt><dd>${big(i.mcap)}</dd>` : ""}</dl>
@@ -232,7 +232,7 @@ async function loadMarket() {
       ${b.invalidation ? `<div class="callout"><div class="callout-h">⚠ Invalidation</div><div>${md(b.invalidation)}</div></div>` : ""}` : empty("No theme in rotation.");
   try {
   $("mt-assets").innerHTML = m.assets.map(a => `<div class="card asset slim t-${a.tone}">
-    <div class="a-head"><div class="a-id"><span class="a-name">${a.name}</span><span class="a-px mono">${fp(a.price)}</span></div>
+    <div class="a-head"><div class="a-id">${icon(a.name)}<span class="a-name">${a.name}</span><span class="a-px mono">${fp(a.price)}</span></div>
       <div class="a-right"><span class="bias b-${a.tone}">${esc(a.bias.split(" ·")[0])}</span><span class="mono sm">24h <span class="${cls(a.chg24)}">${pc(a.chg24)}</span> · 7d <span class="${cls(a.chg7)}">${pc(a.chg7)}</span></span></div></div>
     ${levelBar(a)}
     <div class="a-plan">🎯 ${esc(a.plan)}</div></div>`).join("");
@@ -314,7 +314,13 @@ const book = b => b ? `<span class="tier">${esc(b)}</span>` : "";
 const tone = v => v == null ? "flat" : v > 0.005 ? "pos" : v < -0.005 ? "neg" : "flat";
 const qty = q => q == null ? "—" : q >= 1000 ? Math.round(q).toLocaleString() : q >= 1 ? q.toFixed(2) : q.toPrecision(3);
 const ICOL = ["#f7931a", "#9945ff", "#627eea", "#22d3e6", "#ff6ec7", "#f5b84b", "#22d39b", "#7c8cff"];
-const icon = sym => `<span class="aicon" style="--c:${ICOL[[...sym].reduce((a, c) => a + c.charCodeAt(0), 0) % ICOL.length]}">${esc(sym.slice(0, 1))}</span>`;
+const DSCH = { solana: "solana", base: "base", bsc: "bsc", ethereum: "ethereum", eth: "ethereum", arbitrum: "arbitrum" };
+const icon = (sym, addr, chain) => { sym = String(sym || "?").replace(/^\$/, "");
+  const u = (window.LOGOS || {})[sym.toUpperCase()] || (addr && DSCH[String(chain || "solana").toLowerCase()] ? `https://dd.dexscreener.com/ds-data/tokens/${DSCH[String(chain || "solana").toLowerCase()]}/${encodeURIComponent(addr)}.png` : "");
+  const L = `<span class="aicon" style="--c:${ICOL[[...sym].reduce((a, c) => a + c.charCodeAt(0), 0) % ICOL.length]}">${esc(sym.slice(0, 1))}</span>`;
+  return u ? `<img class="aicon-img" src="${esc(u)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fb="${esc(sym.slice(0, 1))}">` : L; };
+document.addEventListener("error", e => { const t = e.target; if (t.tagName === "IMG" && t.dataset && t.dataset.fb) { const s = document.createElement("span"); s.className = "aicon"; s.textContent = t.dataset.fb; t.replaceWith(s); } }, true);
+window.LOGOS = {}; fetch("/api/logos").then(r => r.json()).then(m => { window.LOGOS = m || {}; }).catch(() => {});
 const riskEmo10 = r => r == null ? "" : r <= 3 ? "🟢" : r <= 6 ? "🟡" : r <= 8 ? "🟠" : "🔴";
 const pnlCell = (eurv, pct) => eurv == null ? pc(pct, 2) : `<b>${eurv >= 0 ? "+" : "−"}${eur(Math.abs(eurv))}</b> <small>${pc(pct, 2)}</small>`;
 function holdTable(k, ps) {
@@ -354,7 +360,10 @@ const when = iso => new Date(iso).toLocaleString("en-GB", { timeZone: "Europe/Li
 const formChips = f => `<span class="fchips">${String(f).replace(/[^WDL]/g, "").split("").map(c => `<i class="fc ${c}">${c}</i>`).join("")}</span>`;
 function readPts(t) {
   const ss = String(t).split(/(?<=[.!?])\s+(?=[A-Z])/).filter(Boolean), rows = [];
-  for (const x of ss) {
+  for (let x of ss) {
+    if (/vs the market's 0%/.test(x)) x = x.replace(/,? (I make it [\d.]+%) vs the market's 0%/, ", $1");
+    const rf = x.match(/^records \+ form \(([WDL]+) vs ([WDL]+)\)\.?$/i);
+    if (rf) { rows.push(["📊", "Form", `${formChips(rf[1])} <span class="vs">vs</span> ${formChips(rf[2])}`]); continue; }
     const fm = x.match(/^Form (\S+) vs (\S+)\s*(.*)$/);
     if (fm) { rows.push(["📊", "Form", `${formChips(fm[1])} <span class="vs">vs</span> ${formChips(fm[2])}${fm[3] ? ` <span class="muted">${esc(fm[3])}</span>` : ""}`]); continue; }
     const k = /^(Kalshi|Polymarket|Their records)/.test(x) ? ["⚖️", "Edge"] : /^(My bet|My main bet|I add|I bet)/.test(x) ? ["🎯", "Bet"] : /^(Expected goals|Played at|Player props)/.test(x) ? ["🔑", "Key stat"] : ["💭", "Note"];
@@ -363,31 +372,41 @@ function readPts(t) {
   return `<ul class="rpts">${rows.map(r => `<li><span class="rp-i">${r[0]}</span><span class="rp-k">${r[1]}</span><span class="rp-v">${r[2]}</span></li>`).join("")}</ul>`;
 }
 const CATS = [["all", "All", "✦"], ["read", "Mirko's read", "🧠"], ["football", "Football", "⚽"], ["ucl", "Champions League", "⭐"], ["nba", "NBA", "🏀"], ["nfl", "NFL", "🏈"], ["ufc", "UFC", "🥊"],
-  ["tennis", "Tennis", "🎾"], ["f1", "F1", "🏎"], ["poly", "Polymarket", "🔮"], ["hist", "History", "📜"]];
+  ["tennis", "Tennis", "🎾"], ["f1", "F1", "🏎"], ["poly", "Politics", "🗳"], ["hist", "History", "📜"]];
 const CICON = Object.fromEntries(CATS.map(c => [c[0], c[2]]));
 const pctp = p => `${Math.round(p * 100)}%`;
-const res = r => r === "won" ? '<span class="res won">W</span>' : r === "lost" ? '<span class="res lost">L</span>' : r === "void" ? '<span class="res void">VOID</span>' : "";
-const PR = { cat: "all", hf: "all", hr: "all", data: null };
+const res = r => r === "won" ? '<span class="res won">✓ Correct</span>' : r === "lost" ? '<span class="res lost">✗</span>' : r === "void" ? '<span class="res void">VOID</span>' : "";
+const PR = { cat: "all", hf: "all", hr: "all", hd: "all", data: null };
+function money(odds, stake, p) {
+  const imp = 1 / odds, edge = (p - imp) * 100, pay = stake * odds;
+  return `<div class="bet-money mono"><span><small>Odds</small><b>${odds.toFixed(2)}</b><i>${Math.round(imp * 100)}% impl.</i></span><span><small>Stake</small><b>€${(+stake).toFixed(0)}</b></span>
+    <span><small>Payout</small><b>€${pay.toFixed(2)}</b><i class="pos">+€${(pay - stake).toFixed(2)}</i></span><span><small>Mirko</small><b>${Math.round(p * 100)}%</b></span>
+    <span><small>Edge</small><b class="${edge >= 0 ? "pos" : "neg"}">${edge >= 0 ? "+" : ""}${edge.toFixed(1)}pt</b></span></div>`;
+}
 function betCard(b) {
   const m = b.main, side = b.side || [];
   return `<article class="bet c-${esc(b.cat)}">
     <header><span class="bet-lg">${CICON[b.cat] || "🎯"} ${esc(b.league)}</span><span class="bet-ko mono">${when(b.kickoff)}</span></header>
     <h3>${esc(b.title)}</h3>
     <div class="bet-main"><div class="bm-l"><span class="hud-label">${esc(m.market)}</span><b class="bet-pick">${esc(m.pick || m.market)}</b></div>
-      <div class="bet-prob"><b class="mono">${pctp(m.p)}</b><span class="mono">@${m.odds} · €${m.stake}</span></div></div>
-    <div class="conf"><i style="width:${Math.round(m.p * 100)}%"></i><s style="left:${Math.round((m.q || m.p) * 100)}%" title="market"></s></div>
+      <div class="bet-prob"><b class="mono">${pctp(m.p)}</b><span class="mono">Mirko's prob.</span></div></div>
+    ${money(m.odds, m.stake, m.p)}
+    <div class="conf"><i style="width:${Math.round(m.p * 100)}%"></i><s style="left:${Math.round(100 / m.odds)}%" title="implied"></s></div>
     ${m.why && !/^(records|book)/i.test(m.why) ? `<p class="bet-why">${esc(m.why)}</p>` : ""}
     ${side.length ? `<details class="more"><summary>+${side.length} markets${side.some(x => x.player) ? " · player props" : ""}</summary><ul class="bet-side">${side.map(x => `<li class="${x.player ? "prop" : ""}"><span>${x.player ? "👤 " : ""}${esc(x.market)}</span><span class="mono">${pctp(x.p)} · @${x.odds} · €${x.stake}</span></li>`).join("")}</ul></details>` : ""}
   </article>`;
 }
 function polyCard(p) {
-  return `<article class="bet c-poly"><header><span class="bet-lg">🔮 Polymarket</span><span class="bet-ko mono">${p.end ? "resolves " + new Date(p.end).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) : ""}</span></header>
+  const px = p.side === "YES" ? p.entry_usd : p.entry_usd, odds = px ? 1 / px : 0, stake = p.stake_eur || (p.qty || 0) * (p.entry_usd || 0) || 75;
+  return `<article class="bet c-poly"><header><span class="bet-lg">🗳 Politics · Polymarket</span><span class="bet-ko mono">${p.end ? "resolves " + new Date(p.end).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) : ""}</span></header>
     <h3>${esc(p.title || p.sym)}</h3>
-    <div class="bet-main"><div class="bm-l"><span class="hud-label">Mirko says</span><b class="bet-pick">${esc(p.side)}</b></div>
-      <div class="bet-prob"><b class="mono">${Math.round((p.mirko_p || 0) * 100)}%</b><span class="mono">mkt ${Math.round(p.entry_usd * 100)}¢→${Math.round((p.last_usd || 0) * 100)}¢</span></div></div>
-    <div class="conf"><i style="width:${Math.round((p.mirko_p || 0) * 100)}%"></i><s style="left:${Math.round((p.last_usd || 0) * 100)}%"></s></div>
-    <p class="bet-why">${esc(p.why)} · €${(p.value_eur || 0).toFixed(2)} <span class="${tone(p.pnl_pct)}">${pc(p.pnl_pct, 1)}</span></p></article>`;
+    <div class="bet-main"><div class="bm-l"><span class="hud-label">Mirko's pick</span><b class="bet-pick">${esc(p.side)}</b></div>
+      <div class="bet-prob"><b class="mono">${Math.round((p.mirko_p || 0) * 100)}%</b><span class="mono">now ${Math.round((p.last_usd || 0) * 100)}¢ · ${p.pnl_pct >= 0 ? "+" : ""}${(p.pnl_pct || 0).toFixed(1)}%</span></div></div>
+    ${odds ? money(odds, stake, p.mirko_p || 0) : ""}
+    <div class="conf"><i style="width:${Math.round((p.mirko_p || 0) * 100)}%"></i><s style="left:${Math.round((p.entry_usd || 0) * 100)}%"></s></div>
+    <p class="bet-why">${esc(String(p.why || "").replace(/^I say \w+ at \d+% vs market \d+%: /, ""))}</p></article>`;
 }
+
 function renderPred() {
   const P = PR.data; if (!P) return;
   const S = P.sports || {}, pm = P.polymarket || { positions: [] }, open = S.open || [];
@@ -413,8 +432,10 @@ function renderPred() {
     + Object.entries(by).map(([c, x]) => `<div class="pr-stat sm"><span class="hud-label">${CICON[c] || ""} ${c}</span><b class="mono">${x.won}/${x.n} · <span class="${tone(x.pnl)}">€${x.pnl.toFixed(0)}</span></b></div>`).join("");
   const cats = ["all", ...new Set(st.map(b => b.cat))];
   $("hist-filters").innerHTML = cats.map(c => `<button class="hf ${PR.hf === c ? "active" : ""}" data-hf="${c}">${c === "all" ? "All sports" : (CICON[c] || "") + " " + c}</button>`).join("")
-    + `<span class="sep"></span>` + ["all", "won", "lost"].map(r => `<button class="hf ${PR.hr === r ? "active" : ""}" data-hr="${r}">${r === "all" ? "All results" : r === "won" ? "✓ Won" : "✗ Lost"}</button>`).join("");
-  const rows = st.filter(b => (PR.hf === "all" || b.cat === PR.hf) && (PR.hr === "all" || b.main.result === PR.hr));
+    + `<span class="sep"></span>` + ["all", "won", "lost", "void"].map(r => `<button class="hf ${PR.hr === r ? "active" : ""}" data-hr="${r}">${r === "all" ? "All results" : r === "won" ? "✓ Won" : r === "lost" ? "✗ Lost" : "Void"}</button>`).join("")
+    + `<span class="sep"></span>` + [["all", "All time"], ["1", "24h"], ["7", "7 days"], ["30", "30 days"]].map(([k, l]) => `<button class="hf ${PR.hd === k ? "active" : ""}" data-hd="${k}">${l}</button>`).join("");
+  const cut = PR.hd === "all" ? 0 : Date.now() - (+PR.hd) * 864e5;
+  const rows = st.filter(b => (PR.hf === "all" || b.cat === PR.hf) && (PR.hr === "all" || b.main.result === PR.hr) && new Date(b.kickoff).getTime() >= cut);
   $("hist-list").innerHTML = rows.length ? rows.map(b => { const legs = [b.main, ...(b.side || [])], w = legs.filter(l => l.result === "won").length, l = legs.filter(x => x.result === "lost").length;
     return `<details class="hrow"><summary><span class="hr-date mono">${new Date(b.kickoff).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}</span><span class="hr-ic">${CICON[b.cat] || "🎯"}</span>
       <span class="hr-t"><b>${esc(b.title)}</b><small>${esc(b.main.pick || b.main.market)} · ${esc(b.final || "")}</small></span>${res(b.main.result)}<span class="hr-legs mono">${w}W ${l}L</span>
@@ -426,16 +447,18 @@ async function loadPredictions() {
   let P; try { P = await fetchJson("/api/predictions"); } catch { return; }
   PR.data = P;
   const S = P.sports || {}, pm = P.polymarket || {};
-  const tot = (S.value || 0) + (pm.value_eur || 0), start = (S.start || 0) + 1000;
-  $("pr-total").innerHTML = `${eur(tot)} <span class="${tone(tot - start)}" style="font-size:18px">${pc((tot / start - 1) * 100, 2)}</span>`;
-  $("pr-sub").textContent = `Paper bankroll €${start.toLocaleString()} · sports €${S.start || 1000} + Polymarket €1,000. Odds from Kalshi + Polymarket, data from ESPN + TheSportsDB. Nothing real is placed.`;
-  $("pr-stats").innerHTML = [["Open", (S.open || []).length + (pm.positions || []).length], ["At stake", `€${(S.open_stake || 0).toFixed(0)}`], ["Settled", S.n_settled ?? 0],
-    ["Hit rate", S.hit_rate == null ? "—" : pctp(S.hit_rate)], ["PnL", `<span class="${tone(S.pnl)}">€${(S.pnl || 0).toFixed(2)}</span>`]]
+  const tot = (S.value || 0) + (pm.value_eur || 0), start = (S.start || 0) + 1000, roi = (tot / start - 1) * 100;
+  const pmStake = (pm.positions || []).reduce((t, p) => t + (p.stake_eur || (p.qty || 0) * (p.entry_usd || 0)), 0);
+  const settledPL = (S.pnl || 0);
+  $("pr-total").innerHTML = `<span class="hud-label">Bankroll</span> ${eur(tot)} <span class="pr-roi ${tone(roi)}">ROI ${roi >= 0 ? "+" : ""}${roi.toFixed(1)}%</span>`;
+  $("pr-sub").innerHTML = `Started €${start.toLocaleString()} · open stake <b>€${((S.open_stake || 0) + pmStake).toFixed(0)}</b> · settled P/L <b class="${tone(settledPL)}">${settledPL >= 0 ? "+" : "−"}€${Math.abs(settledPL).toFixed(2)}</b> · paper only, nothing real is placed.`;
+  $("pr-stats").innerHTML = [["Open", (S.open || []).length + (pm.positions || []).length], ["Settled", S.n_settled ?? 0],
+    ["Hit rate", S.hit_rate == null ? "—" : pctp(S.hit_rate)], ["Main-pick hit", S.main_hit_rate == null ? "—" : pctp(S.main_hit_rate)]]
     .map(([k, v]) => `<div class="pr-stat"><span class="hud-label">${k}</span><b class="mono">${v}</b></div>`).join("");
   renderPred();
 }
 $("pr-cats").addEventListener("click", e => { const t = e.target.closest(".cat"); if (!t) return; PR.cat = t.dataset.c; renderPred(); });
-$("hist-filters").addEventListener("click", e => { const t = e.target.closest(".hf"); if (!t) return; if (t.dataset.hf) PR.hf = t.dataset.hf; if (t.dataset.hr) PR.hr = t.dataset.hr; renderPred(); });
+$("hist-filters").addEventListener("click", e => { const t = e.target.closest(".hf"); if (!t) return; if (t.dataset.hf) PR.hf = t.dataset.hf; if (t.dataset.hr) PR.hr = t.dataset.hr; if (t.dataset.hd) PR.hd = t.dataset.hd; renderPred(); });
 setInterval(() => { if (!document.hidden && !$("view-predictions").classList.contains("hidden")) loadPredictions(); }, 120_000);
 
 // ── Owner view (same admin token as the switch) ─────────────────────

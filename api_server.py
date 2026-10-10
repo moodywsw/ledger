@@ -534,6 +534,35 @@ def api_owner_ask_access():
     return jsonify(access.listing())
 
 
+@app.route("/api/ta")
+def api_ta():
+    import ta
+    if not security.allow(security.client_ip(request), "ta"):
+        return jsonify({"error": "Easy — max 6 charts a minute."}), 429
+    q = str(request.args.get("q", ""))[:64]
+    try:
+        d = ta.run(q)
+    except Exception as e:
+        print(f"[TA] {type(e).__name__}")
+        return jsonify({"error": "Data source hiccup, try again in a minute."}), 502
+    return jsonify(d), (400 if d.get("error") else 200)
+
+
+@app.route("/api/ta/picks")
+def api_ta_picks():
+    import bubbles
+    tr = [i["s"] for i in bubbles.get().get("items", []) if i.get("t") and i["s"] not in ("BTC", "ETH", "SOL")][:5]
+    return jsonify({"picks": ["BTC", "ETH", "SOL"] + tr})
+
+
+@app.route("/api/logos")
+def api_logos():
+    import bubbles
+    r = jsonify(bubbles.logos())
+    r.headers["Cache-Control"] = "public, max-age=3600"
+    return r
+
+
 @app.route("/api/bubbles")
 def api_bubbles():
     import bubbles

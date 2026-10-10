@@ -170,6 +170,60 @@ def poly_view(m: dict, yes: float) -> tuple[str, float, str] | None:
     return side, p, "; ".join(why) or "the price disagrees with my read"
 
 
+_POL_KW = re.compile(r"election|president|trump|senate|congress|house|governor|prime minister|parliament|war|ceasefire|china|russia|ukraine|israel|iran|gaza|nato|"
+                     r"tariff|fed\b|interest rate|shutdown|supreme court|impeach|nominee|primary|minister|referendum|sanction|taiwan|putin|zelensky|xi\b|vance|newsom", re.I)
+
+
+def kalshi_politics(n: int = 25) -> list:
+    """Top Kalshi politics/world/elections markets by volume (public API), as cross-reference odds."""
+    try:
+        ev = _get("https://api.elections.kalshi.com/trade-api/v2/events", {"status": "open", "limit": 200, "with_nested_markets": "true"}).get("events", [])
+    except Exception:
+        return []
+    out = []
+    for e in ev:
+        if e.get("category") not in ("Politics", "World", "Elections"):
+            continue
+        for m in e.get("markets") or []:
+            try:
+                out.append({"title": m.get("title") or e.get("title"), "yes": float(m.get("last_price_dollars") or m.get("yes_bid_dollars") or 0),
+                            "vol": float(m.get("volume_fp") or 0)})
+            except (TypeError, ValueError):
+                pass
+    return sorted(out, key=lambda x: -x["vol"])[:n]
+
+
+_pv_cache: dict = {}
+
+
+def poly_llm_view(m: dict, yes: float, kal: list) -> tuple[str, float, str] | None:
+    """Reasoned probability for politics/world questions (DeepSeek -> Gemini), with headlines + Kalshi as reference. Cached 24h per market."""
+    c = _pv_cache.get(str(m.get("id")))
+    if c and time.time() - c[0] < 86400:
+        p, why = c[1], c[2]
+        if p is None or abs(p - yes) < 0.04:
+            return None
+        return ("YES" if p > yes else "NO"), p, why
+    try:
+        import llm, eyes
+        heads = " | ".join(eyes.headlines(12))
+        ref = "; ".join(f"{k['title']}: {k['yes']:.0%}" for k in kal[:15])
+        d, via = llm.reason_json("You are Mirko, a sharp, calibrated forecaster. Estimate the true probability; be honest about uncertainty; no partisanship.",
+                                 f"Question: {m.get('question')}\nResolves: {m.get('endDate')}\nPolymarket YES price: {yes:.3f}\n"
+                                 f"Recent headlines: {heads}\nKalshi reference markets: {ref}\n"
+                                 'JSON: {"p_yes": 0-1, "why": "one sentence with the key reason"}', 600)
+        p = float(d["p_yes"])
+    except Exception:
+        _pv_cache[str(m.get("id"))] = (time.time(), None, "")
+        return None
+    p = max(0.01, min(0.99, p))
+    _pv_cache[str(m.get("id"))] = (time.time(), p, str(d.get("why") or "my read of the news flow")[:200])
+    if abs(p - yes) < 0.04:
+        return None
+    side = "YES" if p > yes else "NO"
+    return side, p, str(d.get("why") or "my read of the news flow")[:200]
+
+
 def decide_poly(s, now):
     sl = s["sleeves"]["poly"]
     for k in list(sl["positions"]):   # settle resolved markets
@@ -181,7 +235,8 @@ def decide_poly(s, now):
         if p.get("resolved"):
             val = p["qty"] * px; sl["cash"] += val; sl["positions"].pop(k)
             _trade(s, "poly", "settled", p["sym"], px, val, f"Resolved {p['resolved']}: I said {p['side']}.", pnl_pct=round((px / p["entry"] - 1) * 100, 2))
-    if len(sl["positions"]) < 4:
+    MAXP = 8
+    if len(sl["positions"]) < MAXP:
         try:
             ms = _get(f"{GAMMA}/markets", {"active": "true", "closed": "false", "order": "volume24hr", "ascending": "false", "limit": 500})
         except Exception:
@@ -197,10 +252,24 @@ def decide_poly(s, now):
                 continue
             if str(m["id"]) in sl["positions"]:
                 continue
-            v = poly_view(m, yn[0])
+            q = m.get("question") or ""
+            if re.search(r"\b(vs\.?|win on|o/u|spread|nba|nfl|mlb|nhl|premier league|fc\b)\b", q, re.I):
+                continue   # sports live in the sports book
+            pol = bool(_POL_KW.search(q))
+            cands.append((pol, bool(_POLY_KW.search(q)), (m.get("volume24hr") or 0) + 0.2 * (m.get("liquidityNum") or 0), m, yn, None))
+        cands.sort(key=lambda c: (-c[0], -c[1], -c[2]))
+        kal = kalshi_politics() if any(c[0] for c in cands[:12]) else []
+        llm_left = 6
+        scored = []
+        for pol, rel, vol, m, yn, _ in cands[:40]:
+            v = None
+            if pol and llm_left > 0:
+                llm_left -= 1
+                v = poly_llm_view(m, yn[0], kal)
+            v = v or poly_view(m, yn[0])
             if v:
-                cands.append((bool(_POLY_KW.search(m.get("question") or "")), m.get("volume24hr") or 0, m, yn, v))
-        cands.sort(key=lambda c: (-c[0], -c[1]))
+                scored.append((pol, vol, m, yn, v))
+        cands = scored
         held = {p.get("event") for p in sl["positions"].values()}
         picks = []
         for c in cands:
@@ -208,19 +277,19 @@ def decide_poly(s, now):
             if ev in held:
                 continue   # one bet per event (no doubling the same view via complementary markets)
             held.add(ev); c[2]["_ev"] = ev; picks.append(c)
-        for rel, _, m, yn, (side, p, why) in picks[:4 - len(sl["positions"])]:
+        for rel, _, m, yn, (side, p, why) in picks[:MAXP - len(sl["positions"])]:
             px = yn[0] if side == "YES" else yn[1]
-            stake = min(sl["cash"], 100.0)
+            stake = min(sl["cash"], 75.0)
             if stake < 10:
                 break
             mid = str(m["id"])
             sl["positions"][mid] = {"sym": (m.get("question") or "")[:90], "kind": "poly", "side": side, "market_id": mid, "slug": m.get("slug"),
                                     "qty": stake / px, "entry": px, "last_px": px, "opened": now, "mirko_p": round(p if side == "YES" else 1 - p, 3),
-                                    "end": m.get("endDate"), "event": m.get("_ev"),
+                                    "end": m.get("endDate"), "event": m.get("_ev"), "politics": rel,
                                     "why": f"I say {side} at {p if side == 'YES' else 1 - p:.0%} vs market {px:.0%}: {why}."}
             sl["cash"] -= stake
             _trade(s, "poly", f"bet {side}", (m.get("question") or "")[:60], px, stake, sl["positions"][mid]["why"])
-    sl["note"] = "Up to 4 live Polymarket questions, €100 paper stake each, only when my probability differs from the market by 3+ points. Settles at resolution."
+    sl["note"] = "Up to 8 high-volume politics & world questions (Polymarket, cross-checked with Kalshi and the news flow), €75 paper stake each, only when my probability differs from the market by 4+ points. Settles at resolution."
     sl["last_decision"] = now
 
 
