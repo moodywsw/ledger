@@ -355,7 +355,8 @@
     "fwd5_median": 0.07646238275243045,
     "fwd30_median": -0.21126955635770672
    },
-   "copy_score_basis": "scalper exits @ 15s latency"
+   "copy_score_basis": "scalper exits @ 15s latency",
+   "source": "user request 2026-10-10: promoted to wallets.json copy list"
   },
   {
    "handle": "The__Solstice",
@@ -660,6 +661,24 @@
    "paper_only": true,
    "copy_score": 0.17,
    "copy_score_basis": "scalper@15s, 83 copies, 2026-09-28..10-09, win 47%, +1.8%/copy after costs; @45s -3.1%/copy"
+  },
+  {
+   "handle": "OuterHeavyBat",
+   "solana_wallets": [
+    "49nvFkUxnxd4wXY5W9XygB93rzDUvugaxK5AkMqqxmgS"
+   ],
+   "evm_wallets_partial": [
+    "0x4f\u20264c55 (BNB/Robinhood Chain, full address not public)"
+   ],
+   "boards": {
+    "24h": {
+     "rank": 33,
+     "pnl_usd": 89889.0
+    }
+   },
+   "prior_weight": 1.0,
+   "source": "user request 2026-10-10 (unipcs alt); Solana wallet verified by Provadata on-chain match",
+   "copy_score_basis": "not backtested"
   }
  ]
 }
