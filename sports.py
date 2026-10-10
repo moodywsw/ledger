@@ -701,7 +701,12 @@ def tick(now: float | None = None, force=False):
         counts = {}
         for x in b["bets"]:
             counts[x.get("cat", "football")] = counts.get(x.get("cat", "football"), 0) + 1
-        new = sorted((p for p in scan(now) if p["id"] not in have), key=lambda p: -(p["main"]["p"] - p["main"]["q"]))
+        fresh = scan(now)
+        byid = {p["id"]: p for p in fresh}
+        for x in b["bets"]:   # backfill Mirko's read on picks made before it existed
+            if not x.get("read") and byid.get(x["id"], {}).get("read"):
+                x["read"] = byid[x["id"]]["read"]
+        new = sorted((p for p in fresh if p["id"] not in have), key=lambda p: -(p["main"]["p"] - p["main"]["q"]))
         for p in new:
             p["stake"] = round(p["main"]["stake"] + sum(x["stake"] for x in p["side"]), 2)
             if b["cash"] - p.get("stake", 0) < 0.4 * (b["cash"] + sum(x["stake"] for x in b["bets"])):
@@ -753,8 +758,8 @@ def start():
         first = True
         while True:
             try:
-                tick(force=first and not load().get("v10")) ; first = False
-                b = load(); b["v10"] = True; save(b)
+                tick(force=first and not load().get("v10b")) ; first = False
+                b = load(); b["v10b"] = True; save(b)
             except Exception as e:
                 print(f"[SPORTS] error: {type(e).__name__}")
             time.sleep(1800)
