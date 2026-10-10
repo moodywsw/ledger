@@ -533,3 +533,4 @@ body{line-height:1.5;-webkit-font-smoothing:antialiased;text-rendering:optimizeL
 .t-glass::after{content:"";position:absolute;top:-10%;bottom:-10%;right:12%;width:4%;transform:skewX(-14deg);background:linear-gradient(90deg,transparent,rgba(255,255,255,.18),transparent)}
 @keyframes sheen{0%,100%{left:14%;opacity:.85}50%{left:24%;opacity:1}}
 @media (prefers-reduced-motion:reduce){.t-glass::before{animation:none}}
+.bet-money.lean{grid-template-columns:auto auto 1fr}.lean-t b{color:#ffd166;white-space:normal!important;font-size:12px}

@@ -36,7 +36,7 @@
   }
   function meta(d) {
     const m = d.meta, t = d.ta;
-    $("ta-meta").innerHTML = `<div class="tm-l">${m.logo ? `<img src="${esc(m.logo)}" alt="" class="coin-logo lg" referrerpolicy="no-referrer">` : `<span class="coin-logo lg ltr">${esc((m.symbol || "?")[0])}</span>`}
+    $("ta-meta").innerHTML = `<div class="tm-l">${(m.logo = m.logo || (window.LOGOS || {})[String(m.symbol || "").toUpperCase()]) ? `<img src="${esc(m.logo)}" alt="" class="coin-logo lg" referrerpolicy="no-referrer">` : `<span class="coin-logo lg ltr">${esc((m.symbol || "?")[0])}</span>`}
       <div><b>${esc(m.symbol || d.q)}</b> <span class="muted">${esc(m.name || "")}</span><div class="muted sm mono">${esc(m.chain)} · ${esc(m.source)} · ${esc(d.tf)}</div></div></div>
       <div class="tm-kv mono"><span>Price <b>${fp(t.price)}</b></span><span>~7d <b class="${t.chg >= 0 ? "pos" : "neg"}">${t.chg >= 0 ? "+" : ""}${t.chg.toFixed(1)}%</b></span><span>RSI <b>${t.rsi ? t.rsi.toFixed(0) : "–"}</b></span>
       ${m.mcap ? `<span>Mcap <b>$${(m.mcap / 1e6).toFixed(2)}M</b></span>` : ""}${m.liq ? `<span>Liq <b>$${(m.liq / 1e3).toFixed(0)}k</b></span>` : ""}</div>`;

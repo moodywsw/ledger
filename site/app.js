@@ -379,6 +379,7 @@ const res = r => r === "won" ? '<span class="res won">✓ Correct</span>' : r ==
 const PR = { cat: "all", hf: "all", hr: "all", hd: "all", data: null };
 function money(odds, stake, p) {
   const imp = 1 / odds, edge = (p - imp) * 100, pay = stake * odds;
+  if (!(+stake)) return `<div class="bet-money lean mono"><span><small>Odds</small><b>${odds.toFixed(2)}</b><i>${Math.round(imp * 100)}% impl.</i></span><span><small>Mirko</small><b>${Math.round(p * 100)}%</b></span><span class="lean-t"><small>Lean only</small><b>No value at this price · no stake</b></span></div>`;
   return `<div class="bet-money mono"><span><small>Odds</small><b>${odds.toFixed(2)}</b><i>${Math.round(imp * 100)}% impl.</i></span><span><small>Stake</small><b>€${(+stake).toFixed(0)}</b></span>
     <span><small>Payout</small><b>€${pay.toFixed(2)}</b><i class="pos">+€${(pay - stake).toFixed(2)}</i></span><span><small>Mirko</small><b>${Math.round(p * 100)}%</b></span>
     <span><small>Edge</small><b class="${edge >= 0 ? "pos" : "neg"}">${edge >= 0 ? "+" : ""}${edge.toFixed(1)}pt</b></span></div>`;

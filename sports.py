@@ -229,7 +229,10 @@ def tsdb_venue(lg: str, a: str, b: str):
 # ---------- pick builders ----------
 def leg(market, p, q, stake, key, why="", **kw):
     """p = Mirko's probability, q = market/reference price → odds."""
-    return {"market": market, "p": round(p, 3), "q": round(q, 3), "odds": price_odds(q), "stake": stake, "key": key, "why": why, **kw}
+    odds = price_odds(q)
+    if p * odds < 1.0:          # negative expected value at this price: keep the call as a lean, stake nothing
+        stake, kw = 0.0, {**kw, "lean": True}
+    return {"market": market, "p": round(p, 3), "q": round(q, 3), "odds": odds, "stake": stake, "key": key, "why": why, **kw}
 
 
 def stake_for(p, q, base=12.0):
