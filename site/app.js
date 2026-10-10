@@ -99,7 +99,7 @@ function renderRealState(r) {
 function renderOverview(o) {
   LEDGER.overview = o;
   setVal("pnl-today", usdc(o.pnl_sol.today), cls(o.pnl_sol.today)); setVal("pnl-7d", usdc(o.pnl_sol.d7), cls(o.pnl_sol.d7)); setVal("pnl-all", usdc(o.pnl_sol.all), cls(o.pnl_sol.all));
-  const tot = o.wins + o.losses; $("winloss").textContent = tot ? `${o.wins} / ${o.losses} · ${Math.round(o.wins / tot * 100)}%` : "—";
+  const tot = o.wins + o.losses; $("winloss").textContent = tot ? `${o.wins} / ${o.losses}` : "—"; const wr = $("winrate"); if (wr) wr.textContent = tot ? `${Math.round(o.wins / tot * 100)}% win rate · closed trades` : "closed trades";
   renderEquity(o.equity);
   $("closed-body").innerHTML = o.closed_trades.length ? o.closed_trades.slice(0, 12).map(t => `
     <div class="row"><div class="l"><div class="t">${esc(t.symbol)} <span class="muted">${t.action === "partial_close" ? "partial" : ""}</span></div>

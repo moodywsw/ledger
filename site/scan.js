@@ -48,7 +48,7 @@
     [mid, mx2] = off(fw, fh); starfield(mx2, fw, fh, mobile ? 120 : 260, 2.2);
     const ng = mobile ? 26 : 60;
     for (let i = 0; i < ng; i++) { const d = Math.pow(Math.random(), 2); bgGalaxy(mx2, rnd(0, fw), rnd(0, fh), 6 + d * (mobile ? 26 : 38), Math.random() < .62 ? "s" : "e"); }
-    const pos = mobile ? [[.2, .14], [.72, .12], [.25, .38], [.8, .36], [.2, .63], [.75, .6], [.3, .87], [.75, .87], [.5, .5]]
+    const pos = mobile ? [[.2, .18], [.72, .18], [.25, .38], [.8, .36], [.2, .63], [.75, .6], [.3, .87], [.75, .87], [.5, .5]]
       : [[.14, .2], [.42, .14], [.72, .16], [.86, .46], [.16, .56], [.5, .5], [.3, .84], [.72, .82], [.88, .14]];
     const n = mobile ? 90 : 220;
     gal = DOMAINS.map((d, i) => ({ ...d, x: pos[i][0] * W, y: pos[i][1] * H, r: Math.min(W, H) * (mobile ? .12 : .13), heat: .3, info: "", rot: rnd(0, 6), tilt: rnd(.55, .85),

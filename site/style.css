@@ -317,3 +317,4 @@ body{line-height:1.5;-webkit-font-smoothing:antialiased;text-rendering:optimizeL
 @media(max-width:700px){.nav{gap:2px}.nav-btn{font-size:12px;padding:7px 9px}
  .pf-hero{grid-template-columns:1fr!important;justify-items:stretch}.pf-hero #pf-donut{justify-self:center;max-width:160px;height:auto}
  .pr-stats{grid-template-columns:repeat(3,minmax(0,1fr))}}
+.kpi .big{white-space:nowrap;font-size:clamp(20px,2vw,28px)}
