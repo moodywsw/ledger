@@ -308,12 +308,19 @@ def spot_targets(mr: dict) -> tuple[dict, str]:
         if tot and v:
             w[k] = {"w": core_budget * v / tot, "kind": "cex", "book": "core", "stop_pct": 0.25,
                     "why": f"Core (long-term): {k} is {next(a['bias'] for a in mr['assets'] if a['name'] == k).lower()}. Sized by the read, wide stop, I don't shake out on noise."}
-    for i in (mr.get("mid_caps") or [])[:2]:
+    try:
+        flows = {f["name"]: f for f in flow_snipes(mr) if f["side"] == "Long"}
+    except Exception:
+        flows = {}
+    for k, f in flows.items():   # tactical: top traders + flows long -> add a swing slice on top of the core
+        w[k] = w.get(k) or {"w": 0.0, "kind": "cex", "book": "core", "stop_pct": 0.25, "why": ""}
+        w[k]["w"] += risk_budget * (0.15 if f["score"] >= 3 else 0.10)
+        w[k]["why"] = (w[k]["why"] + " " if w[k]["why"] else "") + f"Tactical add: {f['why']}."
+    for i in (mr.get("mid_caps") or [])[:3]:
         w[i["name"]] = {"w": risk_budget * 0.10, "kind": "cex", "book": "swing", "why": f"Swing: {i['why']}. Half off at +20%, rest trails.", "stop": i["stop"]}
-    lows = [l for l in (mr.get("low_caps") or []) if not l.get("spec")] or []
-    if lows and key != "risk_off":
-        l = lows[0]
-        w[l["name"]] = {"w": 0.05, "kind": "dex", "book": "snipe", "why": f"Snipe, low cap ({l['chain']}): {l['why']}. Sized for zero.",
+    lows = [l for l in (mr.get("low_caps") or []) + (mr.get("micro_caps") or []) if l.get("address") and (l.get("risk") or 10) <= 8]
+    for l in (lows[:2] if key != "risk_off" else []):
+        w[l["name"]] = {"w": 0.05 if not l.get("spec") else 0.035, "kind": "dex", "book": "snipe", "why": f"Snipe, low cap ({l['chain']}): {l['why']}. Sized for zero.",
                         "chain": l["chain"], "address": l["address"], "stop": l["stop"]}
     notes.append(f"Regime {mr.get('regime', {}).get('label', '?')}: {risk_budget:.0%} risk budget, rest in cash"
                  + (f" (daily reading tilt {tilt:+.2f})." if tilt else "."))
@@ -369,13 +376,77 @@ def breakout_snipes(mr: dict) -> list:
     return out
 
 
+def _j(url, params=None):
+    import requests as _rq
+    r = _rq.get(url, params=params, headers={"User-Agent": "Mozilla/5.0"}, timeout=8); r.raise_for_status(); return r.json()
+
+
+def flow_snipes(mr: dict) -> list:
+    """Degen/sniper entries from what the top traders and flows are doing (all free, public):
+    Hyperliquid top accounts' net side, Binance top-trader position ratio trend, Bybit/OKX crowd (contrarian),
+    Coinbase premium and Mirko's own trend read. |score| >= 2 -> market snipe with a tight stop, TP = 2x stop."""
+    out = []
+    hl = ((mr.get("hyperliquid") or {}).get("coins") or {})
+    cbp = mr.get("coinbase_premium")
+    tone = {a["name"]: a.get("tone") for a in mr.get("assets", [])}
+    for sym in ("BTC", "ETH", "SOL"):
+        sc, why = 0.0, []
+        h = hl.get(sym) or {}
+        if h.get("long_share") is not None:
+            if h["long_share"] > 0.6: sc += 1; why.append(f"HL top traders {h['long_share']:.0%} long")
+            elif h["long_share"] < 0.4: sc -= 1; why.append(f"HL top traders {1 - h['long_share']:.0%} short")
+        try:
+            r = _j("https://fapi.binance.com/futures/data/topLongShortPositionRatio", {"symbol": f"{sym}USDT", "period": "1h", "limit": 5})
+            a, b = float(r[0]["longShortRatio"]), float(r[-1]["longShortRatio"])
+            d = b / a - 1
+            if d > 0.03: sc += 1; why.append(f"Binance top traders adding longs ({d:+.0%} 4h)")
+            elif d < -0.03: sc -= 1; why.append(f"Binance top traders adding shorts ({d:+.0%} 4h)")
+        except Exception:
+            pass
+        crowd = []
+        try:
+            crowd.append(float(_j("https://api.bybit.com/v5/market/account-ratio", {"category": "linear", "symbol": f"{sym}USDT", "period": "1h", "limit": 1})["result"]["list"][0]["buyRatio"]))
+        except Exception:
+            pass
+        try:
+            v = float(_j("https://www.okx.com/api/v5/rubik/stat/contracts/long-short-account-ratio", {"ccy": sym, "period": "1H"})["data"][0][1]); crowd.append(v / (1 + v))
+        except Exception:
+            pass
+        if crowd:
+            c = sum(crowd) / len(crowd)
+            if c > 0.66: sc -= 0.5; why.append(f"crowd {c:.0%} long (fade)")
+            elif c < 0.42: sc += 0.5; why.append(f"crowd {1 - c:.0%} short (squeeze fuel)")
+        if cbp is not None and abs(cbp) >= 0.05:
+            sc += 0.5 if cbp > 0 else -0.5; why.append("Coinbase premium" if cbp > 0 else "Coinbase discount")
+        t = tone.get(sym)
+        if t == "bull": sc += 1; why.append("trend up")
+        elif t == "bear": sc -= 1; why.append("trend down")
+        if abs(sc) < 2:
+            continue
+        px = crypto_price(sym)
+        if not px:
+            continue
+        sd = {"BTC": 0.012, "ETH": 0.018, "SOL": 0.022}[sym]
+        long_ = sc > 0
+        stop = px * (1 - sd) if long_ else px * (1 + sd)
+        out.append({"name": sym, "side": "Long" if long_ else "Short", "entry_lo": px * 0.998, "entry_hi": px * 1.002, "stop": stop,
+                    "t1": px * (1 + 2 * sd) if long_ else px * (1 - 2 * sd), "rr": 2.0, "score": sc, "flow": True,
+                    "why": f"flow snipe (score {sc:+.1f}): " + ", ".join(why[:4])})
+    return sorted(out, key=lambda x: -abs(x["score"]))
+
+
 def decide_perps(s, mr, fx, now):
     sl = s["sleeves"]["perps"]
     key = (mr.get("regime") or {}).get("key", "chop")
     eq = sl["cash"] + sum(pos_value(p, crypto_price(p["sym"]), fx) for p in sl["positions"].values())
-    for i in breakout_snipes(mr) + list(mr.get("trade_ideas", [])):
+    try:
+        flows = flow_snipes(mr)
+    except Exception:
+        flows = []
+    sl["flows"] = [{k: f[k] for k in ("name", "side", "score", "why")} for f in flows]
+    for i in flows + breakout_snipes(mr) + list(mr.get("trade_ideas", [])):
         sym = i["name"]
-        if sym in sl["positions"] or len(sl["positions"]) >= 3:
+        if sym in sl["positions"] or len(sl["positions"]) >= 4:
             continue
         px = crypto_price(sym)
         if not px:
@@ -384,11 +455,11 @@ def decide_perps(s, mr, fx, now):
         if not (lo * 0.995 <= px <= hi * 1.005):
             continue  # only fill inside the idea's entry zone, like a resting limit order
         aligned = (i["side"] == "Long" and key == "risk_on") or (i["side"] == "Short" and key == "risk_off")
-        lev = MAX_LEV if (aligned and (i.get("rr") or 0) >= 2.5) else 2.0
+        lev = MAX_LEV if ((aligned and (i.get("rr") or 0) >= 2.5) or abs(i.get("score", 0)) >= 3) else 2.0
         stop_dist = abs(px / i["stop"] - 1)
         if stop_dist * lev >= 0.6:   # keep the stop well inside liquidation
             lev = max(1.0, round(0.5 / stop_dist, 1))
-        margin = min(sl["cash"], eq * 0.25)
+        margin = min(sl["cash"], eq * (0.3 if abs(i.get("score", 0)) >= 3 else 0.2))
         if margin < 20:
             continue
         sl["cash"] -= margin
@@ -397,8 +468,8 @@ def decide_perps(s, mr, fx, now):
                                 "stop": i["stop"], "target": i["t1"], "opened": now, "last_px": px, "risk": abs(px - i["stop"]), "scaled": False,
                                 "why": f"{i['side']} {sym} {lev:g}x: {i['why']}. Stop {_fmt(i['stop'])}, target {_fmt(i['t1'])} (R:R {i.get('rr')})."}
         _trade(s, "perps", f"open {i['side'].lower()}", sym, px, margin, sl["positions"][sym]["why"], lev=lev)
-    sl["note"] = (f"{len(sl['positions'])} open · snipes on breakouts/breakdowns plus level-based ideas, max {MAX_LEV:g}x. "
-                  "Tight stops, half off at 1R then the stop goes to breakeven, rest rides to target.")
+    sl["note"] = (f"{len(sl['positions'])} open · degen but disciplined: snipes when top traders + flows line up (Hyperliquid, Binance top traders, "
+                  f"Bybit/OKX crowd, Coinbase premium), plus breakouts and level trades. Checked every hour, max {MAX_LEV:g}x, tight stops, TP at 2x the stop.")
     sl["last_decision"] = now
 
 
@@ -542,9 +613,9 @@ def tick(now: float | None = None, force=False):
     mr = mt.cached(max_age_h=8)
     try:
         check_stops(s, fx, now)
-        if mr and (force or now - s["sleeves"]["spot"]["last_decision"] >= CRYPTO_EVERY_H * 3600):
+        if mr and (force or now - s["sleeves"]["spot"]["last_decision"] >= 2 * 3600):
             decide_spot(s, mr, fx, now)
-        if mr and (force or now - s["sleeves"]["perps"]["last_decision"] >= CRYPTO_EVERY_H * 3600):
+        if mr and (force or now - s["sleeves"]["perps"]["last_decision"] >= 3600):
             decide_perps(s, mr, fx, now)
         if force or now - s["sleeves"]["poly"]["last_decision"] >= 86400:
             decide_poly(s, now)
@@ -633,7 +704,9 @@ def public_view(include_poly: bool = False) -> dict:
                         "last_usd": p.get("last_px"), "value_eur": round(v, 2), "pnl_pct": round((v / cost - 1) * 100, 2) if cost else None,
                         "stop_usd": p.get("stop"), "target_usd": p.get("target"), "opened": p.get("opened"), "why": p.get("why", ""),
                         "chain": p.get("chain"), "book": p.get("book"), "qty": p.get("qty"), "pnl_eur": round(v - cost, 2) if cost else None,
-                        "chg24": round(ch[sym], 2) if sym in ch else None, "risk": perp_risk(p) if p["kind"] == "perp" else None, "mirko_p": p.get("mirko_p"), "title": p["sym"] if p["kind"] == "poly" else None, "slug": p.get("slug"), "end": p.get("end")})
+                        "chg24": round(ch[sym], 2) if sym in ch else None, "risk": perp_risk(p) if p["kind"] == "perp" else None,
+                        "liq_usd": (p["entry"] * (1 - 1 / p["lev"] + 0.005) if p.get("side") == "Long" else p["entry"] * (1 + 1 / p["lev"] - 0.005)) if p["kind"] == "perp" and p.get("lev") else None,
+                        "margin_mode": "Isolated" if p["kind"] == "perp" else None, "margin_eur": round(p["margin"], 2) if p["kind"] == "perp" else None, "mirko_p": p.get("mirko_p"), "title": p["sym"] if p["kind"] == "poly" else None, "slug": p.get("slug"), "end": p.get("end")})
         val = sl["cash"] + sum(x["value_eur"] for x in pos)
         sleeves[name] = {"value_eur": round(val, 2), "cash_eur": round(sl["cash"], 2), "pnl_pct": round((val / sl["start"] - 1) * 100, 2),
                          "positions": sorted(pos, key=lambda x: -x["value_eur"]), "last_decision": sl["last_decision"], "note": sl.get("note", "")}
@@ -670,7 +743,8 @@ def live_prices(max_age=20.0) -> dict:
         for (n, sym, p), px in zip(items, pxs):
             px = px or p.get("last_px")
             v = pos_value(p, px, fx); cost = p["margin"] if p["kind"] == "perp" else p["qty"] * p["entry"] * (1 if p["kind"] == "poly" else fx)
-            out.setdefault(n, {})[sym] = {"last_usd": px, "value_eur": round(v, 2), "pnl_pct": round((v / cost - 1) * 100, 2) if cost else None}
+            out.setdefault(n, {})[sym] = {"last_usd": px, "value_eur": round(v, 2), "pnl_pct": round((v / cost - 1) * 100, 2) if cost else None,
+                                          "pnl_eur": round(v - cost, 2) if cost else None}
         _live.update(ts=time.time(), data={"ts": time.time(), "positions": out})
         return _live["data"]
 

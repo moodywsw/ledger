@@ -26,7 +26,7 @@ function showView(v) {
   document.querySelectorAll(".view").forEach(x => x.classList.toggle("hidden", x.id !== `view-${v}`));
   document.querySelectorAll(".nav-btn").forEach(b => b.classList.toggle("active", b.dataset.view === v));
   if (location.hash !== `#${v}`) history.replaceState(null, "", v === "dash" ? location.pathname : `#${v}`);
-  if (v === "market") loadMarket(); if (v === "portfolio") loadPortfolio(); if (v === "predictions") loadPredictions(); if (v === "owner") ownerOpen();
+  if (v === "market") loadMarket(); if (v === "portfolio") loadPortfolio(); if (v === "predictions") loadPredictions(); if (v === "ask") askRecent(); if (v === "owner") ownerOpen();
   window.dispatchEvent(new Event("ledger:view"));
 }
 $("nav").addEventListener("click", e => { const b = e.target.closest(".nav-btn"); if (b) showView(b.dataset.view); });
@@ -168,7 +168,11 @@ async function loadMarket() {
   m.regime = m.regime || { label: "Unknown", key: "chop", score: 0 };
   LEDGER.market = m;
   try { renderReading(m.insights); } catch (e) { console.warn(e); }
-  $("mt-regime").textContent = m.regime.label; $("mt-summary").textContent = m.summary;
+  const B = m.brief;
+  $("mt-regime").textContent = B ? B.headline : m.regime.label;
+  $("br-chips").innerHTML = B ? B.chips.map(c => `<span class="brc ${c.tone}"><small>${esc(c.k)}</small><b>${esc(c.v)}</b></span>`).join("") : "";
+  $("br-list").innerHTML = B ? B.bullets.map(x => `<li><span class="bi">${esc(x.i)}</span><span>${esc(x.t)}</span></li>`).join("") : `<li><span>${esc(m.summary || "")}</span></li>`;
+  $("br-doing").innerHTML = B ? `<span class="hud-label">What I'm doing</span> ${esc(B.doing)}` : "";
   if (m.fng) { $("fng-v").textContent = m.fng.v; $("fng-l").textContent = `${m.fng.cls} · yesterday ${m.fng.prev}`; drawFng(m.fng.v); }
   const riskEmo = r => r == null ? "" : r <= 3 ? "🟢" : r <= 6 ? "🟡" : r <= 8 ? "🟠" : "🔴";
   const riskOf = i => i.risk ?? Math.max(0, Math.min(10, ({ mid: 4, low: 7, micro: 8 }[i.tier] ?? 2) + (i.venue === "Perp" ? 1 : 0) + ((i.rr || 0) < 1.5 ? 1 : 0) + (i.spec ? 1 : 0)));
@@ -177,7 +181,7 @@ async function loadMarket() {
         <span class="ic-risk" title="Risk score 0-10">${riskEmo(i.risk)} ${i.risk ?? "–"}<small>/10</small></span></header>
       <dl class="ic-kv mono"><dt>Entry</dt><dd>${fp(i.entry_lo)} – ${fp(i.entry_hi)}</dd><dt>Stop</dt><dd class="neg">${fp(i.stop)}</dd>
         <dt>Target</dt><dd class="pos">${fp(i.t1)}${i.t2 ? ` → ${fp(i.t2)}` : ""}</dd>${i.mcap ? `<dt>Mcap</dt><dd>${big(i.mcap)}</dd>` : ""}</dl>
-      ${i.tier === "low" || i.tier === "micro" || !i.why ? "" : `<p class="ic-why">${esc(i.why)}</p>`}</article>`);
+      ${i.thesis ? `<dl class="ic-th"><dt>Why</dt><dd>${esc(i.thesis.why)}</dd><dt>Trigger</dt><dd>${esc(i.thesis.trigger)}</dd><dt>Target</dt><dd>${esc(i.thesis.target)}</dd><dt>Invalid</dt><dd>${esc(i.thesis.invalid)}</dd></dl>` : i.why ? `<p class="ic-why">${esc(i.why)}</p>` : ""}</article>`);
   const col = (xs, msg) => xs.length ? xs.map(idea).join("") : `<div class="empty sm">${msg}</div>`;
   $("mt-maj").innerHTML = col(m.trade_ideas || [], "No clean setup on the majors.");
   $("mt-mid").innerHTML = col(m.mid_caps || [], "No mid cap is accumulating cleanly.");
@@ -188,18 +192,18 @@ async function loadMarket() {
   const heat = !T ? "cold" : /fire|tailwind/i.test(T.mood) ? "hot" : /selective|choppy/i.test(T.mood) ? "warm" : "cold";
   $("trench-box").className = `trench-in heat-${heat}`;
   const li = xs => xs && xs.length ? `<ul>${xs.map(x => typeof x === "string" ? `<li><b>${esc(x)}</b></li>` : `<li><b>${esc(x.sym)}</b> <span class="cn">${esc(x.chain || "")}</span><br>${esc(x.why)}</li>`).join("")}</ul>` : `<div class="muted">Nothing convincing.</div>`;
-  $("mt-trench").innerHTML = T ? `<p class="tr-take">${esc(T.take)}</p><div class="tr-grid">
+  const sents = T ? String(T.take || "").split(/(?<=[.!?])\s+(?=[A-Z$])/).filter(Boolean) : [];
+  $("mt-trench").innerHTML = T ? `<ul class="tr-take">${sents.map(x => `<li>${esc(x)}</li>`).join("")}</ul><div class="tr-grid">
       <div class="tr-col"><h4>🚀 Could pump</h4>${li(T.could_pump)}</div><div class="tr-col"><h4>🩸 Could dump</h4>${li(T.could_dump)}</div>
       <div class="tr-col"><h4>🧺 Accumulate</h4>${li(T.accumulate)}</div><div class="tr-col"><h4>🏛 Long-term</h4>${li(T.long_term)}</div></div>
-      ${T.radar ? `<div class="radar"><div class="bsec-h">Launchpad radar</div><div class="pads">${T.radar.pads.filter(p => p.n).map(p => `<div class="pad"><span>${esc(p.pad)}</span><b class="mono">${big(p.vol)}</b><small>${p.hot ? "hot $" + esc(p.hot) : ""}</small></div>`).join("")}</div>
-        ${["new", "graduating", "graduated"].some(k => (T.radar.pump[k] || []).length) ? `<div class="pump-cols">${["new", "graduating", "graduated"].map(k => `<div><div class="bsec-h">pump.fun · ${k}</div>${(T.radar.pump[k] || []).map(x => `<div class="pmp"><b>$${esc(x.sym)}</b><span class="mono">${big(x.mc)}</span></div>`).join("") || '<div class="muted sm">—</div>'}</div>`).join("")}</div>` : ""}
-        ${(T.radar.tokensxyz || []).length ? `<div class="bsec-h" style="margin-top:10px">tokens.xyz trending</div><div class="bt-row">${T.radar.tokensxyz.map(x => `<span class="tick c">$${esc(x)}</span>`).join("")}</div>` : ""}</div>` : ""}
 ` : empty("Trenches read appears after the next market refresh.");
   const b = m.next_boom;
   $("boom-w").innerHTML = b ? [b.boom_window ? `<span class="bchip">⏳ window <b>${esc(b.boom_window)}</b></span>` : "", b.since ? `<span class="bchip">📌 featured since <b>${esc(b.since)}</b></span>` : ""].join("") : "";
   const prev = (b && b.previous) || [];
   $("mt-boom-prev").innerHTML = prev.length ? prev.map(x => `<div class="bprev"><div class="bprev-t">${esc(x.emoji || "🚀")} ${esc(x.theme)}</div><div class="muted sm mono">${esc(x.shown_from || "?")} → ${esc(x.shown_to || "")} · window ${esc(x.boom_window || "—")}</div>
-      <div class="bt-row">${[...(x.crypto || []).map(c => "$" + String(c).replace(/^\$/, "")), ...(x.stocks || [])].map(t => `<span class="tick">${esc(t)}</span>`).join("")}</div></div>`).join("")
+      ${x.thesis ? `<p class="bprev-th">${esc(x.thesis)}</p>` : ""}
+      <div class="bt-row">${[...(x.crypto || []).map(c => "$" + String(c).replace(/^\$/, "")), ...(x.stocks || [])].map(t => `<span class="tick">${esc(t)}</span>`).join("")}</div>
+      ${x.source && /^https:\/\//.test(x.source.url || "") ? `<a class="bsrc" href="${esc(x.source.url)}" target="_blank" rel="noopener noreferrer">🔗 ${esc(x.source.title)}</a>` : ""}</div>`).join("")
     : empty("The archive starts when today's theme rotates out. Every past boom stays here.");
   const tk = (xs, pre) => xs.map(c => `<span class="tick ${pre ? "c" : "s"}">${pre}${esc(String(c).replace(/^\$/, ""))}</span>`).join("");
   $("mt-boom").innerHTML = b ? `<div class="boom-title"><span class="boom-emo">${esc(b.emoji || "🚀")}</span><h3>${esc(b.theme)}</h3></div>
@@ -294,26 +298,32 @@ const qty = q => q == null ? "—" : q >= 1000 ? Math.round(q).toLocaleString() 
 const ICOL = ["#f7931a", "#9945ff", "#627eea", "#22d3e6", "#ff6ec7", "#f5b84b", "#22d39b", "#7c8cff"];
 const icon = sym => `<span class="aicon" style="--c:${ICOL[[...sym].reduce((a, c) => a + c.charCodeAt(0), 0) % ICOL.length]}">${esc(sym.slice(0, 1))}</span>`;
 const riskEmo10 = r => r == null ? "" : r <= 3 ? "🟢" : r <= 6 ? "🟡" : r <= 8 ? "🟠" : "🔴";
+const pnlCell = (eurv, pct) => eurv == null ? pc(pct, 2) : `<b>${eurv >= 0 ? "+" : "−"}${eur(Math.abs(eurv))}</b> <small>${pc(pct, 2)}</small>`;
 function holdTable(k, ps) {
-  return `<div class="tbl-wrap"><table class="htbl mono"><thead><tr><th>Asset</th><th>Holdings</th><th>Value</th><th>Avg entry</th><th>Price</th><th>24h</th><th>PnL</th></tr></thead><tbody>
+  return `<div class="tbl-wrap"><table class="htbl mono"><thead><tr><th>Asset</th><th>Value</th><th>Price</th><th>24h</th><th>PnL</th></tr></thead><tbody>
   ${ps.map(p => `<tr><td class="asset-c">${icon(p.sym)}<div><b>${esc(p.sym)}</b>${book(p.book)}</div></td>
-    <td>${qty(p.qty)}</td><td>${eur(p.value_eur)}</td><td>$${price(p.entry_usd)}</td><td id="lp-${k}-${esc(p.sym)}">$${price(p.last_usd)}</td>
+    <td>${eur(p.value_eur)}</td><td id="lp-${k}-${esc(p.sym)}">$${price(p.last_usd)}</td>
     <td class="${tone(p.chg24)}">${p.chg24 == null ? "—" : pc(p.chg24, 2)}</td>
-    <td id="lv-${k}-${esc(p.sym)}" class="${tone(p.pnl_pct)}">${p.pnl_eur == null ? "" : (p.pnl_eur >= 0 ? "+" : "−") + eur(Math.abs(p.pnl_eur)) + " · "}${pc(p.pnl_pct, 2)}</td></tr>
-    <tr class="why-row"><td colspan="7">${esc(p.why)}</td></tr>`).join("")}</tbody></table></div>`;
+    <td id="lv-${k}-${esc(p.sym)}" class="pnl-c ${tone(p.pnl_pct)}">${pnlCell(p.pnl_eur, p.pnl_pct)}</td></tr>
+    <tr class="why-row"><td colspan="5">${esc(p.why)}</td></tr>`).join("")}</tbody></table></div>`;
 }
 function perpCards(k, ps) {
-  return `<div class="perp-grid">${ps.map(p => `<article class="perp ${p.side === "Short" ? "short" : "long"}">
-    <header><div class="asset-c">${icon(p.sym)}<b>${esc(p.sym)}</b><span class="ic-side">${esc(p.side.toUpperCase())} ${p.lev}×</span></div><span class="ic-risk">${riskEmo10(p.risk)} ${p.risk ?? "–"}<small>/10</small></span></header>
-    <div class="perp-kv mono"><div><span>Entry</span><b>$${price(p.entry_usd)}</b></div><div><span>TP</span><b class="pos">${p.target_usd ? "$" + price(p.target_usd) : "—"}</b></div>
-      <div><span>SL</span><b class="neg">${p.stop_usd ? "$" + price(p.stop_usd) : "—"}</b></div><div><span>PnL</span><b id="lv-${k}-${esc(p.sym)}" class="${tone(p.pnl_pct)}">${pc(p.pnl_pct, 2)}</b></div></div>
-    <p class="pp-why">${esc(noRR(p.why))}</p></article>`).join("")}</div>`;
+  const $p = v => v ? "$" + price(v) : "—";
+  return `<div class="mx-list">${ps.map(p => `<article class="mx ${p.side === "Short" ? "short" : "long"}">
+    <header><div class="asset-c">${icon(p.sym)}<b>${esc(p.sym)}USDT</b><span class="mx-side">${p.side === "Short" ? "Short" : "Long"}</span>
+      <span class="mx-lev">${esc(p.margin_mode || "Isolated")} ${p.lev}x</span></div><span class="ic-risk" title="risk 1-10">${riskEmo10(p.risk)} ${p.risk ?? "–"}</span></header>
+    <div class="mx-pnl" id="lv-${k}-${esc(p.sym)}"><span class="mx-big ${tone(p.pnl_pct)}">${p.pnl_eur == null ? "—" : (p.pnl_eur >= 0 ? "+" : "−") + eur(Math.abs(p.pnl_eur))}</span><span class="mx-pct ${tone(p.pnl_pct)}">${pc(p.pnl_pct, 2)}</span><span class="mx-lbl">Unrealized PnL</span></div>
+    <div class="mx-row mono"><div><span>Entry</span><b>${$p(p.entry_usd)}</b></div><div><span>Mark</span><b id="lp-${k}-${esc(p.sym)}">${$p(p.last_usd)}</b></div>
+      <div><span>TP</span><b class="pos">${$p(p.target_usd)}</b></div><div><span>SL</span><b class="neg">${$p(p.stop_usd)}</b></div><div><span>Liq</span><b class="warn">${$p(p.liq_usd)}</b></div></div>
+    <p class="mx-why">${esc(noRR(p.why))}</p></article>`).join("")}</div>`;
 }
 async function pfLive() {
   let L; try { L = await fetchJson("/api/portfolio/live"); } catch { return; }
   Object.entries(L.positions || {}).forEach(([k, ps]) => Object.entries(ps).forEach(([sym, p]) => {
     const e = document.getElementById(`lv-${k}-${sym}`), q = document.getElementById(`lp-${k}-${sym}`);
-    if (e) { e.className = tone(p.pnl_pct); e.innerHTML = `${pc(p.pnl_pct, 2)} <span class="live-dot" title="live"></span>`; }
+    if (e && e.classList.contains("mx-pnl")) { e.innerHTML = `<span class="mx-big ${tone(p.pnl_pct)}">${p.pnl_eur == null ? "—" : (p.pnl_eur >= 0 ? "+" : "−") + eur(Math.abs(p.pnl_eur))}</span><span class="mx-pct ${tone(p.pnl_pct)}">${pc(p.pnl_pct, 2)}</span><span class="mx-lbl">Unrealized PnL <span class="live-dot"></span></span>`; }
+    else if (e && e.classList.contains("pnl-c")) { e.className = "pnl-c " + tone(p.pnl_pct); e.innerHTML = pnlCell(p.pnl_eur, p.pnl_pct) + ' <span class="live-dot" title="live"></span>'; }
+    else if (e) { e.className = tone(p.pnl_pct); e.innerHTML = `${pc(p.pnl_pct, 2)} <span class="live-dot" title="live"></span>`; }
     if (q && p.last_usd != null) q.textContent = k === "poly" ? `${Math.round(p.last_usd * 100)}¢` : `$${price(p.last_usd)}`;
   }));
 }
@@ -323,6 +333,17 @@ setInterval(() => { if (pfOpen()) loadPortfolio(); }, 300_000);
 
 // ── Predictions (paper) ─────────────────────────────────────────────
 const when = iso => new Date(iso).toLocaleString("en-GB", { timeZone: "Europe/Lisbon", weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).replace(",", " ·");
+const formChips = f => `<span class="fchips">${String(f).replace(/[^WDL]/g, "").split("").map(c => `<i class="fc ${c}">${c}</i>`).join("")}</span>`;
+function readPts(t) {
+  const ss = String(t).split(/(?<=[.!?])\s+(?=[A-Z])/).filter(Boolean), rows = [];
+  for (const x of ss) {
+    const fm = x.match(/^Form (\S+) vs (\S+)\s*(.*)$/);
+    if (fm) { rows.push(["📊", "Form", `${formChips(fm[1])} <span class="vs">vs</span> ${formChips(fm[2])}${fm[3] ? ` <span class="muted">${esc(fm[3])}</span>` : ""}`]); continue; }
+    const k = /^(Kalshi|Polymarket|Their records)/.test(x) ? ["⚖️", "Edge"] : /^(My bet|My main bet|I add|I bet)/.test(x) ? ["🎯", "Bet"] : /^(Expected goals|Played at|Player props)/.test(x) ? ["🔑", "Key stat"] : ["💭", "Note"];
+    rows.push([k[0], k[1], esc(x)]);
+  }
+  return `<ul class="rpts">${rows.map(r => `<li><span class="rp-i">${r[0]}</span><span class="rp-k">${r[1]}</span><span class="rp-v">${r[2]}</span></li>`).join("")}</ul>`;
+}
 const CATS = [["all", "All", "✦"], ["read", "Mirko's read", "🧠"], ["football", "Football", "⚽"], ["ucl", "Champions League", "⭐"], ["nba", "NBA", "🏀"], ["nfl", "NFL", "🏈"], ["ufc", "UFC", "🥊"],
   ["tennis", "Tennis", "🎾"], ["f1", "F1", "🏎"], ["poly", "Polymarket", "🔮"], ["hist", "History", "📜"]];
 const CICON = Object.fromEntries(CATS.map(c => [c[0], c[2]]));
@@ -359,7 +380,7 @@ function renderPred() {
   if (PR.cat === "read") {
     $("pr-board").innerHTML = `<div class="reads">${open.map(b => `<article class="rd-card"><div class="rd-meta"><span>${CICON[b.cat] || "🎯"} ${esc(b.league)}</span><span class="mono">${when(b.kickoff)}</span></div>
       <h3>${esc(b.title)}</h3><div class="rd-pick"><span class="hud-label">My bet</span><b>${esc(b.main.pick || b.main.market)}</b><span class="mono">${pctp(b.main.p)} · @${b.main.odds} · €${b.main.stake}</span></div>
-      <p>${esc(b.read || b.main.why || "")}</p></article>`).join("")}</div>` || empty("No open picks right now.");
+      ${readPts(b.read || b.main.why || "")}</article>`).join("")}</div>` || empty("No open picks right now.");
     return;
   }
   if (!hist) {
@@ -478,3 +499,26 @@ pollOnce(); setInterval(() => { if (!document.hidden) pollOnce(); }, POLL_INTERV
 ownerControl(); pollSwitch(); setInterval(() => { if (!document.hidden) pollSwitch(); }, POLL_INTERVAL_MS);
 setInterval(() => { if (!document.hidden && !$("view-market").classList.contains("hidden")) loadMarket(); }, 120_000);
 { const h = (location.hash || "").slice(1); showView(["dash", "market", "portfolio", "predictions", "owner"].includes(h) ? h : "dash"); }
+
+// ── Ask Mirko ───────────────────────────────────────────────────────
+const ASK = { t0: Date.now(), busy: false };
+function askBubble(who, text, cls = "") { const d = document.createElement("div"); d.className = `ab ${who} ${cls}`; d.textContent = text; $("ask-log").appendChild(d); $("ask-log").scrollTop = 1e9; return d; }
+async function askRecent() {
+  try { const r = await fetchJson("/api/ask/recent"); $("ask-recent").innerHTML = (r.items || []).map(x => `<div class="aq"><div class="aq-q">❓ ${esc(x.q)}</div><div class="aq-a">${esc(x.a)}</div><div class="muted sm mono">${ago(x.ts * 1000)}</div></div>`).join("") || empty("No questions yet — be the first."); } catch {}
+}
+$("ask-q").addEventListener("input", e => { $("ask-n").textContent = `${e.target.value.length}/400`; });
+$("ask-chips").addEventListener("click", e => { const b = e.target.closest(".src-chip"); if (b) { $("ask-q").value = b.textContent; $("ask-q").focus(); } });
+$("ask-form").addEventListener("submit", async e => {
+  e.preventDefault(); if (ASK.busy) return;
+  const q = $("ask-q").value.trim(); if (!q) return;
+  ASK.busy = true; $("ask-send").disabled = true; askBubble("me", q); $("ask-q").value = ""; $("ask-n").textContent = "0/400";
+  const w = askBubble("mirko", "thinking…", "typing");
+  try {
+    const r = await fetch("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
+      body: JSON.stringify({ q, website: $("ask-hp").value, ms: Date.now() - ASK.t0 }) });
+    const j = await r.json().catch(() => ({}));
+    w.classList.remove("typing"); w.textContent = j.answer || (r.status === 429 ? "Too many questions — give me a minute." : "Something went wrong, try again.");
+    if (j.ok) setTimeout(askRecent, 800);
+  } catch { w.classList.remove("typing"); w.textContent = "Connection hiccup — try again."; }
+  ASK.busy = false; $("ask-send").disabled = false;
+});

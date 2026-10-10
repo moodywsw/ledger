@@ -36,7 +36,11 @@
     "coindesk.com 2026-10-08",
     "bitwise memo 2026-09-30",
     "coincodex JPM note"
-   ]
+   ],
+   "best_source": {
+    "title": "CoinDesk · Citrini tokenization basket",
+    "url": "https://www.coindesk.com/markets/2026/10/08/wall-street-s-tokenization-boom-could-have-bigger-winners-than-bitcoin-and-ether-citrini-says"
+   }
   },
   {
    "id": "prediction-markets",
@@ -62,7 +66,11 @@
     "ICE",
     "CME"
    ],
-   "invalidation": "A CFTC or state crackdown on sports contracts."
+   "invalidation": "A CFTC or state crackdown on sports contracts.",
+   "best_source": {
+    "title": "Volume Race · Q3 2026 report",
+    "url": "https://volumerace.com/reports/2026-q3"
+   }
   },
   {
    "id": "quantum-computing",
@@ -85,7 +93,11 @@
     "XNDU",
     "GFS"
    ],
-   "invalidation": "Stage C milestones slip or funding is cut."
+   "invalidation": "Stage C milestones slip or funding is cut.",
+   "best_source": {
+    "title": "DARPA · QBI Stage C teams",
+    "url": "https://www.darpa.mil/news/2026/four-more-teams-enter-quantum-benchmarking-initiative-final-stage"
+   }
   },
   {
    "id": "uranium-fuel",
@@ -108,7 +120,11 @@
     "NXE",
     "URA"
    ],
-   "invalidation": "Spot falls back under $80/lb or utilities stall contracts."
+   "invalidation": "Spot falls back under $80/lb or utilities stall contracts.",
+   "best_source": {
+    "title": "Sprott · record term prices",
+    "url": "https://sprott.com/insights/record-term-prices-mark-a-new-phase-for-uranium/"
+   }
   },
   {
    "id": "space-economy",
@@ -131,7 +147,11 @@
     "ASTS",
     "LUNR"
    ],
-   "invalidation": "November lockup selling breaks SpaceX below $135."
+   "invalidation": "November lockup selling breaks SpaceX below $135.",
+   "best_source": {
+    "title": "CNBC · SpaceX tops $2T on debut",
+    "url": "https://www.cnbc.com/2026/06/12/spacex-stock-jumps-2-trillion.html"
+   }
   },
   {
    "id": "stablecoin-rails",
@@ -156,7 +176,11 @@
     "COIN",
     "V"
    ],
-   "invalidation": "Final rules shut out yield-bearing or offshore stablecoins."
+   "invalidation": "Final rules shut out yield-bearing or offshore stablecoins.",
+   "best_source": {
+    "title": "RegWatch · GENIUS Act tracker",
+    "url": "https://www.regwatch.io/blog/genius-act-implementation-tracker"
+   }
   },
   {
    "id": "decentralized-ai",
@@ -178,7 +202,11 @@
    "stocks": [
     "NVDA"
    ],
-   "invalidation": "Gamma slips or subnet revenue stalls."
+   "invalidation": "Gamma slips or subnet revenue stalls.",
+   "best_source": {
+    "title": "Bittensor · Root Reborn upgrade",
+    "url": "https://www.bittensor.com/releases/v441-upgrade"
+   }
   }
  ]
 }

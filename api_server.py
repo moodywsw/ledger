@@ -471,6 +471,32 @@ def api_predictions():
     return jsonify(_public({"paper": True, "sports": sports.public_view(), "polymarket": pv["sleeves"].get("poly")}))
 
 
+@app.route("/api/ask", methods=["POST"])
+def api_ask():
+    """Public 'Ask Mirko' chat. Same-origin only, honeypot + timing bot check, all other guards in ask.py."""
+    import ask
+    origin = request.headers.get("Origin") or ""
+    if origin and origin.split("://", 1)[-1] != request.host:
+        return jsonify({"error": "forbidden"}), 403
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": "bad request"}), 400
+    if body.get("website") or not isinstance(body.get("q"), str):     # honeypot field must stay empty
+        return jsonify({"ok": True, "answer": "Thanks!"})
+    try:
+        if float(body.get("ms", 0)) < 1500:                          # typed + sent faster than a human can
+            return jsonify({"ok": False, "answer": "Slow down a little and try again."})
+    except (TypeError, ValueError):
+        return jsonify({"error": "bad request"}), 400
+    return jsonify(ask.answer(body["q"][:1000], security.client_ip(request), "site"))
+
+
+@app.route("/api/ask/recent")
+def api_ask_recent():
+    import ask
+    return jsonify(_public({"items": ask.recent(8)}))
+
+
 @app.route("/api/council")
 def api_council():
     import council

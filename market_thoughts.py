@@ -431,7 +431,7 @@ def trade_ideas(assets, hl):
     return out
 
 
-SCHEMA = 6
+SCHEMA = 7
 BOOM_DEFAULT = {"theme": "AI infrastructure", "emoji": "🤖", "thesis": "Compute, power and data centres keep absorbing capital; the picks-and-shovels trade is the patient one.",
                 "boom_window": "Nov 2026 – Dec 2027", "why_now": ["Hyperscaler capex guidance keeps rising", "Power and cooling are the new bottleneck"],
                 "crypto": ["TAO", "RENDER", "FET"], "stocks": ["NVDA", "AVGO", "VRT", "CEG"], "invalidation": "Capex cuts from two or more hyperscalers."}
@@ -482,7 +482,12 @@ def boom_with_history(cur: dict) -> dict:
             _boom_hist_path().write_text(json.dumps(h))
         except Exception:
             pass
-    return {**cur, "since": h.get("since"), "previous": [{k: x.get(k) for k in ("theme", "emoji", "thesis", "boom_window", "crypto", "stocks", "shown_from", "shown_to")}
+    src = {}
+    try:
+        src = {t.get("theme"): t.get("best_source") for t in json.loads(BOOM_FILE.read_text()).get("themes", [])}
+    except Exception:
+        pass
+    return {**cur, "since": h.get("since"), "previous": [{**{k: x.get(k) for k in ("theme", "emoji", "thesis", "boom_window", "crypto", "stocks", "shown_from", "shown_to")}, "source": x.get("best_source") or src.get(x.get("theme"))}
                                                          for x in h.get("previous", [])]}
 
 
@@ -497,7 +502,7 @@ def next_boom(today: str | None = None):
     pinned = [x for x in themes if x.get("featured_on") == d.isoformat()]
     rot = [x for x in themes if not x.get("featured_on") or x.get("featured_on") != d.isoformat()]
     t = pinned[0] if pinned else rot[d.toordinal() % len(rot)]
-    keep = ("theme", "emoji", "thesis", "boom_window", "why_now", "crypto", "stocks", "invalidation", "researched")
+    keep = ("theme", "emoji", "thesis", "boom_window", "why_now", "crypto", "stocks", "invalidation", "researched", "best_source")
     out = {k: t.get(k) for k in keep if t.get(k) is not None}
     if not out.get("crypto"):   # never leave the crypto side empty: closest liquid proxies, labelled as such
         th = (out.get("theme", "") + " " + out.get("thesis", "")).lower()
@@ -526,6 +531,102 @@ def outlook(reads, reg, fg, cbp, dex):
     return " ".join(parts), stance
 
 
+def _fmtp(v):
+    if v is None: return "—"
+    return f"${v:,.0f}" if v >= 100 else f"${v:,.2f}" if v >= 1 else f"${v:.4g}"
+
+
+def idea_thesis(i: dict) -> dict:
+    """Short organized thesis for every idea: why / trigger / target / invalidation."""
+    why = (i.get("why") or "").split(":")[-1].strip() or "structure + flows line up"
+    lo, hi = i.get("entry_lo"), i.get("entry_hi")
+    long_ = str(i.get("side", "Long")).lower().startswith("l")
+    trig = (f"buy the {_fmtp(lo)}–{_fmtp(hi)} zone on a hold" if long_ else f"short a rejection of {_fmtp(lo)}–{_fmtp(hi)}") if lo and hi else "on a clean reclaim"
+    tgt = _fmtp(i.get("t1")) + (f" then {_fmtp(i['t2'])}" if i.get("t2") else "")
+    inv = f"{'daily close below' if long_ else 'close above'} {_fmtp(i.get('stop'))}" if i.get("stop") else "structure breaks"
+    if i.get("tier") in ("low", "micro"):
+        inv += "; or buyers flip to net sellers"
+    return {"why": why[0].upper() + why[1:], "trigger": trig[0].upper() + trig[1:], "target": tgt, "invalid": inv[0].upper() + inv[1:]}
+
+
+def radar_micros(tr: dict) -> list:
+    """Fallback micro caps from pump.fun graduates: >=2 days old, $80k-$700k mcap, liquidity >= $20k,
+    buyers ahead on 6h AND 24h, price up on 6h (a base turning up). Checked live on DexScreener."""
+    out = []
+    cands = [x for x in ((tr.get("radar") or {}).get("pump") or {}).get("graduated", []) if x.get("mint") and (x.get("age_h") or 0) >= 48]
+    for pg in range(1, 11):   # graduated pump.fun coins trade on PumpSwap: busiest pools that are 2+ days old and still micro
+        try:
+            d = requests.get("https://api.geckoterminal.com/api/v2/networks/solana/dexes/pumpswap/pools",
+                             params={"page": pg, "sort": "h24_volume_usd_desc"}, timeout=10, headers={"Accept": "application/json"}).json().get("data") or []
+        except Exception:
+            break
+        time.sleep(2.2)   # GeckoTerminal free tier: 30 calls/min
+        for q in d:
+            a = q.get("attributes") or {}
+            try:
+                age_h = (time.time() - dt.datetime.fromisoformat(a["pool_created_at"].replace("Z", "+00:00")).timestamp()) / 3600
+                fdv = float(a.get("fdv_usd") or 0)
+            except Exception:
+                continue
+            mint = (((q.get("relationships") or {}).get("base_token") or {}).get("data") or {}).get("id", "").split("_", 1)[-1]
+            if age_h >= 48 and 8e4 <= fdv <= 7e5 and mint and not mint.startswith("So1111"):
+                cands.append({"sym": a.get("name", "").split(" / ")[0], "mint": mint, "mc": fdv, "age_h": age_h})
+    seen = set(); cands = [c for c in cands if not (c["mint"] in seen or seen.add(c["mint"]))]
+    for c in cands[:14]:
+        try:
+            ps = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{c['mint']}", timeout=8).json().get("pairs") or []
+        except Exception:
+            continue
+        if not ps: continue
+        p = max(ps, key=lambda x: (x.get("liquidity") or {}).get("usd") or 0)
+        liq = (p.get("liquidity") or {}).get("usd") or 0; mc = p.get("marketCap") or p.get("fdv") or 0
+        tx = p.get("txns") or {}; h6, h24 = tx.get("h6") or {}, tx.get("h24") or {}
+        px = float(p.get("priceUsd") or 0); ch6 = (p.get("priceChange") or {}).get("h6") or 0
+        if not (8e4 <= mc <= 7e5 and liq >= 2e4 and px > 0 and h6.get("buys", 0) > h6.get("sells", 0) and h24.get("buys", 0) > h24.get("sells", 0) and ch6 > 0):
+            continue
+        bs = h24["buys"] / max(1, h24["buys"] + h24["sells"])
+        out.append({"name": p.get("baseToken", {}).get("symbol") or c["sym"], "chain": "solana", "address": c["mint"], "tier": "micro", "side": "Long", "venue": "Spot", "spec": True,
+                    "mcap": mc, "entry_lo": px * 0.95, "entry_hi": px * 1.02, "stop": px * 0.72, "t1": px * 1.8, "t2": px * 3,
+                    "why": f"pump.fun graduate, {int(c['age_h'] // 24)}d old: buyers {bs:.0%} of 24h flow, up {ch6:.0f}% in 6h, ${liq/1000:.0f}k liquidity"})
+        if len(out) >= 3: break
+    for i in out:
+        i["risk"] = risk_score(i); i["thesis"] = idea_thesis(i)
+    return out
+
+
+def brief(reads, reg, fg, cbp, dex, ins, radar_lines=None) -> dict:
+    """Scannable headline card: headline, 3-4 icon bullets, chips, what I'm doing."""
+    bulls = [r["name"] for r in reads if r["tone"] == "bull"]; bears = [r["name"] for r in reads if r["tone"] == "bear"]
+    if reg["key"] == "risk_on": head = "Risk-on: buyers are in control"
+    elif reg["key"] == "risk_off": head = "Risk-off: protect capital first"
+    elif bears and not bulls: head = f"Chop with a weak {bears[0]}: sell rips, buy only the edges"
+    elif bulls and not bears: head = f"Range, but {bulls[0]} is leaning up"
+    else: head = "Range market: trade the edges, skip the middle"
+    b = []
+    if bulls or bears:
+        b.append({"i": "📈" if bulls and not bears else "📉" if bears and not bulls else "⚖️",
+                  "t": (f"{', '.join(bulls)} firm" if bulls else "") + (" · " if bulls and bears else "") + (f"{', '.join(bears)} weak" if bears else "")})
+    else:
+        b.append({"i": "⚖️", "t": "BTC, ETH, SOL all stuck in their ranges"})
+    if cbp is not None:
+        b.append({"i": "🇺🇸", "t": "US spot bid is present (Coinbase premium)" if cbp > 0.05 else "US spot demand is soft (Coinbase discount)" if cbp < -0.05 else "US spot flows are neutral"})
+    hot = [d for d in (dex or []) if d.get("buy_share", 0) >= 0.55]
+    if hot:
+        b.append({"i": "🔥", "t": "On-chain buyers lead " + ", ".join(d["pair"] for d in hot[:3])})
+    elif radar_lines:
+        b.append({"i": "🎰", "t": radar_lines[0]})
+    if ins and ins.get("beliefs"):
+        b.append({"i": "🌍", "t": ins["beliefs"][0][:120]})
+    doing = {"risk_on": "Full size on clean breakouts, letting winners run.", "risk_off": "Small size, quick profits, no chasing."}.get(
+        reg["key"], "Normal size at range edges, taking profits into strength.")
+    chips = [{"k": "Regime", "v": reg["label"], "tone": "bull" if reg["key"] == "risk_on" else "bear" if reg["key"] == "risk_off" else "neutral"}]
+    if fg:
+        chips.append({"k": "Fear & Greed", "v": f"{fg['v']} · {fg['cls']}", "tone": "bull" if fg["v"] >= 55 else "bear" if fg["v"] <= 40 else "neutral"})
+    if cbp is not None:
+        chips.append({"k": "CB premium", "v": f"{cbp:+.2f}%", "tone": "bull" if cbp > 0 else "bear"})
+    return {"headline": head, "bullets": b[:4], "chips": chips, "doing": doing}
+
+
 def build():
     LOG.clear()
     assets, derivs = {}, {}
@@ -550,14 +651,19 @@ def build():
     for lst in (mids, lows, micros):
         for i in lst:
             i["risk"] = risk_score(i)
+            i["thesis"] = idea_thesis(i)
+    tr = _with_radar(safe("trenches", trenches, dex, lows, reads, fg, next_boom()) or trenches_fallback(reads, fg, next_boom(), trend))
+    if not micros:
+        micros = safe("radar micros", radar_micros, tr) or []
     ins = _insights()
     if ins and ins.get("beliefs"):
         summary += " Daily reading: " + ins["beliefs"][0]
     return {"ts": time.time(), "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(), "regime": reg,
             "assets": reads, "fng": fg, "global": glob, "coinbase_premium": cbp, "trending": trend,
-            "hyperliquid": hl, "dex_flows": dex, "trade_ideas": [{**i, "risk": risk_score(i)} for i in (trade_ideas(assets, hl) if assets else [])],
+            "hyperliquid": hl, "dex_flows": dex, "trade_ideas": [{**i, "risk": risk_score(i), "thesis": idea_thesis(i)} for i in (trade_ideas(assets, hl) if assets else [])],
+            "brief": brief(reads, reg, fg, cbp, dex, ins, (tr.get("radar") or {}).get("lines")),
             "summary": summary, "stance": stance, "next_boom": boom_with_history(next_boom() or BOOM_DEFAULT), "mid_caps": mids, "low_caps": lows, "micro_caps": micros, "stocks_conv": stocks_conv,
-            "trenches": _with_radar(safe("trenches", trenches, dex, lows, reads, fg, next_boom()) or trenches_fallback(reads, fg, next_boom(), trend)),
+            "trenches": tr,
             "insights": ins, "schema": SCHEMA,
             "size_scale": regime_scale_for(reg["key"]), "warnings": LOG[-12:]}
 
@@ -760,10 +866,12 @@ def _with_radar(t: dict) -> dict:
         return t
     t = dict(t or {})
     t["radar"] = {"lines": r["lines"], "pads": [{"pad": p["pad"], "n": p.get("n", 0), "vol": p.get("vol", 0), "hot": (p.get("hot") or {}).get("sym")} for p in r["pads"]],
-                  "pump": {k: [{"sym": x["sym"], "mc": round(x["mc"])} for x in v[:5]] for k, v in r["pump"].items()},
+                  "pump": {k: [{"sym": x["sym"], "mc": round(x["mc"]), "mint": x.get("mint"), "age_h": x.get("age_h")} for x in v[:8]] for k, v in r["pump"].items()},
                   "tokensxyz": [x["sym"] for x in (r["tokensxyz"].get("trending") or [])][:8]}
     if r["lines"]:
-        t["take"] = (t.get("take") or "") + " Radar: " + "; ".join(r["lines"][:3]) + "."
+        hot = next((l for l in r["lines"] if l.startswith("hottest launchpad")), None)
+        if hot:
+            t["take"] = (t.get("take") or "").rstrip() + " " + hot[0].upper() + hot[1:] + "."
     grads = r["pump"].get("graduated") or []
     if grads:
         g = max(grads, key=lambda x: x["mc"])

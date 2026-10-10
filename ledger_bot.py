@@ -4881,6 +4881,11 @@ def main():
     except Exception as _e:
         print(f"[WARN] market thoughts / strategy lab not started: {_e}")
     try:
+        import ledger_discord_bot
+        ledger_discord_bot.start()
+    except Exception as _e:
+        print(f"[WARN] market thoughts / strategy lab not started: {_e}")
+    try:
         import persona
         persona.start_persona()
     except Exception as e:

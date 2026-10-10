@@ -21,6 +21,7 @@
     <button class="nav-btn" data-view="market">Market Thoughts</button>
     <button class="nav-btn" data-view="portfolio">Portfolio</button>
     <button class="nav-btn" data-view="predictions">Predictions</button>
+    <button class="nav-btn" data-view="ask">Ask Mirko</button>
   </nav>
   <div class="conn"><span class="dot" id="conn-dot"></span><span id="conn-status">connecting…</span></div>
 </header>
@@ -78,15 +79,15 @@
 
 <main class="wrap view hidden" id="view-market">
   <section class="card mt-hero">
-    <div><div class="label">Mirko Market Thoughts</div><h1 id="mt-regime">Preparing the first read…</h1><p id="mt-summary" class="mt-summary"></p>
-</div>
+    <div class="brief"><div class="label">Mirko Market Thoughts</div><h1 id="mt-regime">Preparing the first read…</h1>
+      <div class="br-chips" id="br-chips"></div><ul class="br-list" id="br-list"></ul><div class="br-doing" id="br-doing"></div></div>
     <div class="fng"><canvas id="fng-gauge" width="220" height="130"></canvas><div class="fng-v mono" id="fng-v">—</div><div class="muted" id="fng-l">Fear &amp; Greed</div></div>
   </section>
   <div class="mt-row">
     <section class="assets slim" id="mt-assets"></section>
     <section class="card boom"><div class="card-head"><h2>🔭 Next Boom</h2><div class="tabs" id="boom-tabs"><button class="tab active" data-b="cur">Current</button><button class="tab" data-b="prev">Previous</button></div></div><div id="mt-boom"></div><div id="mt-boom-prev" class="hidden"></div><div class="boom-foot" id="boom-w"></div></section>
   </div>
-  <section class="card ideas-card"><div class="card-head"><h2>🎯 Trade ideas</h2><span class="risk-legend">risk 🟢 0–3 · 🟡 4–6 · 🟠 7–8 · 🔴 9–10</span></div>
+  <section class="card ideas-card"><div class="card-head"><h2>🎯 Trade ideas</h2></div>
     <div class="ideas-4">
       <div><div class="ideas-h">Majors</div><div id="mt-maj" class="ideas-col"></div></div>
       <div><div class="ideas-h">Mid caps</div><div id="mt-mid" class="ideas-col"></div></div>
@@ -132,6 +133,21 @@
     <div class="hist-list" id="hist-list"></div>
   </section>
   <footer class="foot">Paper predictions · ESPN public data, Kalshi &amp; Polymarket public markets as reference odds · not betting advice</footer>
+</main>
+
+<main class="wrap view hidden" id="view-ask">
+  <section class="card ask-card">
+    <div class="ask-head"><img src="wolf.webp" alt="" class="ask-av"><div><div class="label">Ask Mirko · same brain as his trades</div><h2>Ask me anything about the market, my positions or my picks</h2>
+      <p class="muted sm">Answers come from my live read, my paper portfolio and my predictions. Not financial advice. Questions are shown publicly without names; 5 per minute, 30 per day.</p></div></div>
+    <div class="ask-log" id="ask-log" aria-live="polite"></div>
+    <form class="ask-form" id="ask-form" autocomplete="off">
+      <input type="text" name="website" id="ask-hp" class="hp" tabindex="-1" aria-hidden="true">
+      <input type="text" id="ask-q" maxlength="400" placeholder="e.g. Why are you short ETH? What's your best micro cap right now?" required>
+      <span class="ask-n mono" id="ask-n">0/400</span><button class="btn" id="ask-send" type="submit">Ask</button>
+    </form>
+    <div class="ask-chips" id="ask-chips"><button type="button" class="src-chip">What's your read on BTC today?</button><button type="button" class="src-chip">Which trade idea do you like most?</button><button type="button" class="src-chip">Why that football pick?</button><button type="button" class="src-chip">What's the next boom?</button></div>
+  </section>
+  <section class="card"><div class="card-head"><h2>Recent questions</h2></div><div id="ask-recent" class="ask-recent"></div></section>
 </main>
 
 <main class="wrap view hidden" id="view-owner">

@@ -1,211 +1,78 @@
 """
-ledger_discord_bot.py — Mirko, live in your Discord server
+ledger_discord_bot.py — Mirko answers in your Discord server.
 
-This is the conversational half of Mirko: he responds when mentioned
-or DM'd, in his own voice, grounded in:
-  - His actual persona (trench-native, balanced risk, businessman core)
-  - His current paper trading state (open positions, recent PnL) —
-    read from ledger_state.json, produced by ledger_bot.py
-  - His recent market research — read from market_intel.json,
-    produced by market_intel.py
-This keeps his answers consistent with what he's actually "seen" and
-"done," instead of generic chatbot responses.
+Uses the SAME answer function as the website's "Ask Mirko" (ask.answer): same brain/context,
+same per-user limits (5/min, 30/day), global daily cap, abuse + prompt-injection guards.
+He replies when @mentioned, when DM'd, or to every message in the channel named
+DISCORD_ASK_CHANNEL (default "ask-mirko"). He never executes anything from chat.
 
-Env vars required:
-  DISCORD_BOT_TOKEN   - from discord.com/developers/applications
-                         (needs the "Message Content" privileged intent
-                         enabled in the Bot settings, or he can't read
-                         what people write)
-  ANTHROPIC_API_KEY
-
-Install:
-  pip install discord.py requests --break-system-packages
-
-Usage:
-  python3 ledger_discord_bot.py
+Runs inside the main service (ledger_bot.py calls start()) when DISCORD_BOT_TOKEN is set.
+Needs: Discord Developer Portal -> Bot -> "Message Content Intent" ON; bot invited with
+View Channels, Send Messages, Read Message History (and Embed Links optional).
 """
-
+import asyncio
 import os
-import json
-import requests
-import discord
-from pathlib import Path
+import threading
 
 DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
-MODEL = "claude-sonnet-5"
-
-# Must match ledger_bot.py (DATA_DIR volume on Railway) — reading the repo-root
-# copy meant the Discord bot always answered from an empty, stale state.
-LEDGER_STATE_FILE = Path(os.environ.get("DATA_DIR", ".")) / "ledger_state.json"
-MARKET_INTEL_FILE = Path("market_intel.json")
-TRADING_PLAYBOOK_FILE = Path("trading_playbook.md")
-
-LEDGER_SYSTEM_PROMPT = """You are Mirko, a self-made Solana memecoin \
-trader turned businessman. You cut your teeth in the trenches — \
-survived enough rugs and 100x's to develop real discipline. You're not \
-a hype-poster; you've seen too many people blow up chasing green \
-candles. You think like a businessman first, degen second: every \
-trade is a position sized against a thesis, not a vibe.
-
-Voice: trench-native, a little cocky when you're right, direct and \
-undecorated when you're wrong or passing on something. You say things \
-like "this one's got legs," "thin liquidity, I'm not touching it," \
-"sized in small, this is a scout not a full position." You're \
-fundamentally a businessman underneath the slang, not defined by it.
-
-Risk profile: balanced. You take decent-conviction setups, not just \
-A+ ones — you're not waiting around for perfect. You size smaller on \
-unproven "scout" plays, bigger on high-conviction setups. You call out \
-obvious rugs and thin liquidity without hesitation.
-
-You're currently running in PAPER TRADING mode — no real money is on \
-the line yet. Be honest about that if asked; don't pretend trades are \
-real. You're building a track record before real capital gets involved.
-
-Keep replies conversational and Discord-appropriate — a few sentences, \
-not an essay, unless someone genuinely asks for a deep breakdown."""
+ASK_CHANNEL = os.environ.get("DISCORD_ASK_CHANNEL", "ask-mirko").lstrip("#").lower()
+_started = False
 
 
-def load_context() -> str:
-    """
-    Pulls in current trading state and recent market research to
-    ground Mirko's replies in what he's actually seen and done.
-    """
-    context_parts = []
+def _build_client():
+    import discord
+    import ask
 
-    if LEDGER_STATE_FILE.exists():
-        try:
-            state = json.loads(LEDGER_STATE_FILE.read_text())
-            open_positions = state.get("open_positions", {})
-            balance = state.get("balance_sol", "unknown")
-            pnl = state.get("realized_pnl_sol", "unknown")
+    intents = discord.Intents.default()
+    intents.message_content = True
+    client = discord.Client(intents=intents, allowed_mentions=discord.AllowedMentions.none())
 
-            position_lines = []
-            for mint, pos in open_positions.items():
-                symbol = pos.get("symbol") or "(unresolved symbol)"
-                position_lines.append(
-                    f"  - {symbol} — full mint: {mint} — entry {pos.get('entry_price')}, "
-                    f"size {pos.get('size_sol')} SOL, opened by {pos.get('opened_by', 'unknown')}"
-                )
-            positions_text = "\n".join(position_lines) if position_lines else "  (none)"
+    @client.event
+    async def on_ready():
+        print(f"[DISCORD-BOT] Mirko is live as {client.user} · answers on @mention, DMs and #{ASK_CHANNEL}")
 
-            context_parts.append(
-                f"Current paper trading state: balance {balance} SOL, "
-                f"realized PnL {pnl} SOL, {len(open_positions)} open position(s):\n{positions_text}\n\n"
-                f"IMPORTANT: when asked for a token's address/mint, always give the FULL "
-                f"address shown above verbatim — never truncate or abbreviate it with '...'."
-            )
-        except (json.JSONDecodeError, OSError) as e:
-            print(f"[WARN] couldn't load ledger state: {e}")
+    @client.event
+    async def on_message(message):
+        if message.author.bot or message.author == client.user:
+            return
+        is_dm = isinstance(message.channel, discord.DMChannel)
+        mentioned = client.user in message.mentions
+        in_channel = getattr(message.channel, "name", "").lower() == ASK_CHANNEL
+        if not (is_dm or mentioned or in_channel):
+            return
+        text = message.content.replace(f"<@{client.user.id}>", "").replace(f"<@!{client.user.id}>", "").strip()
+        if not text:
+            return
+        async with message.channel.typing():
+            res = await asyncio.get_running_loop().run_in_executor(None, ask.answer, text, str(message.author.id), "discord")
+        await message.reply(res["answer"][:1900], mention_author=False)
 
-    if MARKET_INTEL_FILE.exists():
-        try:
-            entries = json.loads(MARKET_INTEL_FILE.read_text())
-            recent = entries[-3:]  # most recent research findings
-            if recent:
-                notes = "\n".join(f"- ({e['timestamp']}) {e['summary']}" for e in recent)
-                context_parts.append(f"Your recent market research:\n{notes}")
-        except (json.JSONDecodeError, OSError) as e:
-            print(f"[WARN] couldn't load market intel: {e}")
+    return client
 
+
+def start():
+    """Start the bot on a background thread (no-op without a token or discord.py)."""
+    global _started
+    if _started or not DISCORD_BOT_TOKEN:
+        if not DISCORD_BOT_TOKEN:
+            print("[DISCORD-BOT] DISCORD_BOT_TOKEN not set; chat bot off")
+        return
     try:
-        import learning
-        lj = learning.summary_for_discord(8)
-        if lj:
-            context_parts.append(
-                "Your learning journal (what you've measured and changed — cite it when asked how "
-                "you're improving; it's measured paper results, not promises):\n" + lj)
+        client = _build_client()
     except Exception as e:
-        print(f"[WARN] couldn't load learning journal: {e}")
+        print(f"[DISCORD-BOT] disabled: {type(e).__name__}")
+        return
+    _started = True
 
-    return "\n\n".join(context_parts) if context_parts else "No trading state or research data available yet."
-
-
-def ask_claude(user_message: str) -> str:
-    if not ANTHROPIC_API_KEY:
-        return "(Mirko's brain isn't wired up — ANTHROPIC_API_KEY isn't set.)"
-
-    context = load_context()
-    playbook = ""
-    if TRADING_PLAYBOOK_FILE.exists():
+    def run():
         try:
-            playbook = TRADING_PLAYBOOK_FILE.read_text()
-        except OSError as e:
-            print(f"[WARN] couldn't load trading playbook: {e}")
-
-    full_system_prompt = (
-        f"{LEDGER_SYSTEM_PROMPT}\n\n"
-        f"--- Your trading playbook (draw on this for strategy/psychology questions, don't recite verbatim) ---\n"
-        f"{playbook or 'No playbook loaded yet.'}\n\n"
-        f"--- Current context ---\n{context}"
-    )
-
-    headers = {
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-    }
-    payload = {
-        "model": MODEL,
-        "max_tokens": 1500,  # Sonnet 5 reserves budget for adaptive thinking by default — low values can 400
-        "system": full_system_prompt,
-        "messages": [{"role": "user", "content": user_message}],
-    }
-
-    try:
-        resp = requests.post(ANTHROPIC_API_URL, headers=headers, json=payload, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-        text_parts = [b["text"] for b in data.get("content", []) if b.get("type") == "text"]
-        return "\n".join(text_parts).strip() or "(no response generated)"
-    except requests.exceptions.HTTPError as e:
-        body = e.response.text[:500] if e.response is not None else "no response body"
-        print(f"[ERROR] Claude API HTTP error: {e} — body: {body}")
-        return "Having trouble thinking straight right now — try again in a bit."
-    except Exception as e:
-        # Broad on purpose — this feeds directly into a Discord reply,
-        # so ANY failure here (network, malformed response, whatever)
-        # must degrade gracefully instead of crashing the bot's message
-        # handler and going silent.
-        print(f"[ERROR] Claude API call failed: {e}")
-        return "Having trouble thinking straight right now — try again in a bit."
-
-
-# ── Discord client ───────────────────────────────────────────────────
-
-intents = discord.Intents.default()
-intents.message_content = True  # required to read message text — must
-                                 # also be enabled in the Dev Portal
-
-client = discord.Client(intents=intents)
-
-
-@client.event
-async def on_ready():
-    print(f"Mirko is live as {client.user}")
-
-
-@client.event
-async def on_message(message):
-    if message.author == client.user:
-        return  # never respond to himself
-
-    is_mentioned = client.user in message.mentions
-    is_dm = isinstance(message.channel, discord.DMChannel)
-
-    if not (is_mentioned or is_dm):
-        return  # only respond when directly addressed — not every message in the channel
-
-    async with message.channel.typing():
-        # Strip the mention itself out of the text sent to Claude
-        clean_content = message.content.replace(f"<@{client.user.id}>", "").strip()
-        reply = ask_claude(clean_content or "Someone said hi with no message.")
-        await message.reply(reply)
+            asyncio.run(client.start(DISCORD_BOT_TOKEN))
+        except Exception as e:   # bad token / missing intent -> log, never crash the trading loop
+            print(f"[DISCORD-BOT] stopped: {type(e).__name__}: {str(e)[:160]}")
+    threading.Thread(target=run, name="discord-bot", daemon=True).start()
 
 
 if __name__ == "__main__":
     if not DISCORD_BOT_TOKEN:
         raise RuntimeError("Set DISCORD_BOT_TOKEN env var first.")
-    client.run(DISCORD_BOT_TOKEN)
+    asyncio.run(_build_client().start(DISCORD_BOT_TOKEN))
