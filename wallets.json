@@ -14,6 +14,8 @@
     {"handle": "Quantzer", "address": "8f39XhhZoRD8sYb6K5K9N7iSHXkL7BDmFFQNDF3TtsEr", "priority": true, "active": false},
     {"handle": "fomo:OuterHeavyBat (unipcs alt)", "address": "49nvFkUxnxd4wXY5W9XygB93rzDUvugaxK5AkMqqxmgS", "priority": true, "active": true, "note": "profile-linked Solana wallet; low confidence it is the trading wallet (OHB appears to trade on BSC via 0x4f..4c55, full address unresolved)"},
     {"handle": "fomo:DumbCrayonEater", "address": "5FGoPPj1nL8LCnfVnpTmreqQtqLuMXXAwuS1uahMrp8V", "priority": true, "active": true},
-    {"handle": "fomo:DegenCapitalLLC (unverified wallet)", "address": "4CRX74nxAdmFY4Eh1WhTrmYqHoxwxGzwXfgzTWvhUfFn", "priority": true, "active": true}
+    {"handle": "fomo:DegenCapitalLLC (unverified wallet)", "address": "4CRX74nxAdmFY4Eh1WhTrmYqHoxwxGzwXfgzTWvhUfFn", "priority": true, "active": true},
+    {"handle": "fomo:ogle", "address": "jrbGz3zoBJfptXF967xp6h5TBRV55ArvGeWxTQVs5Ux", "priority": true, "active": true, "note": "HFT; wallet from fomoapi.io/top100 (Provadata also lists 2fhP..PQXd, full address unresolved)"},
+    {"handle": "fomo:unipcs", "address": "2heJbC32Tpfcb3nbUb5ER61K11FGZVfVGtVnDm6LDogF", "priority": true, "active": true, "note": "main account; verified by Provadata + fomoapi.io/top100"}
   ]
 }

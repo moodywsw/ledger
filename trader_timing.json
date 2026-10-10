@@ -118,5 +118,29 @@
    "max_hold_s": 1916,
    "basis": "n=8"
   }
+ },
+ "jrbGz3zoBJfptXF967xp6h5TBRV55ArvGeWxTQVs5Ux": {
+  "handle": "fomo:ogle",
+  "stats": {
+   "n": 0
+  },
+  "params": {
+   "max_entry_delay_s": 20,
+   "tp_first_pct": 0.08,
+   "max_hold_s": 300,
+   "basis": "default (n<3)"
+  }
+ },
+ "2heJbC32Tpfcb3nbUb5ER61K11FGZVfVGtVnDm6LDogF": {
+  "handle": "fomo:unipcs",
+  "stats": {
+   "n": 0
+  },
+  "params": {
+   "max_entry_delay_s": 20,
+   "tp_first_pct": 0.08,
+   "max_hold_s": 300,
+   "basis": "default (n<3)"
+  }
  }
 }
