@@ -431,7 +431,7 @@ def trade_ideas(assets, hl):
     return out
 
 
-SCHEMA = 8
+SCHEMA = 9
 BOOM_DEFAULT = {"theme": "AI infrastructure", "emoji": "🤖", "thesis": "Compute, power and data centres keep absorbing capital; the picks-and-shovels trade is the patient one.",
                 "boom_window": "Nov 2026 – Dec 2027", "why_now": ["Hyperscaler capex guidance keeps rising", "Power and cooling are the new bottleneck"],
                 "crypto": ["TAO", "RENDER", "FET"], "stocks": ["NVDA", "AVGO", "VRT", "CEG"], "invalidation": "Capex cuts from two or more hyperscalers."}
@@ -636,7 +636,39 @@ DESK_SCHEMA = ('{"bias": "Bullish|Bearish|Neutral, with lean e.g. \'Neutral, lea
                '"levels": [{"asset": "BTC", "support": "$x / $y", "resistance": "$x / $y", "pivot": "$x"}], '
                '"flows": ["3-5 bullets on positioning/flows: funding, OI, taker/CVD, top-trader & retail L/S, ETF flows, Coinbase premium, stablecoin supply, liquidations"], '
                '"plan": [{"if": "trigger with level", "then": "action with entry/target/stop"}], '
-               '"risks": ["2-3 concrete risks/catalysts"]}')
+               '"risks": ["2-3 concrete risks/catalysts"], '
+               '"coins": [{"asset": "BTC", "trend": "Up|Down|Range (timeframe)", "bias": "Bullish|Bearish|Neutral", "support": "$x", "resistance": "$x", '
+               '"flip": "what would flip the view (level + condition)", "call": "one-line call"}] (BTC, ETH, SOL), '
+               '"smart_money": {"accumulating": [{"name": "asset or group", "why": "evidence with number"}], "distributing": [{"name": "...", "why": "..."}]}, '
+               '"degen_picks": [{"name": "TICKER from the candidate list", "chain": "...", "thesis": "visionary 1-2 sentence bull case", "risk": "what kills it"}] (0-3, only from candidates; bold but reasoned)}')
+
+
+def smart_money_rules(reads, dex, lows=None) -> dict:
+    acc, dis = [], []
+    for r in reads:
+        hl = r.get("hl") or {}
+        n = (hl.get("longs") or 0) + (hl.get("shorts") or 0)
+        if n >= 4:
+            if hl["longs"] >= 0.65 * n: acc.append({"name": r["name"], "why": f"Hyperliquid top traders {hl['longs']}/{n} long"})
+            elif hl["shorts"] >= 0.65 * n: dis.append({"name": r["name"], "why": f"Hyperliquid top traders {hl['shorts']}/{n} short"})
+        tl = r.get("top_long")
+        if tl and r.get("retail_long") and tl - r["retail_long"] >= 0.05:
+            acc.append({"name": r["name"], "why": f"Binance top traders {tl:.0%} long vs retail {r['retail_long']:.0%}"})
+        elif tl and r.get("retail_long") and r["retail_long"] - tl >= 0.05:
+            dis.append({"name": r["name"], "why": f"top traders {tl:.0%} long vs retail {r['retail_long']:.0%}: pros lighter than the crowd"})
+    try:
+        import eyes
+        e = eyes.cached()
+        for k in ("etf_btc", "etf_eth", "etf_sol"):
+            x = e.get(k)
+            if x and abs(x["sum5"]) >= 20:
+                (acc if x["sum5"] > 0 else dis).append({"name": f"{x['asset']} ETFs", "why": f"5-day net {x['sum5']:+.0f}m"})
+    except Exception:
+        pass
+    for d in (dex or [])[:8]:
+        if d.get("buy_share", 0.5) >= 0.58: acc.append({"name": d["pair"], "why": f"{d['buy_share']:.0%} of on-chain volume is buys"})
+        elif d.get("buy_share", 0.5) <= 0.42: dis.append({"name": d["pair"], "why": f"only {d['buy_share']:.0%} buys on-chain"})
+    return {"accumulating": acc[:6], "distributing": dis[:6]}
 
 
 def _desk_facts(reads, reg, fg, cbp, glob, dex, prev) -> str:
@@ -659,6 +691,14 @@ def _desk_facts(reads, reg, fg, cbp, glob, dex, prev) -> str:
         pass
     hot = [f"{d['pair']} buy share {d.get('buy_share', 0):.0%}" for d in (dex or [])[:4]]
     if hot: L.append("DEX flows: " + ", ".join(hot))
+    try:
+        c = cached() or {}
+        cands = [f"{i['name']} ({i.get('chain', '')}, mcap {i.get('mcap')}, {i.get('why', '')[:90]})" for i in (c.get("micro_caps") or []) + (c.get("low_caps") or [])][:8]
+        tr = c.get("trenches") or {}
+        cands += [f"{x.get('sym') or x.get('name')} ({x.get('chain', '')}: {str(x.get('why') or x.get('note') or '')[:80]})" for x in (tr.get("could_pump") or tr.get("pump") or [])[:6] if isinstance(x, dict)]
+        if cands: L.append("DEGEN CANDIDATES (micro/low caps passing sanity filters): " + " | ".join(cands))
+    except Exception:
+        pass
     if prev:
         L.append("PREVIOUS READ: " + json.dumps({k: prev.get(k) for k in ("bias", "confidence", "headline", "levels", "ts_h")})[:900])
     return "\n".join(L)
@@ -666,7 +706,7 @@ def _desk_facts(reads, reg, fg, cbp, glob, dex, prev) -> str:
 
 def desk_note(reads, reg, fg, cbp, glob, dex) -> dict | None:
     prev = (cached() or {}).get("desk")
-    if prev and time.time() - prev.get("ts", 0) < 3600 * 1.5:
+    if prev and prev.get("coins") and time.time() - prev.get("ts", 0) < 3600 * 1.5:
         return prev
     try:
         import llm
@@ -684,8 +724,10 @@ def desk_note(reads, reg, fg, cbp, glob, dex) -> dict | None:
         d["confidence"] = max(0, min(100, int(d.get("confidence") or 50)))
     except (TypeError, ValueError):
         d["confidence"] = 50
-    for k in ("changed", "flows", "risks", "plan", "levels"):
+    for k in ("changed", "flows", "risks", "plan", "levels", "coins", "degen_picks"):
         d[k] = [x for x in (d.get(k) or []) if x][:6]
+    sm = d.get("smart_money") if isinstance(d.get("smart_money"), dict) else {}
+    d["smart_money"] = {k: [x for x in (sm.get(k) or []) if isinstance(x, dict) and x.get("name")][:6] for k in ("accumulating", "distributing")}
     return d
 
 
@@ -725,6 +767,7 @@ def build():
             "hyperliquid": hl, "dex_flows": dex, "trade_ideas": [{**i, "risk": risk_score(i), "thesis": idea_thesis(i)} for i in (trade_ideas(assets, hl) if assets else [])],
             "brief": brief(reads, reg, fg, cbp, dex, ins, (tr.get("radar") or {}).get("lines")),
             "desk": safe("desk note", desk_note, reads, reg, fg, cbp, glob, dex),
+            "smart_money": safe("smart money", smart_money_rules, reads, dex) or {"accumulating": [], "distributing": []},
             "summary": summary, "stance": stance, "next_boom": boom_with_history(next_boom() or BOOM_DEFAULT), "mid_caps": mids, "low_caps": lows, "micro_caps": micros, "stocks_conv": stocks_conv,
             "trenches": tr,
             "insights": ins, "schema": SCHEMA,

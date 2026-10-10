@@ -84,23 +84,26 @@
       <div class="br-chips" id="br-chips"></div><ul class="br-list" id="br-list"></ul><div class="br-doing" id="br-doing"></div></div>
     <div class="fng"><canvas id="fng-gauge" width="220" height="130"></canvas><div class="fng-v mono" id="fng-v">—</div><div class="muted" id="fng-l">Fear &amp; Greed</div></div>
   </section>
-  <section class="card desk hidden" id="mt-desk"></section>
+  <section class="card bub-card" id="bub-card">
+    <div class="card-head"><div><div class="label">Top 50 · CoinGecko · trending ★ · tap a bubble</div><h2>🫧 Market bubbles</h2></div>
+      <div class="seg" id="bub-tf"><button data-tf="h1">1h</button><button data-tf="d1" class="on">24h</button><button data-tf="w1">7d</button></div></div>
+    <canvas id="bub" height="260" aria-label="Crypto bubbles: size and colour by price change"></canvas></section>
   <div class="mt-row">
-    <section class="assets slim" id="mt-assets"></section>
+    <section class="majors" id="mt-assets"></section>
     <section class="card boom"><div class="card-head"><h2>🔭 Next Boom</h2><div class="tabs" id="boom-tabs"><button class="tab active" data-b="cur">Current</button><button class="tab" data-b="prev">Previous</button></div></div><div id="mt-boom"></div><div id="mt-boom-prev" class="hidden"></div><div class="boom-foot" id="boom-w"></div></section>
   </div>
-  <section class="card ideas-card"><div class="card-head"><h2>🎯 Trade ideas</h2></div>
+  <section class="card sm-card" id="sm-card"><div class="card-head"><div><div class="label">Who's buying, who's selling</div><h2>🐋 Smart money: accumulating / distributing</h2></div></div>
+    <div class="sm-grid"><div class="sm-col acc"><h3>▲ Accumulating</h3><ul id="sm-acc"></ul></div><div class="sm-col dis"><h3>▼ Distributing</h3><ul id="sm-dis"></ul></div></div></section>
+  <section class="card ideas-card"><div class="card-head"><div><div class="label">Entry → target · stop, with the why</div><h2>🎯 Trade ideas</h2></div></div>
     <div class="ideas-4">
       <div><div class="ideas-h">Majors</div><div id="mt-maj" class="ideas-col"></div></div>
       <div><div class="ideas-h">Mid caps</div><div id="mt-mid" class="ideas-col"></div></div>
       <div><div class="ideas-h">Low caps</div><div id="mt-low" class="ideas-col"></div></div>
-      <div><div class="ideas-h">Micro caps</div><div id="mt-micro" class="ideas-col"></div></div>
-    </div>
-    <div class="trench-in" id="trench-box"><div class="tr-head"><span class="tr-title">⛏ Mirko on the trenches</span><span class="tr-badge" id="tr-mood">—</span></div><div id="mt-trench"></div></div></section>
-  <section class="card bub-card" id="bub-card">
-    <div class="card-head"><div><div class="label">Top 50 · CoinGecko · trending ★</div><h2>🫧 Trending bubbles</h2></div>
-      <div class="seg" id="bub-tf"><button data-tf="h1">1h</button><button data-tf="d1" class="on">24h</button><button data-tf="w1">7d</button></div></div>
-    <canvas id="bub" height="260" aria-label="Crypto bubbles: size and colour by price change"></canvas></section>
+      <div><div class="ideas-h">Micro caps · degen</div><div id="mt-micro" class="ideas-col"></div></div>
+    </div></section>
+  <section class="card desk-sec"><div class="card-head"><div><div class="label">Positioning · levels · plan · trenches</div><h2>🧭 Mirko's Desk</h2></div></div>
+    <div id="mt-desk" class="desk hidden"></div>
+    <div class="trench-in" id="trench-box"><div class="tr-head"><span class="tr-title">⛏ Trenches</span><span class="tr-badge" id="tr-mood">—</span></div><div id="mt-trench"></div></div></section>
   <section class="card reading" id="reading">
     <div class="rd-head"><div><div class="label">Daily intake · funds · policy · tech</div><h2>📚 What Mirko read today</h2></div></div>
     <div class="rd-chips" id="rd-chips"></div>

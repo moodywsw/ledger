@@ -178,29 +178,29 @@ async function loadMarket() {
     const bt = /bull/i.test(D.bias) ? "bull" : /bear/i.test(D.bias) ? "bear" : "neutral";
     $("mt-regime").textContent = D.headline;
     $("br-chips").insertAdjacentHTML("afterbegin", `<span class="brc ${bt}"><small>Bias</small><b>${esc(D.bias)}</b></span><span class="brc"><small>Confidence</small><b>${D.confidence}%</b></span>`);
-    $("br-doing").innerHTML = `<span class="hud-label">Takeaway</span> ${esc(D.takeaway || "")}`;
+    const SMx = (D.smart_money && (D.smart_money.accumulating || []).length) ? D.smart_money : (m.smart_money || {});
+    const smLine = [(SMx.accumulating || []).length ? `smart money accumulating ${SMx.accumulating.slice(0, 3).map(x => x.name).join(", ")}` : "", (SMx.distributing || []).length ? `distributing ${SMx.distributing.slice(0, 3).map(x => x.name).join(", ")}` : ""].filter(Boolean).join("; ");
+    $("br-doing").innerHTML = `<span class="hud-label">Takeaway</span> ${esc(D.takeaway || "")}${smLine ? ` <span class="sm-inline">🐋 ${esc(smLine)}.</span>` : ""}`;
     $("br-list").innerHTML = (D.plan || []).slice(0, 2).map(p => `<li><span class="bi">🎯</span><span><b>If</b> ${esc(p.if || "")} <b>→</b> ${esc(p.then || "")}</span></li>`).join("");
     const li = xs => (xs || []).map(x => `<li>${esc(x)}</li>`).join("");
-    $("mt-desk").innerHTML = `<div class="dk-head"><div><div class="label">Desk note · ${esc(D.ts_h || "")}</div><h2>Positioning, levels &amp; plan</h2></div>
-        <div class="dk-bias ${bt}"><span>${esc(D.bias)}</span><i style="--c:${D.confidence}%"></i><b class="mono">${D.confidence}%</b></div></div>
+    $("mt-desk").innerHTML = `<div class="dk-meta"><span class="dk-bias ${bt}"><span>${esc(D.bias)}</span><i style="--c:${D.confidence}%"></i><b class="mono">${D.confidence}%</b></span><span class="muted sm mono">desk note · ${esc(D.ts_h || "")}</span></div>
       <div class="dk-grid">
         <div class="dk-box"><h3>⟳ What changed</h3><ul>${li(D.changed)}</ul></div>
         <div class="dk-box"><h3>⚖ Positioning &amp; flows</h3><ul>${li(D.flows)}</ul></div>
-        <div class="dk-box"><h3>📐 Key levels</h3><table class="dk-lv mono"><thead><tr><th></th><th>Support</th><th>Pivot</th><th>Resistance</th></tr></thead><tbody>${(D.levels || []).map(l => `<tr><td><b>${esc(l.asset)}</b></td><td class="pos">${esc(l.support || "")}</td><td>${esc(l.pivot || "")}</td><td class="neg">${esc(l.resistance || "")}</td></tr>`).join("")}</tbody></table></div>
         <div class="dk-box"><h3>🎯 Plan</h3><ul class="dk-plan">${(D.plan || []).map(p => `<li><span class="if">IF</span> ${esc(p.if || "")} <span class="then">→</span> ${esc(p.then || "")}</li>`).join("")}</ul></div>
         <div class="dk-box"><h3>⚠ Risks</h3><ul>${li(D.risks)}</ul></div>
+        ${(D.degen_picks || []).length ? `<div class="dk-box degen"><h3>🎲 Degen picks · high risk</h3><ul class="dg">${D.degen_picks.map(x => `<li><b>${esc(x.name)}</b>${x.chain ? ` <span class="cn">${esc(x.chain)}</span>` : ""}<p>${esc(x.thesis || "")}</p><small>☠ ${esc(x.risk || "")}</small></li>`).join("")}</ul></div>` : ""}
       </div>`;
     $("mt-desk").classList.remove("hidden");
   } else $("mt-desk").classList.add("hidden");
   if (m.fng) { $("fng-v").textContent = m.fng.v; $("fng-l").textContent = `${m.fng.cls} · yesterday ${m.fng.prev}`; drawFng(m.fng.v); }
   const riskEmo = r => r == null ? "" : r <= 3 ? "🟢" : r <= 6 ? "🟡" : r <= 8 ? "🟠" : "🔴";
   const riskOf = i => i.risk ?? Math.max(0, Math.min(10, ({ mid: 4, low: 7, micro: 8 }[i.tier] ?? 2) + (i.venue === "Perp" ? 1 : 0) + ((i.rr || 0) < 1.5 ? 1 : 0) + (i.spec ? 1 : 0)));
-  const idea = i => (i = { ...i, risk: riskOf(i) }, `<article class="ic ${i.side === "Long" ? "long" : "short"}">
-      <header>${icon(i.name, i.address || i.mint, i.chain)}<span class="ic-tk">${esc(i.name)}</span><span class="ic-side">${i.side.toUpperCase()}</span><span class="ic-venue">${esc(i.venue)}${i.chain ? " · " + esc(i.chain) : ""}</span>
-        <span class="ic-risk" title="Risk score 0-10">${riskEmo(i.risk)} ${i.risk ?? "–"}<small>/10</small></span></header>
-      <dl class="ic-kv mono"><dt>Entry</dt><dd>${fp(i.entry_lo)} – ${fp(i.entry_hi)}</dd><dt>Stop</dt><dd class="neg">${fp(i.stop)}</dd>
-        <dt>Target</dt><dd class="pos">${fp(i.t1)}${i.t2 ? ` → ${fp(i.t2)}` : ""}</dd>${i.mcap ? `<dt>Mcap</dt><dd>${big(i.mcap)}</dd>` : ""}</dl>
-      ${i.thesis ? `<dl class="ic-th"><dt>Why</dt><dd>${esc(i.thesis.why)}</dd><dt>Trigger</dt><dd>${esc(i.thesis.trigger)}</dd><dt>Invalid</dt><dd>${esc(i.thesis.invalid)}</dd></dl>` : i.why ? `<p class="ic-why">${esc(i.why)}</p>` : ""}</article>`);
+  const idea = i => (i = { ...i, risk: riskOf(i) }, `<article class="ic2 ${i.side === "Long" ? "long" : "short"}">
+      <header>${icon(i.name, i.address || i.mint, i.chain)}<b class="ic-tk">${esc(i.name)}</b><span class="ic-side">${i.side === "Long" ? "▲ Long" : "▼ Short"}</span><span class="ic-venue">${esc(i.venue)}${i.chain ? " · " + esc(i.chain) : ""}${i.mcap ? " · " + big(i.mcap) : ""}</span>
+        <span class="ic-risk" title="Risk 0-10">${riskEmo(i.risk)}${i.risk ?? "–"}</span></header>
+      <div class="ic-line mono">Entry <b>${fp(i.entry_lo)}–${fp(i.entry_hi)}</b> <span class="arr">→</span> TP <b class="tp">${fp(i.t1)}${i.t2 ? ` / ${fp(i.t2)}` : ""}</b> <span class="dot">·</span> SL <b class="sl">${fp(i.stop)}</b></div>
+      <p class="ic-th2">${esc((i.thesis && i.thesis.why) || i.why || "")}${i.thesis && i.thesis.trigger ? `<span class="ic-trg"> Trigger: ${esc(i.thesis.trigger)}. Invalid: ${esc(i.thesis.invalid || "")}</span>` : ""}</p></article>`);
   const col = (xs, msg) => xs.length ? xs.map(idea).join("") : `<div class="empty sm">${msg}</div>`;
   $("mt-maj").innerHTML = col(m.trade_ideas || [], "No clean setup on the majors.");
   $("mt-mid").innerHTML = col(m.mid_caps || [], "No mid cap is accumulating cleanly.");
@@ -232,11 +232,20 @@ async function loadMarket() {
       ${(b.why_now || []).length ? `<div class="bsec"><div class="bsec-h">Catalysts</div><ul class="cat-list">${b.why_now.slice(0, 4).map(w => `<li>${md(w)}</li>`).join("")}</ul></div>` : ""}
       ${b.invalidation ? `<div class="callout"><div class="callout-h">⚠ Invalidation</div><div>${md(b.invalidation)}</div></div>` : ""}` : empty("No theme in rotation.");
   try {
-  $("mt-assets").innerHTML = m.assets.map(a => `<div class="card asset slim t-${a.tone}">
-    <div class="a-head"><div class="a-id">${icon(a.name)}<span class="a-name">${a.name}</span><span class="a-px mono">${fp(a.price)}</span></div>
-      <div class="a-right"><span class="bias b-${a.tone}">${esc(a.bias.split(" ·")[0])}</span><span class="mono sm">24h <span class="${cls(a.chg24)}">${pc(a.chg24)}</span> · 7d <span class="${cls(a.chg7)}">${pc(a.chg7)}</span></span></div></div>
+  const DC = Object.fromEntries(((m.desk || {}).coins || []).map(c => [String(c.asset).toUpperCase(), c]));
+  $("mt-assets").innerHTML = m.assets.map(a => { const c = DC[a.name] || {}, tone = /bull/i.test(c.bias || "") ? "bull" : /bear/i.test(c.bias || "") ? "bear" : (c.bias ? "neutral" : a.tone);
+    const S = (a.support || []).filter(v => v < a.price).sort((x, y) => y - x)[0], R = (a.resistance || []).filter(v => v > a.price).sort((x, y) => x - y)[0];
+    return `<article class="card coin t-${tone}">
+    <header><div class="a-id">${icon(a.name)}<span class="a-name">${a.name}</span><span class="a-px mono">${fp(a.price)}</span></div>
+      <span class="bias b-${tone}">${esc(c.bias || a.bias.split(" ·")[0])}</span></header>
+    <div class="coin-kv"><span><small>Trend</small><b>${esc(c.trend || (a.ma50 ? (a.price > a.ma50 ? "Above 50D" : "Below 50D") : "—"))}</b></span><span><small>24h · 7d</small><b class="mono"><span class="${cls(a.chg24)}">${pc(a.chg24)}</span> · <span class="${cls(a.chg7)}">${pc(a.chg7)}</span></b></span>
+      <span><small>Support</small><b class="mono pos">${esc(c.support || fp(S))}</b></span><span><small>Resistance</small><b class="mono neg">${esc(c.resistance || fp(R))}</b></span></div>
     ${levelBar(a)}
-    <div class="a-plan">🎯 ${esc(a.plan)}</div></div>`).join("");
+    <div class="coin-call"><span class="hud-label">Call</span>${esc(c.call || a.plan)}</div>
+    <div class="coin-flip"><span class="hud-label">Flips if</span>${esc(c.flip || `${a.bull_case} / ${a.bear_case}`)}</div></article>`; }).join("");
+  const SM = ((m.desk || {}).smart_money && ((m.desk.smart_money.accumulating || []).length + (m.desk.smart_money.distributing || []).length)) ? m.desk.smart_money : (m.smart_money || { accumulating: [], distributing: [] });
+  const smli = xs => (xs || []).map(x => `<li><b>${esc(x.name)}</b><span>${esc(x.why || "")}</span></li>`).join("") || `<li class="muted">Nothing clear right now.</li>`;
+  $("sm-acc").innerHTML = smli(SM.accumulating); $("sm-dis").innerHTML = smli(SM.distributing);
   const hl = m.hyperliquid;
   $("hl-sub").textContent = hl ? `${hl.accounts} profitable accounts > $1M` : "unavailable";
   $("mt-hl").innerHTML = hl ? Object.entries(hl.coins).map(([c, h]) => { const ls = h.long_share == null ? 0.5 : h.long_share;
