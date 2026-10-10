@@ -81,8 +81,9 @@ def gemini_call(body: dict, key: str, timeout: int = 25) -> dict:
                               params={"key": key}, timeout=timeout, json=body)
         except requests.RequestException as e:
             last = type(e).__name__; continue
-        if r.status_code == 400 and "thinking" in r.text.lower() and "thinkingConfig" in body.get("generationConfig", {}):
-            body = {**body, "generationConfig": {k: v for k, v in body["generationConfig"].items() if k != "thinkingConfig"}}
+        if r.status_code == 400 and ("thinkingConfig" in body.get("generationConfig", {}) or "safetySettings" in body):
+            body = {k: v for k, v in body.items() if k != "safetySettings"}
+            body["generationConfig"] = {k: v for k, v in body.get("generationConfig", {}).items() if k != "thinkingConfig"}
             try:
                 r = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent",
                                   params={"key": key}, timeout=timeout, json=body)
