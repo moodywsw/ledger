@@ -486,3 +486,4 @@ body{line-height:1.5;-webkit-font-smoothing:antialiased;text-rendering:optimizeL
 .ask-recent{display:grid;gap:10px}.aq{padding:11px 13px;border-radius:11px;background:#0b1118;border:1px solid #172030}.aq-q{font-weight:600;font-size:13.5px;margin-bottom:5px}.aq-a{font-size:13.5px;line-height:1.55;color:#cfd8e6;margin-bottom:4px}
 @media(max-width:600px){.ab{max-width:92%}.ask-head{align-items:flex-start}.ask-av{width:48px;height:48px}}
 .ic-th{grid-template-columns:50px minmax(0,1fr);font-size:12px;gap:3px 8px}
+.sr-mark.l b{left:-3px;transform:none}.sr-mark.r b{left:auto;right:-3px;transform:none}

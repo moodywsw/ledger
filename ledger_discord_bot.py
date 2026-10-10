@@ -31,10 +31,15 @@ def _build_client():
     async def on_ready():
         print(f"[DISCORD-BOT] Mirko is live as {client.user} · answers on @mention, DMs and #{ASK_CHANNEL}")
 
+    _seen = set()
+
     @client.event
     async def on_message(message):
-        if message.author.bot or message.author == client.user:
+        if message.author.bot or message.author == client.user or message.id in _seen:
             return
+        _seen.add(message.id)
+        if len(_seen) > 2000:
+            _seen.clear()
         is_dm = isinstance(message.channel, discord.DMChannel)
         mentioned = client.user in message.mentions
         in_channel = getattr(message.channel, "name", "").lower() == ASK_CHANNEL
@@ -43,8 +48,20 @@ def _build_client():
         text = message.content.replace(f"<@{client.user.id}>", "").replace(f"<@!{client.user.id}>", "").strip()
         if not text:
             return
+        try:   # another live instance (deploy overlap) may already have answered
+            async for m in message.channel.history(limit=15, after=message):
+                if m.author == client.user and m.reference and m.reference.message_id == message.id:
+                    return
+        except Exception:
+            pass
         async with message.channel.typing():
             res = await asyncio.get_running_loop().run_in_executor(None, ask.answer, text, str(message.author.id), "discord")
+        try:
+            async for m in message.channel.history(limit=15, after=message):
+                if m.author == client.user and m.reference and m.reference.message_id == message.id:
+                    return
+        except Exception:
+            pass
         await message.reply(res["answer"][:1900], mention_author=False)
 
     return client

@@ -242,7 +242,7 @@ function levelBar(a) {
   const near = pos < 33 ? "near support" : pos > 67 ? "near resistance" : "mid-range";
   return `<div class="sr">
     <div class="sr-top"><span class="sr-lab s">▼ Support</span><span class="sr-near mono">${near}</span><span class="sr-lab r">Resistance ▲</span></div>
-    <div class="sr-bar"><i class="sr-mark" style="left:${pos}%"><b class="mono">${fp(a.price)}</b></i></div>
+    <div class="sr-bar"><i class="sr-mark${pos<18?' l':pos>82?' r':''}" style="left:${Math.min(97,Math.max(3,pos))}%"><b class="mono">${fp(a.price)}</b></i></div>
     <div class="sr-vals mono"><span class="pos">${fp(s1)}${S[1] ? `<small> · next ${fp(S[1])}</small>` : ""}</span><span class="neg">${R[1] ? `<small>next ${fp(R[1])} · </small>` : ""}${fp(r1)}</span></div></div>`;
 }
 function drawFng(v) {
