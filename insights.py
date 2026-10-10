@@ -98,7 +98,7 @@ def distill(raw: dict) -> dict:
     elif hawk > dove:
         tilt -= 0.3; beliefs.append(f"Policy talk leans tight ({hawk} hawkish vs {dove} easing). Cash and patience earn their keep.")
     else:
-        beliefs.append("Central banks are balanced today. No macro excuse in either direction; the chart decides.")
+        beliefs.append("Central-bank tone is balanced today: no macro tailwind or headwind, so flows and levels carry the trade.")
     china = raw.get("china", [])
     if any(re.search(r"stimulus|easing|support", h, re.I) for h in china):
         tilt += 0.15; beliefs.append("China is talking support again. Historically good for risk appetite in Asia hours.")

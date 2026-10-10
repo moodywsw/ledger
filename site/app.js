@@ -179,8 +179,9 @@ async function loadMarket() {
     $("mt-regime").textContent = D.headline;
     $("br-chips").insertAdjacentHTML("afterbegin", `<span class="brc ${bt}"><small>Bias</small><b>${esc(D.bias)}</b></span><span class="brc"><small>Confidence</small><b>${D.confidence}%</b></span>`);
     $("br-doing").innerHTML = `<span class="hud-label">Takeaway</span> ${esc(D.takeaway || "")}`;
+    $("br-list").innerHTML = (D.plan || []).slice(0, 2).map(p => `<li><span class="bi">🎯</span><span><b>If</b> ${esc(p.if || "")} <b>→</b> ${esc(p.then || "")}</span></li>`).join("");
     const li = xs => (xs || []).map(x => `<li>${esc(x)}</li>`).join("");
-    $("mt-desk").innerHTML = `<div class="dk-head"><div><div class="label">Desk note · ${esc(D.ts_h || "")}</div><h2>${esc(D.headline)}</h2></div>
+    $("mt-desk").innerHTML = `<div class="dk-head"><div><div class="label">Desk note · ${esc(D.ts_h || "")}</div><h2>Positioning, levels &amp; plan</h2></div>
         <div class="dk-bias ${bt}"><span>${esc(D.bias)}</span><i style="--c:${D.confidence}%"></i><b class="mono">${D.confidence}%</b></div></div>
       <div class="dk-grid">
         <div class="dk-box"><h3>⟳ What changed</h3><ul>${li(D.changed)}</ul></div>
