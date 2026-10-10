@@ -66,16 +66,46 @@ def template(kind: str, ctx: dict) -> str:
     return " ".join(out.replace("$ ", "").split())
 
 
+GEMINI_MODELS = [m for m in [os.environ.get("GEMINI_MODEL"), "gemini-2.5-flash", "gemini-flash-latest", "gemini-2.5-flash-lite",
+                                "gemini-flash-lite-latest", "gemini-2.0-flash"] if m]
+_gem_ok = {"model": None}
+
+
+def gemini_call(body: dict, key: str, timeout: int = 25) -> dict:
+    """POST generateContent, walking a list of free-tier models (old ones get retired). Remembers the one that works."""
+    order = ([_gem_ok["model"]] if _gem_ok["model"] else []) + [m for m in GEMINI_MODELS if m != _gem_ok["model"]]
+    last = None
+    for m in order:
+        try:
+            r = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent",
+                              params={"key": key}, timeout=timeout, json=body)
+        except requests.RequestException as e:
+            last = type(e).__name__; continue
+        if r.status_code == 400 and "thinking" in r.text.lower() and "thinkingConfig" in body.get("generationConfig", {}):
+            body = {**body, "generationConfig": {k: v for k, v in body["generationConfig"].items() if k != "thinkingConfig"}}
+            try:
+                r = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent",
+                                  params={"key": key}, timeout=timeout, json=body)
+            except requests.RequestException as e:
+                last = type(e).__name__; continue
+        if r.status_code in (404, 400) and "model" in r.text.lower():
+            last = f"{m}:{r.status_code}"; continue
+        if r.status_code != 200:
+            print(f"[LLM] gemini {m} HTTP {r.status_code}")
+            last = f"{m}:{r.status_code}"
+            if r.status_code == 429:
+                continue
+            break
+        _gem_ok["model"] = m
+        return r.json()
+    raise RuntimeError(f"gemini unavailable ({last})")
+
+
 def _gemini(prompt: str, key: str) -> str | None:
-    model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
-    r = requests.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-        params={"key": key}, timeout=20,
-        json={"systemInstruction": {"parts": [{"text": SYSTEM}]},
-              "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-              "generationConfig": {"temperature": 0.9, "maxOutputTokens": 120}})
-    r.raise_for_status()
-    return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+    j = gemini_call({"systemInstruction": {"parts": [{"text": SYSTEM}]},
+                     "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                     "generationConfig": {"temperature": 0.9, "maxOutputTokens": 160, "thinkingConfig": {"thinkingBudget": 0}}}, key, 20)
+    return j["candidates"][0]["content"]["parts"][0]["text"]
 
 
 def _groq(prompt: str, key: str) -> str | None:
