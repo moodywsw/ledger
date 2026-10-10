@@ -4901,6 +4901,8 @@ def main():
         social.start()
         import sports, council
         sports.start(); council.start()
+        import eyes
+        eyes.start()
     except Exception as _e:
         print(f"[WARN] market thoughts / strategy lab not started: {_e}")
     try:

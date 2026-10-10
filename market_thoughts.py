@@ -627,6 +627,68 @@ def brief(reads, reg, fg, cbp, dex, ins, radar_lines=None) -> dict:
     return {"headline": head, "bullets": b[:4], "chips": chips, "doing": doing}
 
 
+DESK_SYS = ("You are Mirko, a senior crypto macro/derivatives trader writing the morning desk note for a professional trading desk. "
+            "Use ONLY the data given. Trader language, dense, concrete numbers, no filler, no platitudes (never 'the chart decides', "
+            "'trade the edges' without levels, 'stay safe'). Every claim must cite a number from the data. Numbers as digits.")
+DESK_SCHEMA = ('{"bias": "Bullish|Bearish|Neutral, with lean e.g. \'Neutral, leaning short\'", "confidence": 0-100, '
+               '"headline": "<=12 words, sharp", "takeaway": "one sharp sentence", '
+               '"changed": ["2-4 bullets: what changed since the previous read, with numbers"], '
+               '"levels": [{"asset": "BTC", "support": "$x / $y", "resistance": "$x / $y", "pivot": "$x"}], '
+               '"flows": ["3-5 bullets on positioning/flows: funding, OI, taker/CVD, top-trader & retail L/S, ETF flows, Coinbase premium, stablecoin supply, liquidations"], '
+               '"plan": [{"if": "trigger with level", "then": "action with entry/target/stop"}], '
+               '"risks": ["2-3 concrete risks/catalysts"]}')
+
+
+def _desk_facts(reads, reg, fg, cbp, glob, dex, prev) -> str:
+    L = [f"Regime model: {reg.get('label')} (score {reg.get('score')})"]
+    if fg: L.append(f"Fear&Greed {fg['v']} ({fg['cls']}), yesterday {fg.get('prev')}, week ago {fg.get('wk')}")
+    if glob: L.append(f"Total mcap ${glob['mcap']/1e12:.2f}T ({(glob.get('mcap_chg') or 0):+.1f}% 24h), BTC dominance {glob['btc_dom']:.1f}%")
+    if cbp is not None: L.append(f"Coinbase premium {cbp:+.3f}%")
+    for r in reads:
+        hl = r.get("hl") or {}
+        L.append(f"{r['name']}: ${r['price']:,.4g} 24h {r['chg24']:+.1f}% 7d {r['chg7']:+.1f}%; support {[round(x, 2) for x in r['support'][:2]]} resistance {[round(x, 2) for x in r['resistance'][:2]]}; "
+                 f"20D {r['ma20'] and round(r['ma20'], 2)} 50D {r['ma50'] and round(r['ma50'], 2)}; RSI d {r['rsi_d'] and round(r['rsi_d'])} 4h {r['rsi_4h'] and round(r['rsi_4h'])}; "
+                 f"funding {r['funding'] if r['funding'] is None else round(r['funding'], 4)}%/8h; OI ${(r['oi_total'] or 0)/1e9:.2f}bn {r['oi_chg24'] if r['oi_chg24'] is None else round(r['oi_chg24'], 1)}% 24h; "
+                 f"taker buy/sell {r['taker'] and round(r['taker'], 3)}; Binance top-trader long share {r['top_long']}; retail long share {r['retail_long']}; "
+                 f"Hyperliquid top traders {hl.get('longs', '?')} long / {hl.get('shorts', '?')} short")
+    try:
+        import eyes
+        L += eyes.summary_lines()
+        L.append("Headlines: " + " | ".join(eyes.headlines(9)))
+    except Exception:
+        pass
+    hot = [f"{d['pair']} buy share {d.get('buy_share', 0):.0%}" for d in (dex or [])[:4]]
+    if hot: L.append("DEX flows: " + ", ".join(hot))
+    if prev:
+        L.append("PREVIOUS READ: " + json.dumps({k: prev.get(k) for k in ("bias", "confidence", "headline", "levels", "ts_h")})[:900])
+    return "\n".join(L)
+
+
+def desk_note(reads, reg, fg, cbp, glob, dex) -> dict | None:
+    prev = (cached() or {}).get("desk")
+    if prev and time.time() - prev.get("ts", 0) < 3600 * 1.5:
+        return prev
+    try:
+        import llm
+        facts = _desk_facts(reads, reg, fg, cbp, glob, dex, prev)
+        d, via = llm.reason_json(DESK_SYS, "DATA:\n" + facts + "\n\nWrite the desk note as JSON with this schema: " + DESK_SCHEMA, 2500)
+    except Exception as e:
+        log(f"desk note: {type(e).__name__}")
+        return prev
+    if not d or not d.get("headline"):
+        log(f"desk note: llm {via}")
+        return prev
+    d["ts"], d["via"] = time.time(), via
+    d["ts_h"] = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%MZ")
+    try:
+        d["confidence"] = max(0, min(100, int(d.get("confidence") or 50)))
+    except (TypeError, ValueError):
+        d["confidence"] = 50
+    for k in ("changed", "flows", "risks", "plan", "levels"):
+        d[k] = [x for x in (d.get(k) or []) if x][:6]
+    return d
+
+
 def build():
     LOG.clear()
     assets, derivs = {}, {}
@@ -662,6 +724,7 @@ def build():
             "assets": reads, "fng": fg, "global": glob, "coinbase_premium": cbp, "trending": trend,
             "hyperliquid": hl, "dex_flows": dex, "trade_ideas": [{**i, "risk": risk_score(i), "thesis": idea_thesis(i)} for i in (trade_ideas(assets, hl) if assets else [])],
             "brief": brief(reads, reg, fg, cbp, dex, ins, (tr.get("radar") or {}).get("lines")),
+            "desk": safe("desk note", desk_note, reads, reg, fg, cbp, glob, dex),
             "summary": summary, "stance": stance, "next_boom": boom_with_history(next_boom() or BOOM_DEFAULT), "mid_caps": mids, "low_caps": lows, "micro_caps": micros, "stocks_conv": stocks_conv,
             "trenches": tr,
             "insights": ins, "schema": SCHEMA,

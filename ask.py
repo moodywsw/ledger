@@ -128,6 +128,15 @@ def _ctx() -> str:
         if heads: parts.append("Headlines: " + " | ".join(str(x.get('title') if isinstance(x, dict) else x)[:140] for x in heads[:10]))
     except Exception:
         pass
+    try:
+        import eyes
+        parts.append("Flows: " + " | ".join(eyes.summary_lines()))
+        parts.append("Latest headlines: " + " | ".join(eyes.headlines(12)))
+        import market_thoughts as _mt
+        dk = (_mt.cached() or {}).get("desk") or {}
+        if dk: parts.append("My desk note: " + json.dumps({k: dk.get(k) for k in ("bias", "confidence", "takeaway", "plan", "risks")})[:1500])
+    except Exception:
+        pass
     txt = "\n".join(parts)
     return SECRETS_RX.sub("[hidden]", txt)[:12000]
 

@@ -173,6 +173,24 @@ async function loadMarket() {
   $("br-chips").innerHTML = B ? B.chips.map(c => `<span class="brc ${c.tone}"><small>${esc(c.k)}</small><b>${esc(c.v)}</b></span>`).join("") : "";
   $("br-list").innerHTML = B ? B.bullets.map(x => `<li><span class="bi">${esc(x.i)}</span><span>${esc(x.t)}</span></li>`).join("") : `<li><span>${esc(m.summary || "")}</span></li>`;
   $("br-doing").innerHTML = B ? `<span class="hud-label">What I'm doing</span> ${esc(B.doing)}` : "";
+  const D = m.desk;
+  if (D && D.headline) {
+    const bt = /bull/i.test(D.bias) ? "bull" : /bear/i.test(D.bias) ? "bear" : "neutral";
+    $("mt-regime").textContent = D.headline;
+    $("br-chips").insertAdjacentHTML("afterbegin", `<span class="brc ${bt}"><small>Bias</small><b>${esc(D.bias)}</b></span><span class="brc"><small>Confidence</small><b>${D.confidence}%</b></span>`);
+    $("br-doing").innerHTML = `<span class="hud-label">Takeaway</span> ${esc(D.takeaway || "")}`;
+    const li = xs => (xs || []).map(x => `<li>${esc(x)}</li>`).join("");
+    $("mt-desk").innerHTML = `<div class="dk-head"><div><div class="label">Desk note · ${esc(D.ts_h || "")}</div><h2>${esc(D.headline)}</h2></div>
+        <div class="dk-bias ${bt}"><span>${esc(D.bias)}</span><i style="--c:${D.confidence}%"></i><b class="mono">${D.confidence}%</b></div></div>
+      <div class="dk-grid">
+        <div class="dk-box"><h3>⟳ What changed</h3><ul>${li(D.changed)}</ul></div>
+        <div class="dk-box"><h3>⚖ Positioning &amp; flows</h3><ul>${li(D.flows)}</ul></div>
+        <div class="dk-box"><h3>📐 Key levels</h3><table class="dk-lv mono"><thead><tr><th></th><th>Support</th><th>Pivot</th><th>Resistance</th></tr></thead><tbody>${(D.levels || []).map(l => `<tr><td><b>${esc(l.asset)}</b></td><td class="pos">${esc(l.support || "")}</td><td>${esc(l.pivot || "")}</td><td class="neg">${esc(l.resistance || "")}</td></tr>`).join("")}</tbody></table></div>
+        <div class="dk-box"><h3>🎯 Plan</h3><ul class="dk-plan">${(D.plan || []).map(p => `<li><span class="if">IF</span> ${esc(p.if || "")} <span class="then">→</span> ${esc(p.then || "")}</li>`).join("")}</ul></div>
+        <div class="dk-box"><h3>⚠ Risks</h3><ul>${li(D.risks)}</ul></div>
+      </div>`;
+    $("mt-desk").classList.remove("hidden");
+  } else $("mt-desk").classList.add("hidden");
   if (m.fng) { $("fng-v").textContent = m.fng.v; $("fng-l").textContent = `${m.fng.cls} · yesterday ${m.fng.prev}`; drawFng(m.fng.v); }
   const riskEmo = r => r == null ? "" : r <= 3 ? "🟢" : r <= 6 ? "🟡" : r <= 8 ? "🟠" : "🔴";
   const riskOf = i => i.risk ?? Math.max(0, Math.min(10, ({ mid: 4, low: 7, micro: 8 }[i.tier] ?? 2) + (i.venue === "Perp" ? 1 : 0) + ((i.rr || 0) < 1.5 ? 1 : 0) + (i.spec ? 1 : 0)));
