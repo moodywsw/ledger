@@ -302,3 +302,12 @@ body {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* ── ON/OFF kill switch ── */
+.switch-panel{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.switch-status{font-size:20px;font-weight:700}
+.switch-note{display:block;font-size:12px;font-weight:400;opacity:.7;margin-top:4px}
+.switch-state.on{color:#2ecc71}.switch-state.off{color:#e74c3c}
+.switch-btn{font-size:24px;font-weight:800;padding:18px 48px;border:none;border-radius:12px;cursor:pointer;color:#fff;min-width:260px}
+.switch-btn.turn-off{background:#e74c3c}.switch-btn.turn-on{background:#2ecc71}
+.switch-btn:disabled{opacity:.5;cursor:wait}

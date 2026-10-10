@@ -21,7 +21,7 @@ NOW = 1_800_000_000.0
 def test_profiles_and_defaults(monkeypatch):
     monkeypatch.delenv("RISK_PROFILE", raising=False)
     c = RiskConfig.from_env()
-    assert c.profile == "conservative" and c.sizing_mode == "risk"
+    assert c.profile == "conservative" and c.sizing_mode == "edge"
     d = RiskConfig.from_env("degen")
     assert d.sizing_mode == "edge" and d.edge_top_pct == pytest.approx(0.10) and d.max_concurrent_positions == 10
     b = RiskConfig.from_env("balanced")
@@ -82,7 +82,8 @@ def test_degen_sizes_by_wallet_edge():
     assert own == pytest.approx(0.2)
 
 
-def test_conservative_keeps_risk_sizing():
+def test_risk_mode_sizing(monkeypatch):
+    monkeypatch.setenv("RISK_SIZING_MODE", "risk")
     cfg = RiskConfig.from_env("conservative")
     s, note = size_for_signal(10.0, cfg, "priority_copy", None)
     assert "risk" in note and s <= 10.0 * cfg.max_position_pct

@@ -16,7 +16,7 @@ Jupiter Price API V3 call, trimmed down since the API only ever needs
 a handful of mints per request (the open positions), not the batching
 ledger_bot.py needs for dozens of tracked wallets' tokens.
 
-Read-only by design: every route only reads from disk
+Read-only by design (except the authenticated /api/bot_switch POST): routes read from disk
 (ledger_state.json, journal.jsonl, theses.json) — nothing here writes
 state or can influence trading decisions.
 
@@ -34,6 +34,7 @@ import requests
 from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory
 
+import bot_switch
 from journal_store import get_recent_journal
 from theses_store import get_theses
 from real_trading import (
@@ -183,6 +184,27 @@ def api_real_state():
         "max_real_position_pct": MAX_REAL_POSITION_PCT,
         "max_total_exposure_pct": MAX_TOTAL_EXPOSURE_PCT,
     })
+
+
+@app.route("/api/bot_switch", methods=["GET"])
+def api_bot_switch_get():
+    return jsonify(bot_switch.status())
+
+
+@app.route("/api/bot_switch", methods=["POST", "OPTIONS"])
+def api_bot_switch_post():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    auth = request.headers.get("Authorization", "")
+    token = auth[7:] if auth.lower().startswith("bearer ") else request.headers.get("X-Admin-Token", "")
+    if not bot_switch.check_token(token):
+        return jsonify({"error": "unauthorized"}), 401
+    body = request.get_json(silent=True) or {}
+    if "enabled" in body:
+        enabled = bool(body["enabled"])
+    else:
+        enabled = not bot_switch.is_enabled()
+    return jsonify(bot_switch.set_enabled(enabled, by="dashboard"))
 
 
 @app.route("/api/journal")

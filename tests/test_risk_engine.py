@@ -6,7 +6,8 @@ from risk_engine import (
     new_exit_state, evaluate_exit, score_wallets, consecutive_losses,
 )
 
-CFG = RiskConfig(tp_ladder=[(0.5, 0.33), (1.0, 0.33)])  # ladder pinned: these tests check mechanics, not defaults
+CFG = RiskConfig(tp_ladder=[(0.5, 0.33), (1.0, 0.33)], sizing_mode="risk", max_position_pct=0.05,
+                 max_total_exposure_pct=0.20, daily_loss_limit_pct=0.05)  # ladder pinned: these tests check mechanics, not defaults
 
 
 def snap(**kw):
