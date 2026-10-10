@@ -5149,7 +5149,12 @@ def run_fomo_theses(state: LedgerState):
     if not fomo_theses.fomo.enabled():
         return
     by_handle = {h.lower().replace("fomo:", "").split(" ")[0]: a for a, h in WALLET_HANDLES.items()}
-    for t in fomo_theses.recent_tracked(set(WALLET_HANDLES.values())):
+    hits = {}
+    for a, v in (trader_profile._load() or {}).items():
+        h = WALLET_HANDLES.get(a)
+        if h:
+            hits[h.lower().replace("fomo:", "").split(" ")[0]] = (v.get("stats") or {}).get("first_profit_hit_rate")
+    for t in fomo_theses.recent_tracked(set(WALLET_HANDLES.values()), hits):
         key = t.get("id") or (t["handle"], t["mint"])
         if key in _THESIS_SEEN or t["score"] < fomo_theses.MIN_SCORE:
             continue
