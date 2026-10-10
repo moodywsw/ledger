@@ -490,3 +490,4 @@ body{line-height:1.5;-webkit-font-smoothing:antialiased;text-rendering:optimizeL
 .adm{max-width:860px;padding-top:40px}.adm .ask-form{margin:12px 0}.adm-code{margin:10px 0;padding:12px;border:1px solid rgba(34,211,155,.4);border-radius:10px;background:rgba(34,211,155,.06);word-break:break-all}
 .adm-code code{font-size:15px;color:#22d39b}.adm-feed{display:block;margin:12px 0;font-size:13px}.adm input[type=number]{max-width:90px}
 .ask-lock{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}.ask-lock input{flex:1;min-width:180px}
+.adm input:not([type=checkbox]),.ask-lock input{background:rgba(255,255,255,.04);border:1px solid #2a3547;border-radius:10px;color:#e6edf6;padding:10px 12px;font:inherit;outline:none}.adm input:focus,.ask-lock input:focus{border-color:#22d39b}
