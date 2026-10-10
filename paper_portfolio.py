@@ -13,7 +13,7 @@ State: $DATA_DIR/paper_portfolio.json (Railway volume).
 """
 from __future__ import annotations
 
-import json, os, threading, time, datetime as dt
+import json, os, re, threading, time, datetime as dt
 from pathlib import Path
 
 import requests
@@ -44,14 +44,17 @@ def new_state() -> dict:
     t = time.time()
     return {"created": t, "currency": "EUR", "trades": [], "history": [],
             "sleeves": {k: {"cash": START_EUR, "positions": {}, "start": START_EUR, "last_decision": 0, "note": ""}
-                        for k in ("spot", "perps", "stocks")}}
+                        for k in ("spot", "perps", "stocks", "poly")}}
 
 
 def load() -> dict:
     try:
-        return json.loads(_path().read_text())
+        s = json.loads(_path().read_text())
     except Exception:
         return new_state()
+    s["sleeves"].setdefault("poly", {"cash": START_EUR, "positions": {}, "start": START_EUR, "last_decision": 0, "note": "",
+                                     "added": time.time()})   # Polymarket sleeve added later: own €1000 start
+    return s
 
 
 def save(s):
@@ -106,8 +109,125 @@ def stock_price(sym: str) -> float | None:
         return None
 
 
+GAMMA = "https://gamma-api.polymarket.com"
+_POLY_KW = re.compile(r"bitcoin|btc|ethereum|eth\b|solana|crypto|fed|rate|inflation|cpi|recession|gdp|tariff|election|president|trump|china|ai\b|openai|nvidia|stock|s&p|nasdaq|oil|war|ceasefire|congress|senate|ecb|etf", re.I)
+
+
+def _poly_prices(m: dict) -> tuple[float, float] | None:
+    try:
+        o = [x.lower() for x in json.loads(m.get("outcomes") or "[]")]; pr = [float(x) for x in json.loads(m.get("outcomePrices") or "[]")]
+        return pr[o.index("yes")], pr[o.index("no")]
+    except Exception:
+        return None
+
+
+def poly_market(mid: str) -> dict | None:
+    try:
+        return _get(f"{GAMMA}/markets/{mid}")
+    except Exception:
+        return None
+
+
+def poly_price(pos: dict) -> float | None:
+    m = poly_market(pos["market_id"])
+    if not m:
+        return None
+    yn = _poly_prices(m)
+    if not yn:
+        return None
+    if m.get("closed"):   # resolved: winning side pays 1
+        win = "YES" if yn[0] > yn[1] else "NO"
+        pos["resolved"] = win
+        return 1.0 if pos["side"] == win else 0.0
+    return yn[0] if pos["side"] == "YES" else yn[1]
+
+
+def poly_view(m: dict, yes: float) -> tuple[str, float, str] | None:
+    """Mirko's prediction. Simple, honest edges: fade long shots (favourite-longshot bias), back strong
+    favourites near expiry, and tilt crypto/macro questions with his own market read + daily reading."""
+    q = m.get("question") or ""
+    try:
+        import market_thoughts as mt, insights
+        mr = mt.cached(max_age_h=12) or {}; tilt = insights.risk_tilt()
+    except Exception:
+        mr, tilt = {}, 0.0
+    reg = (mr.get("regime") or {}).get("key", "chop")
+    p = yes
+    why = []
+    if yes < 0.22:
+        p = yes * 0.7; why.append("long shots are usually overpriced on prediction markets")
+    elif yes > 0.78:
+        p = yes + (1 - yes) * 0.3; why.append("strong favourite; the crowd tends to underprice near-certainties")
+    if re.search(r"bitcoin|btc|crypto|eth|solana", q, re.I) and re.search(r"above|reach|hit|higher", q, re.I):
+        adj = {"risk_on": 0.06, "risk_off": -0.06}.get(reg, 0) + 0.03 * tilt
+        if adj:
+            p += adj; why.append(f"my market read is {(mr.get('regime') or {}).get('label', 'mixed').lower()}")
+    p = max(0.01, min(0.99, p))
+    edge_yes, edge_no = p - yes, (1 - p) - (1 - yes)
+    if max(edge_yes, edge_no) < 0.03:
+        return None
+    side = "YES" if edge_yes > edge_no else "NO"
+    return side, p, "; ".join(why) or "the price disagrees with my read"
+
+
+def decide_poly(s, now):
+    sl = s["sleeves"]["poly"]
+    for k in list(sl["positions"]):   # settle resolved markets
+        p = sl["positions"][k]
+        px = poly_price(p)
+        if px is None:
+            continue
+        p["last_px"] = px
+        if p.get("resolved"):
+            val = p["qty"] * px; sl["cash"] += val; sl["positions"].pop(k)
+            _trade(s, "poly", "settled", p["sym"], px, val, f"Resolved {p['resolved']}: I said {p['side']}.", pnl_pct=round((px / p["entry"] - 1) * 100, 2))
+    if len(sl["positions"]) < 4:
+        try:
+            ms = _get(f"{GAMMA}/markets", {"active": "true", "closed": "false", "order": "volume24hr", "ascending": "false", "limit": 500})
+        except Exception:
+            ms = []
+        cands = []
+        for m in ms:
+            yn = _poly_prices(m)
+            try:
+                end = dt.datetime.fromisoformat((m.get("endDate") or "").replace("Z", "+00:00")).timestamp()
+            except Exception:
+                continue
+            if not yn or not (2 * 86400 <= end - now <= 120 * 86400) or not (0.04 <= yn[0] <= 0.96) or (m.get("liquidityNum") or 0) < 50_000:
+                continue
+            if str(m["id"]) in sl["positions"]:
+                continue
+            v = poly_view(m, yn[0])
+            if v:
+                cands.append((bool(_POLY_KW.search(m.get("question") or "")), m.get("volume24hr") or 0, m, yn, v))
+        cands.sort(key=lambda c: (-c[0], -c[1]))
+        held = {p.get("event") for p in sl["positions"].values()}
+        picks = []
+        for c in cands:
+            ev = str(((c[2].get("events") or [{}])[0]).get("id") or c[2]["id"])
+            if ev in held:
+                continue   # one bet per event (no doubling the same view via complementary markets)
+            held.add(ev); c[2]["_ev"] = ev; picks.append(c)
+        for rel, _, m, yn, (side, p, why) in picks[:4 - len(sl["positions"])]:
+            px = yn[0] if side == "YES" else yn[1]
+            stake = min(sl["cash"], 100.0)
+            if stake < 10:
+                break
+            mid = str(m["id"])
+            sl["positions"][mid] = {"sym": (m.get("question") or "")[:90], "kind": "poly", "side": side, "market_id": mid, "slug": m.get("slug"),
+                                    "qty": stake / px, "entry": px, "last_px": px, "opened": now, "mirko_p": round(p if side == "YES" else 1 - p, 3),
+                                    "end": m.get("endDate"), "event": m.get("_ev"),
+                                    "why": f"I say {side} at {p if side == 'YES' else 1 - p:.0%} vs market {px:.0%}: {why}."}
+            sl["cash"] -= stake
+            _trade(s, "poly", f"bet {side}", (m.get("question") or "")[:60], px, stake, sl["positions"][mid]["why"])
+    sl["note"] = "Up to 4 live Polymarket questions, €100 paper stake each, only when my probability differs from the market by 3+ points. Settles at resolution."
+    sl["last_decision"] = now
+
+
 def price_usd(pos: dict) -> float | None:
     k = pos.get("kind")
+    if k == "poly":
+        return poly_price(pos)
     if k == "dex":
         return dex_price(pos["chain"], pos["address"])
     if k == "stock":
@@ -127,6 +247,8 @@ def pos_value(p: dict, px: float | None, fx: float) -> float:
     if p.get("side") in ("Long", "Short"):          # perp: margin + pnl
         d = 1 if p["side"] == "Long" else -1
         return max(0.0, p["margin"] + p["margin"] * p["lev"] * d * (px / p["entry"] - 1))
+    if p.get("kind") == "poly":
+        return p["qty"] * px          # stake is in EUR already; price is the outcome share price
     return p["qty"] * px * fx
 
 
@@ -369,6 +491,8 @@ def check_stops(s, fx, now):
             p = sl["positions"][sym]
             if p["kind"] == "stock" and not us_market_open(now):
                 continue
+            if p["kind"] == "poly":
+                continue   # settled in decide_poly
             px = price_usd(p) if p["kind"] != "perp" else crypto_price(sym)
             if not px:
                 continue
@@ -422,6 +546,8 @@ def tick(now: float | None = None, force=False):
             decide_spot(s, mr, fx, now)
         if mr and (force or now - s["sleeves"]["perps"]["last_decision"] >= CRYPTO_EVERY_H * 3600):
             decide_perps(s, mr, fx, now)
+        if force or now - s["sleeves"]["poly"]["last_decision"] >= 86400:
+            decide_poly(s, now)
         last = dt.datetime.fromtimestamp(s["sleeves"]["stocks"]["last_decision"], dt.timezone.utc).date()
         if (force or us_market_open(now)) and (force or last != dt.datetime.fromtimestamp(now, dt.timezone.utc).date()):
             decide_stocks(s, fx, now)
@@ -445,9 +571,10 @@ def commentary(s: dict) -> dict:
              "Perps: breakout and breakdown snipes plus level-based ideas, max 3x, tight stops, half off at 1R and the stop goes to breakeven. "
              "Penny stocks: catalyst snipes on volume spikes with 8% stops, and a few patient trend holds. "
              "Discipline first: cash is a position, I never chase a candle I didn't see build, and every trade has an exit before it has an entry. "
+             "Polymarket: I bet small on real-world questions only where my probability clearly differs from the crowd's. "
              "My daily reading (fund filings, central banks, policy, tech) tilts how much risk I take.")
     return {"intro": intro, "sleeves": {k: s["sleeves"][k].get("note", "") for k in s["sleeves"]},
-            "positions": [{"sleeve": k, "sym": sym, "why": p.get("why", "")} for k in s["sleeves"] for sym, p in s["sleeves"][k]["positions"].items()]}
+            "positions": [{"sleeve": k, "sym": p["sym"] if p.get("kind") == "poly" else sym, "why": p.get("why", "")} for k in s["sleeves"] for sym, p in s["sleeves"][k]["positions"].items()]}
 
 
 def public_view() -> dict:
@@ -457,18 +584,18 @@ def public_view() -> dict:
         pos = []
         for sym, p in sl["positions"].items():
             v = pos_value(p, None, fx)
-            cost = p["margin"] if p["kind"] == "perp" else p["qty"] * p["entry"] * fx
+            cost = p["margin"] if p["kind"] == "perp" else p["qty"] * p["entry"] * (1 if p["kind"] == "poly" else fx)
             pos.append({"sym": sym, "kind": p["kind"], "side": p.get("side", "Spot"), "lev": p.get("lev"), "entry_usd": p["entry"],
                         "last_usd": p.get("last_px"), "value_eur": round(v, 2), "pnl_pct": round((v / cost - 1) * 100, 2) if cost else None,
                         "stop_usd": p.get("stop"), "target_usd": p.get("target"), "opened": p.get("opened"), "why": p.get("why", ""),
-                        "chain": p.get("chain"), "book": p.get("book")})
+                        "chain": p.get("chain"), "book": p.get("book"), "mirko_p": p.get("mirko_p"), "title": p["sym"] if p["kind"] == "poly" else None, "slug": p.get("slug"), "end": p.get("end")})
         val = sl["cash"] + sum(x["value_eur"] for x in pos)
         sleeves[name] = {"value_eur": round(val, 2), "cash_eur": round(sl["cash"], 2), "pnl_pct": round((val / sl["start"] - 1) * 100, 2),
                          "positions": sorted(pos, key=lambda x: -x["value_eur"]), "last_decision": sl["last_decision"], "note": sl.get("note", "")}
     tot = sum(v["value_eur"] for v in sleeves.values())
     hist = s["history"][-500:]
     return {"simulated": True, "currency": "EUR", "created": s["created"], "total_eur": round(tot, 2),
-            "pnl_pct": round((tot / (START_EUR * 3) - 1) * 100, 2), "sleeves": sleeves,
+            "pnl_pct": round((tot / sum(sl["start"] for sl in s["sleeves"].values()) - 1) * 100, 2), "start_eur": sum(sl["start"] for sl in s["sleeves"].values()), "sleeves": sleeves,
             "history": [{"t": h["ts"], "v": h["total"]} for h in hist[:: max(1, len(hist) // 200)]],
             "trades": list(reversed(s["trades"][-60:])), "commentary": commentary(s)}
 
@@ -496,7 +623,7 @@ def live_prices(max_age=20.0) -> dict:
         out = {}
         for (n, sym, p), px in zip(items, pxs):
             px = px or p.get("last_px")
-            v = pos_value(p, px, fx); cost = p["margin"] if p["kind"] == "perp" else p["qty"] * p["entry"] * fx
+            v = pos_value(p, px, fx); cost = p["margin"] if p["kind"] == "perp" else p["qty"] * p["entry"] * (1 if p["kind"] == "poly" else fx)
             out.setdefault(n, {})[sym] = {"last_usd": px, "value_eur": round(v, 2), "pnl_pct": round((v / cost - 1) * 100, 2) if cost else None}
         _live.update(ts=time.time(), data={"ts": time.time(), "positions": out})
         return _live["data"]

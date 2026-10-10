@@ -35,6 +35,7 @@ from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory
 
 import bot_switch
+import re
 import privacy
 import security
 import re as _re
@@ -118,9 +119,35 @@ def _err(e):
     return jsonify({"error": "internal error"}), 500
 
 
+def _asset_version() -> str:
+    v = os.environ.get("RAILWAY_GIT_COMMIT_SHA", "")[:10]
+    if not v:
+        try:
+            import subprocess
+            v = subprocess.run(["git", "rev-parse", "--short=10", "HEAD"], capture_output=True, text=True, timeout=3,
+                               cwd=str(Path(__file__).resolve().parent)).stdout.strip()
+        except Exception:
+            v = ""
+    if not v:   # fall back to newest site file mtime
+        v = str(int(max((f.stat().st_mtime for f in SITE_DIR.iterdir() if f.is_file()), default=0)))
+    return re.sub(r"[^A-Za-z0-9]", "", v)[:12]
+
+
+_INDEX = {"mtime": 0.0, "html": ""}
+_ASSET_RX = re.compile(r'((?:src|href)=")(/?)([\w.-]+\.(?:css|js|webp|png|jpg))(")')
+
+
 @app.route("/")
+@app.route("/index.html")
 def dashboard():
-    return send_from_directory(app.static_folder, "index.html")
+    f = SITE_DIR / "index.html"
+    m = f.stat().st_mtime
+    if m != _INDEX["mtime"]:   # cache-busting: every local asset gets ?v=<commit>, so a deploy is never masked by a stale browser cache
+        ver = _asset_version()
+        _INDEX.update(mtime=m, html=_ASSET_RX.sub(lambda x: f"{x.group(1)}{x.group(2)}{x.group(3)}?v={ver}{x.group(4)}", f.read_text()))
+    r = app.response_class(_INDEX["html"], mimetype="text/html")
+    r.headers["Cache-Control"] = "no-cache"
+    return r
 
 
 @app.after_request
@@ -434,6 +461,12 @@ def api_market_thoughts():
     if not d:
         return jsonify({"ready": False, "message": "First market read is being prepared (refreshes every 2h)."})
     return jsonify(dict(_public(d), ready=True))
+
+
+@app.route("/api/social")
+def api_social():
+    import social
+    return jsonify(_public(social.public_view()))
 
 
 @app.route("/api/portfolio/live")

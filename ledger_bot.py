@@ -4872,6 +4872,8 @@ def main():
         paper_portfolio.start()
         import insights
         insights.start()
+        import social
+        social.start()
     except Exception as _e:
         print(f"[WARN] market thoughts / strategy lab not started: {_e}")
     try:

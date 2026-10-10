@@ -27,29 +27,22 @@
 <main class="wrap view" id="view-dash">
   <!-- FIRST VIEWPORT: status · live scan · thoughts -->
   <section class="top3">
-    <div class="hero card">
-      <div class="hero-main">
-        <div class="tank" id="wolf" aria-hidden="true"><img class="t-base" src="tank.webp" alt="" width="360" height="590"><div class="tank-glow"></div><canvas class="bubbles" id="bubbles"></canvas><img class="t-wolf" src="wolf.webp" alt="" width="226" height="388"><span class="led"></span></div>
-        <div class="hero-left">
-          <div class="label">Mirko status</div>
-          <div class="status-line"><span class="pulse" id="status-pulse"></span><span id="switch-state" class="switch-state">…</span></div>
-          <div class="hero-note" id="switch-note">Checking…</div>
-          <div class="dream mono" id="dream">dreaming</div>
-          <div class="chips"><span class="chip" id="real-armed-badge">REAL</span><span class="chip" id="chip-open">0 open</span></div>
+    <div class="hero card hud">
+      <div class="hud-head"><span class="hud-label">MIRKO // STATUS</span><span class="hud-label dim" id="chip-open">0 open</span></div>
+      <div class="hud-grid">
+        <div class="tank" id="wolf" aria-hidden="true"><img class="t-base" src="tank.webp" alt="" width="360" height="590"><div class="tank-glow"></div><canvas class="bubbles" id="bubbles"></canvas><div class="t-float"><img class="t-wolf" src="wolf.webp" alt="" width="226" height="403"></div><img class="t-cap" src="tank-cap.webp" alt="" width="360" height="86"><span class="led"></span></div>
+        <div class="hud-side">
+          <div class="hud-cell"><div class="hud-label">ENGINE</div><div class="status-line"><span class="pulse" id="status-pulse"></span><span id="switch-state" class="switch-state">…</span></div></div>
+          <div class="hud-cell"><div class="hud-label">CONVICTION</div><div class="conv"><canvas id="gauge" width="120" height="70"></canvas><b class="mono conv-v" id="gauge-v">—</b></div><div class="conv-d" id="conv-d">reading the market…</div></div>
+          <div class="hud-cell hud-toggle"><div class="hud-label">CONTROL</div><div class="hero-right"><button id="switch-btn" class="switch" type="button" disabled aria-label="Toggle bot"><span class="knob"></span></button><div class="switch-caption mono" id="switch-caption">…</div></div></div>
         </div>
-      </div>
-      <div class="conv"><canvas id="gauge" width="120" height="70"></canvas><div><div class="label">Conviction <b class="mono" id="gauge-v">—</b></div><div class="conv-d" id="conv-d">reading the market…</div></div></div>
-      <div class="hero-right">
-        <button id="switch-btn" class="switch" type="button" disabled aria-label="Toggle bot"><span class="knob"></span></button>
-        <div class="switch-caption" id="switch-caption">…</div>
       </div>
     </div>
     <section class="card scan-card">
       <div class="card-head"><h2>🧠 Mirko's brain</h2></div>
       <div class="scan-stage"><canvas id="scan" aria-label="Animated map of what Mirko is scanning"></canvas></div>
-      <div class="scan-strip">
+      <div class="scan-strip one">
         <div class="mini"><div class="mini-h">SCAN LOG <span id="scan-rate">— reads/min</span></div><div class="mini-b mono" id="scan-log"></div></div>
-        <div class="mini"><div class="mini-h">COVERAGE <span>6 domains</span></div><canvas id="radar" class="mini-c radar"></canvas></div>
       </div>
     </section>
     <aside class="mind card">
@@ -88,12 +81,14 @@
       <div class="chips"><span class="chip" id="mt-stance">—</span><span class="chip" id="mt-time">—</span><span class="chip" id="mt-scale">—</span></div></div>
     <div class="fng"><canvas id="fng-gauge" width="220" height="130"></canvas><div class="fng-v mono" id="fng-v">—</div><div class="muted" id="fng-l">Fear &amp; Greed</div></div>
   </section>
-  <div class="mt-top">
-  <section class="card ideas-card"><div class="card-head"><h2>🎯 Trade ideas</h2><span class="muted">levels-based · not advice</span></div><div id="mt-ideas" class="ideas"></div>
-    <div class="trench-in"><div class="ideas-h">⛏ Mirko on the trenches <span class="muted" id="tr-mood"></span></div><div id="mt-trench"></div></div></section>
-  <section class="card boom"><div class="card-head"><h2>🔭 Next Boom</h2><span class="muted" id="boom-w"></span></div><div id="mt-boom"></div></section>
-  </div>
   <section class="assets" id="mt-assets"></section>
+  <div class="mt-top">
+  <section class="card ideas-card"><div class="card-head"><h2>🎯 Trade ideas</h2><span class="muted">levels-based · not advice</span></div>
+    <div class="ideas-cols"><div><div class="ideas-h">Majors</div><div id="mt-maj" class="ideas-col"></div></div><div><div class="ideas-h">Mid caps · accumulation</div><div id="mt-mid" class="ideas-col"></div></div></div>
+    <div class="ideas-cols"><div><div class="ideas-h">Low caps · on-chain accumulation</div><div id="mt-low" class="ideas-col"></div></div><div><div class="ideas-h">Micro caps · high conviction only</div><div id="mt-micro" class="ideas-col"></div></div></div>
+    <div class="trench-in"><div class="ideas-h">⛏ Mirko on the trenches <span class="muted" id="tr-mood"></span></div><div id="mt-trench"></div></div></section>
+  <section class="card boom"><div class="card-head"><h2>🔭 Next Boom</h2><div class="tabs" id="boom-tabs"><button class="tab active" data-b="cur">Current</button><button class="tab" data-b="prev">Previous booms</button></div></div><div class="muted sm" id="boom-w"></div><div id="mt-boom"></div><div id="mt-boom-prev" class="hidden"></div></section>
+  </div>
   <div class="grid2 mt-lower">
     <section class="card collapsible" data-key="mthl" data-fold="1"><div class="card-head"><h2>Hyperliquid top traders</h2><span class="muted"><span id="hl-sub"></span></span><button class="fold" aria-label="Expand">+</button></div><div class="fold-body"><div id="mt-hl" class="list"></div></div></section>
     <section class="card collapsible" data-key="mtmacro" data-fold="1"><div class="card-head"><h2>Macro pulse</h2><span class="muted">Coinbase premium · total market</span><button class="fold" aria-label="Expand">+</button></div><div class="fold-body"><div id="mt-deriv" class="list"></div></div></section>

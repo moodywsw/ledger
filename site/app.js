@@ -76,7 +76,7 @@ function renderEquity(points) {
 function renderState(state) {
   setVal("stat-balance", solPlain(state.balance_sol, 2));
   const ps = state.open_positions || [];
-  $("stat-open-count").textContent = ps.length; $("chip-open").textContent = `${ps.length} open`;
+  $("stat-open-count").textContent = ps.length; const co = $("chip-open"); if (co) co.textContent = `${ps.length} open`;
   $("positions-body").innerHTML = ps.length ? ps.map(p => `
     <div class="pcard">
       <div class="top"><span class="tk">${esc(p.ticker)}${p.moonbag ? '<span class="tag moon">🌙 MOONBAG</span>' : ""}</span>
@@ -91,7 +91,7 @@ function renderState(state) {
     </div>`).join("") : empty("No open positions — waiting for a signal.");
 }
 function renderRealState(r) {
-  const b = $("real-armed-badge"); b.textContent = r.armed ? "REAL MONEY · ARMED" : "REAL · UNARMED"; b.className = `chip ${r.armed ? "real" : "warn"}`;
+  const b = $("real-armed-badge"); if (b) b.textContent = r.armed ? "REAL MONEY · ARMED" : "REAL · UNARMED"; if (b) b.className = `chip ${r.armed ? "real" : "warn"}`;
   setVal("stat-real-balance", usd(r.balance_usdc)); setVal("stat-real-gas", solPlain(r.balance_sol, 3));
   setVal("stat-real-pnl", usd(r.realized_pnl_usdc, true), cls(r.realized_pnl_usdc)); setVal("stat-exposure", usd(r.exposure_usdc));
 }
@@ -129,10 +129,11 @@ async function pollOnce() {
     fetchJson("/api/real_state").then(renderRealState),
     fetchJson("/api/journal?limit=60").then(j => { LEDGER.journal = j; }),
     fetchJson("/api/overview").then(renderOverview),
-    fetchJson("/api/persona/feed?limit=20").then(renderMind).catch(() => renderMind(null)),
+    fetchJson("/api/persona/feed?limit=40").then(renderMind).catch(() => renderMind(null)),
     fetchJson("/api/market_thoughts").then(m => { if (m.ready) LEDGER.market = m; }),
   ]);
   setConn(res.slice(0, 2).some(r => r.status === "fulfilled"));
+  if (!LEDGER.socialTs || Date.now() - LEDGER.socialTs > 600_000) { LEDGER.socialTs = Date.now(); fetchJson("/api/social").then(x => { LEDGER.social = x; }).catch(() => {}); }
   window.dispatchEvent(new Event("ledger:data"));
 }
 
@@ -147,28 +148,32 @@ async function loadMarket() {
   m.regime = m.regime || { label: "Unknown", key: "chop", score: 0 };
   LEDGER.market = m;
   $("mt-regime").textContent = m.regime.label; $("mt-summary").textContent = m.summary;
-  $("mt-stance").textContent = m.stance; $("mt-time").textContent = `updated ${ago(m.generated_at)}`;
+  $("mt-stance").textContent = m.stance; $("mt-time").textContent = `updated ${ago(new Date((m.ts || 0) * 1000))}`;
   $("mt-scale").textContent = m.size_scale < 1 ? `memecoin size ×${m.size_scale}` : "full size allowed";
   $("mt-stance").className = `chip ${m.regime.key === "risk_off" ? "warn" : m.regime.key === "risk_on" ? "real" : ""}`;
   if (m.fng) { $("fng-v").textContent = m.fng.v; $("fng-l").textContent = `${m.fng.cls} · yesterday ${m.fng.prev}`; drawFng(m.fng.v); }
   const idea = i => `<div class="idea ${i.side === "Long" ? "long" : "short"}">
-      <div class="i-h"><b>${i.side} ${esc(i.name)}</b><span class="cn">${esc(i.venue)}</span>${i.tier ? `<span class="tier ${i.tier}">${i.tier === "low" ? "low cap" : "mid cap"}</span>` : ""}${i.chain ? `<span class="cn">${esc(i.chain)}</span>` : ""}<span class="mono muted">R:R ${i.rr ?? "—"}</span></div>
+      <div class="i-h"><b>${i.side} ${esc(i.name)}</b><span class="cn">${esc(i.venue)}</span>${i.tier ? `<span class="tier ${i.tier}">${i.tier} cap</span>` : ""}${i.chain ? `<span class="cn">${esc(i.chain)}</span>` : ""}<span class="mono muted">R:R ${i.rr ?? "—"}</span></div>
       <div class="i-g mono"><span>Entry</span><b>${fp(i.entry_lo)}–${fp(i.entry_hi)}</b><span>Stop</span><b class="neg">${fp(i.stop)}</b><span>Target</span><b class="pos">${fp(i.t1)}${i.t2 ? ` → ${fp(i.t2)}` : ""}</b>${i.mcap ? `<span>Mcap</span><b>${big(i.mcap)}</b>` : ""}</div>
       <div class="muted">${esc(i.why)}${i.spec ? " · <b>speculative, small size</b>" : ""}</div></div>`;
-  const maj = m.trade_ideas || [], mid = m.mid_caps || [], low = m.low_caps || [];
-  $("mt-ideas").innerHTML = (maj.length || mid.length || low.length)
-    ? (maj.length ? `<div class="ideas-h">Majors</div>${maj.map(idea).join("")}` : "") + (mid.length ? `<div class="ideas-h">Mid caps · accumulation</div>${mid.map(idea).join("")}` : "")
-      + (low.length ? `<div class="ideas-h">Low caps · on-chain accumulation</div>${low.map(idea).join("")}` : "")
-    : empty("No clean setup right now. Wait for a daily close outside the range.");
+  const col = (xs, msg) => xs.length ? xs.map(idea).join("") : `<div class="empty sm">${msg}</div>`;
+  $("mt-maj").innerHTML = col(m.trade_ideas || [], "No clean setup on the majors.");
+  $("mt-mid").innerHTML = col(m.mid_caps || [], "No mid cap is accumulating cleanly.");
+  $("mt-low").innerHTML = col(m.low_caps || [], "No low cap passes the filters.");
+  $("mt-micro").innerHTML = col(m.micro_caps || [], "No high-conviction micro cap today.");
   const T = m.trenches;
   $("tr-mood").textContent = T ? T.mood : "";
   const li = xs => xs && xs.length ? `<ul>${xs.map(x => typeof x === "string" ? `<li><b>${esc(x)}</b></li>` : `<li><b>${esc(x.sym)}</b> <span class="cn">${esc(x.chain || "")}</span><br>${esc(x.why)}</li>`).join("")}</ul>` : `<div class="muted">Nothing convincing.</div>`;
   $("mt-trench").innerHTML = T ? `<p class="tr-take">${esc(T.take)}</p><div class="tr-grid">
       <div class="tr-col"><h4>🚀 Could pump</h4>${li(T.could_pump)}</div><div class="tr-col"><h4>🩸 Could dump</h4>${li(T.could_dump)}</div>
       <div class="tr-col"><h4>🧺 Accumulate</h4>${li(T.accumulate)}</div><div class="tr-col"><h4>🏛 Long-term</h4>${li(T.long_term)}</div></div>
-      <div class="tr-rules">${esc(T.rules)}</div>` : empty("Trenches read appears after the next market refresh.");
+` : empty("Trenches read appears after the next market refresh.");
   const b = m.next_boom;
-  $("boom-w").textContent = b && b.boom_window ? `window · ${b.boom_window}` : "";
+  $("boom-w").textContent = b && b.boom_window ? `expected window · ${b.boom_window}${b.since ? ` · featured since ${b.since}` : ""}` : "";
+  const prev = (b && b.previous) || [];
+  $("mt-boom-prev").innerHTML = prev.length ? prev.map(x => `<div class="row col"><div class="t"><b>${esc(x.emoji || "🚀")} ${esc(x.theme)}</b> <span class="muted sm">${esc(x.shown_from || "?")} → ${esc(x.shown_to || "")}</span></div>
+      <div class="muted sm">${md(x.thesis || "")}</div><div class="muted sm mono">window ${esc(x.boom_window || "—")} · ${[...(x.crypto || []).map(c => "$" + String(c).replace(/^\$/, "")), ...(x.stocks || [])].map(esc).join(" · ")}</div></div>`).join("")
+    : empty("The archive starts when today's theme rotates out. Every past boom stays here.");
   $("mt-boom").innerHTML = b ? `<h3>${esc(b.emoji || "🚀")} ${esc(b.theme)}</h3><p class="boom-t">${md(b.thesis || "")}</p>
       <div class="grid2 inner"><div><div class="label pad">Why now</div><ul>${(b.why_now || []).slice(0, 4).map(w => `<li>${md(w)}</li>`).join("")}</ul></div>
       <div><div class="label pad">Crypto</div><div class="trend">${(b.crypto || []).map(c => `<span class="tchip"><b>$${esc(String(c).replace(/^\$/, ""))}</b></span>`).join("") || '<span class="muted">no clean crypto proxy, equities lead this one</span>'}</div>
@@ -217,14 +222,19 @@ function drawFng(v) {
   const a = Math.PI + Math.PI * v / 100; x.fillStyle = "#fff"; x.beginPath(); x.arc(cx + r * Math.cos(a), cy + r * Math.sin(a), 6, 0, 7); x.fill();
 }
 
+$("boom-tabs").addEventListener("click", e => { const t = e.target.closest(".tab"); if (!t) return;
+  document.querySelectorAll("#boom-tabs .tab").forEach(x => x.classList.toggle("active", x === t));
+  $("mt-boom").classList.toggle("hidden", t.dataset.b !== "cur"); $("mt-boom-prev").classList.toggle("hidden", t.dataset.b === "cur"); $("boom-w").classList.toggle("hidden", t.dataset.b !== "cur"); });
+
 // ── Portfolio tab (paper, simulated) ────────────────────────────────
-const SLV = { spot: ["Crypto spot", "#7c8cff"], perps: ["Crypto perps", "#22d3e6"], stocks: ["Penny stocks", "#f5b84b"] };
+const SLV = { spot: ["Crypto spot", "#7c8cff"], perps: ["Crypto perps", "#22d3e6"], stocks: ["Penny stocks", "#f5b84b"], poly: ["Polymarket predictions", "#ff6ec7"] };
 const eur = v => v == null ? "—" : `€${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 async function loadPortfolio() {
   let P; try { P = await fetchJson("/api/portfolio"); } catch { return; }
   $("pf-total").innerHTML = `${eur(P.total_eur)} <span class="${cls(P.pnl_pct)}" style="font-size:18px">${pc(P.pnl_pct, 2)}</span>`;
-  $("pf-sub").textContent = `Started with €3,000 on ${new Date(P.created * 1000).toLocaleDateString()} · simulated, no real money`;
-  const sl = Object.entries(P.sleeves);
+  $("pf-sub").textContent = `Started with ${eur(P.start_eur || 3000)} on ${new Date(P.created * 1000).toLocaleDateString()} · simulated, no real money`;
+  const ORDER = ["spot", "perps", "stocks", "poly"];
+  const sl = Object.entries(P.sleeves).sort((a, b) => ORDER.indexOf(a[0]) - ORDER.indexOf(b[0]));
   const c = $("pf-donut"), x = c.getContext("2d"), tot = sl.reduce((a, [, v]) => a + v.value_eur, 0) || 1; x.clearRect(0, 0, 180, 180);
   let a0 = -Math.PI / 2; sl.forEach(([k, v]) => { const a1 = a0 + 6.283 * v.value_eur / tot; x.strokeStyle = SLV[k][1]; x.lineWidth = 22; x.beginPath(); x.arc(90, 90, 66, a0 + .02, a1 - .02); x.stroke(); a0 = a1; });
   x.fillStyle = "#e6edf6"; x.font = "600 13px Inter"; x.textAlign = "center"; x.fillText("allocation", 90, 95);
@@ -241,9 +251,9 @@ async function loadPortfolio() {
       <div class="muted">cash ${eur(v.cash_eur)} · ${v.positions.length} positions${v.last_decision ? ` · decided ${ago(new Date(v.last_decision * 1000))}` : ""}</div></div>
       <button class="fold" aria-label="Expand">+</button></div>
     <div class="fold-body"><div class="list">${v.positions.length ? v.positions.map(p => `<div class="row col"><div class="pfpos">
-      <div><b>${esc(p.sym)}</b> ${book(p.book)}${p.side !== "Spot" ? ` <span class="cn">${esc(p.side)} ${p.lev}x</span>` : ""}</div>
+      <div><b>${esc(p.title || p.sym)}</b> ${book(p.book)}${p.kind === "poly" ? ` <span class="tier ${p.side === "YES" ? "mid" : "low"}">${esc(p.side)}</span>` : p.side !== "Spot" ? ` <span class="cn">${esc(p.side)} ${p.lev}x</span>` : ""}</div>
       <div class="mono" id="lv-${k}-${esc(p.sym)}"><span class="${cls(p.pnl_pct)}">${pc(p.pnl_pct, 1)}</span> · ${eur(p.value_eur)}</div>
-      <div class="mono muted sm">entry $${price(p.entry_usd)} · now <span id="lp-${k}-${esc(p.sym)}">$${price(p.last_usd)}</span>${p.stop_usd ? ` · stop $${price(p.stop_usd)}` : ""}${p.target_usd ? ` · target $${price(p.target_usd)}` : ""}</div><div></div>
+      <div class="mono muted sm">${p.kind === "poly" ? `${esc(p.side)} @ ${Math.round(p.entry_usd * 100)}¢ · now <span id="lp-${k}-${esc(p.sym)}">${Math.round((p.last_usd || 0) * 100)}¢</span> · Mirko ${Math.round((p.mirko_p || 0) * 100)}%${p.end ? ` · resolves ${new Date(p.end).toLocaleDateString()}` : ""}` : `entry $${price(p.entry_usd)} · now <span id="lp-${k}-${esc(p.sym)}">$${price(p.last_usd)}</span>`}${p.stop_usd ? ` · stop $${price(p.stop_usd)}` : ""}${p.target_usd ? ` · target $${price(p.target_usd)}` : ""}</div><div></div>
       <div class="why">💭 ${esc(p.why)}</div></div></div>`).join("") : empty("Flat. Waiting for a setup.")}</div>
       ${v.note ? `<div class="muted sm" style="margin-top:8px">${esc(v.note)}</div>` : ""}</div></div>`).join("");
   initFold($("pf-sleeves"));
@@ -259,7 +269,7 @@ async function pfLive() {
   Object.entries(L.positions || {}).forEach(([k, ps]) => Object.entries(ps).forEach(([sym, p]) => {
     const e = document.getElementById(`lv-${k}-${sym}`), q = document.getElementById(`lp-${k}-${sym}`);
     if (e) e.innerHTML = `<span class="${cls(p.pnl_pct)}">${pc(p.pnl_pct, 1)}</span> · ${eur(p.value_eur)} <span class="live-dot" title="live"></span>`;
-    if (q && p.last_usd) q.textContent = `$${price(p.last_usd)}`;
+    if (q && p.last_usd != null) q.textContent = k === "poly" ? `${Math.round(p.last_usd * 100)}¢` : `$${price(p.last_usd)}`;
   }));
 }
 const pfOpen = () => !document.hidden && !$("view-portfolio").classList.contains("hidden");
@@ -317,7 +327,7 @@ function renderSwitch(st) {
   switchEnabled = !!st.enabled;
   const s = $("switch-state"); s.textContent = switchEnabled ? "ON" : "OFF"; s.className = `switch-state ${switchEnabled ? "on" : "off"}`;
   $("status-pulse").className = `pulse ${switchEnabled ? "on" : "off"}`;
-  $("switch-note").textContent = switchEnabled ? "Mirko is watching the market and can open new positions." : "Paused — no new buys. Open positions are still managed (exits keep running).";
+  if ($("switch-note")) $("switch-note").textContent = switchEnabled ? "Mirko is watching the market and can open new positions." : "Paused — no new buys. Open positions are still managed (exits keep running).";
   const b = $("switch-btn"); b.disabled = false; b.className = `switch ${switchEnabled ? "on" : ""}`;
   $("switch-caption").textContent = switchEnabled ? "Tap to pause" : "Tap to resume";
 }

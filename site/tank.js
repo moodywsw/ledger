@@ -7,7 +7,7 @@
   const spawn = (y) => ({ x: Math.random() * W, y: y ?? H + Math.random() * 20, r: .8 + Math.random() ** 2 * 4.2,
     v: 8 + Math.random() * 22, wob: Math.random() * 6.28, amp: .3 + Math.random() * 1.2 });
   function size() { const r = cv.getBoundingClientRect(); W = r.width; H = r.height; cv.width = W * DPR; cv.height = H * DPR; ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-    bs = Array.from({ length: Math.round(Math.min(46, W * H / 900)) }, () => spawn(Math.random() * H)); }
+    bs = Array.from({ length: Math.max(W > 10 ? 14 : 0, Math.round(Math.min(46, W * H / 900))) }, () => spawn(Math.random() * H)); }
   function draw(dt) {
     ctx.clearRect(0, 0, W, H);
     const dream = parseFloat(getComputedStyle(cv.parentElement).getPropertyValue("--dream")) || .35;
@@ -23,6 +23,8 @@
   function loop(t) { if (!run) return; const dt = Math.min(.1, (t - (last || t)) / 1000); if (t - last > 33) { draw(dt || .033); last = t; } requestAnimationFrame(loop); }
   const vis = () => { const v = !document.hidden && cv.offsetParent !== null; if (v && !run) { run = true; last = 0; requestAnimationFrame(loop); } else run = v; };
   document.addEventListener("visibilitychange", vis); window.addEventListener("ledger:view", vis);
-  addEventListener("resize", () => { size(); if (reduce) draw(0); });
+  // size from the real box (it may be 0 at load while fonts/images/grid settle) — ResizeObserver fixes "frozen bubbles"
+  const ro = new ResizeObserver(() => { const r = cv.getBoundingClientRect(); if (Math.abs(r.width - W) > 1 || Math.abs(r.height - H) > 1) { size(); if (reduce) draw(0); } });
+  ro.observe(cv);
   size(); if (reduce) draw(0); else requestAnimationFrame(loop);
 })();

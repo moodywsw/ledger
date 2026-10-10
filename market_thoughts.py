@@ -40,9 +40,13 @@ def log(m):
 
 
 def get(url, params=None, timeout=20):
-    r = requests.get(url, params=params, headers=UA, timeout=timeout)
-    r.raise_for_status()
-    return r.json()
+    for i in range(3):   # free APIs (GeckoTerminal: ~30 req/min) answer 429 under load: back off and retry
+        r = requests.get(url, params=params, headers=UA, timeout=timeout)
+        if r.status_code == 429 and i < 2:
+            time.sleep(float(r.headers.get("Retry-After") or 0) or 4 * (i + 1))
+            continue
+        r.raise_for_status()
+        return r.json()
 
 
 def spot(path, params):
@@ -427,9 +431,9 @@ def trade_ideas(assets, hl):
     return out
 
 
-SCHEMA = 3
+SCHEMA = 4
 BOOM_DEFAULT = {"theme": "AI infrastructure", "emoji": "🤖", "thesis": "Compute, power and data centres keep absorbing capital; the picks-and-shovels trade is the patient one.",
-                "boom_window": "next 6-18 months", "why_now": ["Hyperscaler capex guidance keeps rising", "Power and cooling are the new bottleneck"],
+                "boom_window": "Nov 2026 – Dec 2027", "why_now": ["Hyperscaler capex guidance keeps rising", "Power and cooling are the new bottleneck"],
                 "crypto": ["TAO", "RENDER", "FET"], "stocks": ["NVDA", "AVGO", "VRT", "CEG"], "invalidation": "Capex cuts from two or more hyperscalers."}
 BOOM_PROXIES = {"space": ["SOL", "LINK"], "ai": ["TAO", "RENDER", "FET"], "energy": ["BTC"], "nuclear": ["BTC"], "robot": ["TAO", "FET"],
                 "quantum": ["BTC"], "defense": ["LINK"], "stable": ["ETH", "SOL"], "rwa": ["ONDO", "LINK"], "gaming": ["IMX"], "bitcoin": ["BTC"]}
@@ -442,6 +446,30 @@ def _insights():
         return {k: d[k] for k in ("beliefs", "risk_tilt", "items", "date")} if d else None
     except Exception:
         return None
+
+
+def _boom_hist_path():
+    return Path(os.environ.get("DATA_DIR", ".")) / "boom_history.json"
+
+
+def boom_with_history(cur: dict) -> dict:
+    """Archive: when the current theme changes, the previous one moves to history (with its dates). Always kept."""
+    try:
+        h = json.loads(_boom_hist_path().read_text())
+    except Exception:
+        h = {"current": None, "since": None, "previous": []}
+    today = dt.date.today().isoformat()
+    if not h.get("current") or h["current"].get("theme") != cur.get("theme"):
+        if h.get("current"):
+            h["previous"].insert(0, {**h["current"], "shown_from": h.get("since"), "shown_to": today})
+            h["previous"] = h["previous"][:30]
+        h["current"], h["since"] = cur, today
+        try:
+            _boom_hist_path().write_text(json.dumps(h))
+        except Exception:
+            pass
+    return {**cur, "since": h.get("since"), "previous": [{k: x.get(k) for k in ("theme", "emoji", "thesis", "boom_window", "crypto", "stocks", "shown_from", "shown_to")}
+                                                         for x in h.get("previous", [])]}
 
 
 def next_boom(today: str | None = None):
@@ -498,6 +526,7 @@ def build():
     dex = safe("dex flows", dex_flows) or []
     mids = safe("mid caps", midcap_ideas) or []
     lows = safe("low caps", lowcap_ideas) or []
+    micros = safe("micro caps", microcap_ideas) or []
     reads = [asset_read(assets[n], derivs.get(n), ((hl or {}).get("coins") or {}).get(n)) for n, _ in ASSETS if n in assets]
     reg = regime(assets, glob, fg) if assets else {"label": "Unknown", "key": "chop", "score": 0, "notes": []}
     summary, stance = outlook(reads, reg, fg, cbp, dex)
@@ -507,7 +536,7 @@ def build():
     return {"ts": time.time(), "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(), "regime": reg,
             "assets": reads, "fng": fg, "global": glob, "coinbase_premium": cbp, "trending": trend,
             "hyperliquid": hl, "dex_flows": dex, "trade_ideas": trade_ideas(assets, hl) if assets else [],
-            "summary": summary, "stance": stance, "next_boom": next_boom() or BOOM_DEFAULT, "mid_caps": mids, "low_caps": lows,
+            "summary": summary, "stance": stance, "next_boom": boom_with_history(next_boom() or BOOM_DEFAULT), "mid_caps": mids, "low_caps": lows, "micro_caps": micros,
             "trenches": safe("trenches", trenches, dex, lows, reads, fg, next_boom()) or trenches_fallback(reads, fg, next_boom(), trend),
             "insights": ins, "schema": SCHEMA,
             "size_scale": regime_scale_for(reg["key"]), "warnings": LOG[-12:]}
@@ -518,9 +547,23 @@ STABLES = {"USDT", "USDC", "DAI", "FDUSD", "TUSD", "USDE", "USDS", "PYUSD", "USD
            "CBBTC", "BTCB", "LEO", "XAUT", "PAXG", "BSC-USD", "SUSDE", "USDD", "FRAX", "RLUSD"}
 
 
+BINANCE_SYMS: set = set()
+
+
+def _load_binance_syms():
+    global BINANCE_SYMS
+    if BINANCE_SYMS:
+        return
+    try:
+        BINANCE_SYMS = {x["symbol"] for x in spot("/api/v3/ticker/price", {})}
+    except Exception:
+        pass
+
+
 def midcap_ideas(n=3):
     """$100M-$3B coins showing quiet accumulation: up modestly over 7d, not chasing on the day, healthy
     volume/mcap, uptrend on the daily and close to the 20D (not extended). Levels from Binance candles."""
+    _load_binance_syms()
     rows = get("https://api.coingecko.com/api/v3/coins/markets", {"vs_currency": "usd", "order": "market_cap_desc", "per_page": 250,
                "page": 1, "price_change_percentage": "7d"})
     cands = []
@@ -535,6 +578,8 @@ def midcap_ideas(n=3):
     for _, sym, r in sorted(cands, reverse=True)[:10]:
         if len(out) >= n:
             break
+        if BINANCE_SYMS and sym + "USDT" not in BINANCE_SYMS:
+            continue   # not on Binance spot: no candles for levels, skip quietly
         a = safe(f"{sym} mid", asset_data, sym, sym + "USDT")
         if not a or trend_score(a) < 1 or not a["ma20"] or a["price"] > a["ma20"] * 1.10:
             continue
@@ -575,7 +620,8 @@ def lowcap_ideas(n=3):
             continue
         k = f"{net}:{addr}"
         w = watch.setdefault(k, {"sym": (a.get("name") or "").split(" / ")[0][:14], "chain": net, "pool": a.get("address"), "obs": []})
-        w["obs"].append({"ts": now, "bs": b / (b + s_), "px": px, "mc": mc, "fdv": fdv, "liq": liq, "vol": vol})
+        w["obs"].append({"ts": now, "bs": b / (b + s_), "px": px, "mc": mc, "fdv": fdv, "liq": liq, "vol": vol, "buyers": b})
+        w["created"] = a.get("pool_created_at") or w.get("created")
         w["obs"] = w["obs"][-12:]
     for k in [k for k, w in watch.items() if now - w["obs"][-1]["ts"] > 4 * 86400]:
         del watch[k]
@@ -586,7 +632,7 @@ def lowcap_ideas(n=3):
     scored = []
     for k, w in watch.items():
         o = w["obs"][-1]
-        if now - o["ts"] > 3 * 3600 or not (1e6 <= o["mc"] <= 1e8) or o["px"] > 20 or not o["liq"]:
+        if now - o["ts"] > 3 * 3600 or not (1e6 < o["mc"] <= 1e8) or o["px"] > 20 or not o["liq"]:
             continue
         if o["liq"] > 0.5 * o["mc"] or o["vol"] / o["liq"] > 50 or (o["fdv"] and o["mc"] > o["fdv"] * 1.05) or o["bs"] < 0.52:
             continue
@@ -628,6 +674,61 @@ def lowcap_ideas(n=3):
                     "rr": round((t1 - entry) / risk, 2) if risk > 0 else None, "mcap": ds.get("marketCap"), "spec": not qual,
                     "why": (f"buyers > sellers on {len([x for x in w['obs'] if x['bs'] > .52])} scans" if qual else "net buying on the latest scan")
                            + (", higher lows" if base else ", no clear base yet")})
+    return out
+
+
+def microcap_ideas(n=2):
+    """Micro caps (<= ~$600k mcap), ONLY with real conviction: a launch wrecked by snipers in its first day
+    that is now base-building with sustained accumulation. All must hold:
+    pool age >= 2 days; first-day high -> low drawdown >= 50%; price now >= 1.3x that low (a base, not a knife);
+    buyers > sellers on >= 3 scans spanning >= 8h; unique buyers and liquidity rising across scans;
+    liquidity >= $25k and <= 0.6x mcap; volume/liquidity < 30. If none qualify: empty list (site says so)."""
+    try:
+        watch = json.loads(_watch_path().read_text())
+    except Exception:
+        return []
+    now, out = time.time(), []
+    for k, w in watch.items():
+        obs = w["obs"]; o = obs[-1]
+        if now - o["ts"] > 3 * 3600 or not (5e4 <= o["mc"] <= 6e5) or not o["liq"] or o["liq"] < 25_000 or o["liq"] > 0.6 * o["mc"] or o["vol"] / o["liq"] > 30:
+            continue
+        try:
+            age_d = (now - dt.datetime.fromisoformat(str(w.get("created")).replace("Z", "+00:00")).timestamp()) / 86400
+        except Exception:
+            continue
+        acc = [x for x in obs if x["bs"] > 0.52]
+        if age_d < 2 or len(acc) < 3 or acc[-1]["ts"] - acc[0]["ts"] < 8 * 3600:
+            continue
+        if not (obs[-1]["liq"] > obs[0]["liq"] * 1.05 and (obs[-1].get("buyers") or 0) >= (obs[0].get("buyers") or 0)):
+            continue
+        net, addr = k.split(":", 1)
+        try:
+            time.sleep(2.1)
+            ohl = sorted(get(f"https://api.geckoterminal.com/api/v2/networks/{net}/pools/{w['pool']}/ohlcv/hour",
+                             {"limit": 200, "aggregate": 4, "currency": "usd"})["data"]["attributes"]["ohlcv_list"])
+        except Exception as e:
+            log(f"micro {w['sym']}: {str(e)[:60]}")
+            continue
+        if len(ohl) < 12:
+            continue
+        first = ohl[:6]; hi1 = max(r[2] for r in first); low_after = min(r[3] for r in ohl[3:])
+        px = ohl[-1][4]
+        if hi1 <= 0 or low_after / hi1 > 0.5 or px < low_after * 1.3:
+            continue
+        lows = [r[3] for r in ohl[-12:]]
+        if min(lows[-6:]) < min(lows[:6]) * 0.95:
+            continue   # still making lower lows: no base
+        stop = min(lows[-6:]) * 0.9; risk = px - stop
+        if risk <= 0:
+            continue
+        t1 = min(hi1, px + 3 * risk)
+        out.append({"name": w["sym"], "chain": net, "address": addr, "side": "Long", "venue": "Spot", "tier": "micro",
+                    "entry_lo": min(lows[-6:]), "entry_hi": px, "stop": stop, "t1": t1, "rr": round((t1 - px) / risk, 2),
+                    "mcap": o["mc"], "spec": True,
+                    "why": f"{age_d:.0f}d old, first day sniped -{(1 - low_after / hi1):.0%}, now a base +{(px / low_after - 1):.0%} off the low; "
+                           f"buyers > sellers on {len(acc)} scans, liquidity growing"})
+        if len(out) >= n:
+            break
     return out
 
 

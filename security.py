@@ -101,6 +101,9 @@ def apply_headers(resp, path: str):
     h.pop("Server", None)
     if path.startswith("/api/"):
         h["Cache-Control"] = "no-store"
-    elif path.endswith((".jpg", ".png")):
-        h["Cache-Control"] = "public, max-age=86400"
+    elif path in ("/", "/index.html"):
+        h["Cache-Control"] = "no-cache"
+    elif path.endswith((".jpg", ".png", ".webp", ".css", ".js")):
+        from flask import request as _rq
+        h["Cache-Control"] = "public, max-age=31536000, immutable" if _rq.args.get("v") else "no-cache"
     return resp

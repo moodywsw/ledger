@@ -6,7 +6,8 @@
   const DOMAINS = [
     { id: "market", label: "market", col: [124, 140, 255] }, { id: "smart", label: "smart money", col: [34, 211, 230] },
     { id: "kols", label: "KOLs", col: [255, 110, 199] }, { id: "risk", label: "risk", col: [255, 92, 122] },
-    { id: "memory", label: "memory", col: [245, 184, 75] }, { id: "news", label: "news", col: [160, 120, 255] }];
+    { id: "memory", label: "memory", col: [245, 184, 75] }, { id: "news", label: "news", col: [160, 120, 255] },
+    { id: "social", label: "social media", col: [80, 230, 140] }, { id: "politics", label: "politics", col: [255, 150, 90] }];
   let W = 0, H = 0, stars = [], gal = [], spider = { x: 0, y: 0, tx: 0, ty: 0, target: 0, dwell: 0, legs: [] }, tags = [], logLines = [], events = 0, visible = true, last = 0;
   const rnd = (a, b) => a + Math.random() * (b - a);
 
@@ -46,9 +47,10 @@
     [mid, mx2] = off(fw, fh); starfield(mx2, fw, fh, mobile ? 120 : 260, 2.2);
     const ng = mobile ? 26 : 60;
     for (let i = 0; i < ng; i++) { const d = Math.pow(Math.random(), 2); bgGalaxy(mx2, rnd(0, fw), rnd(0, fh), 6 + d * (mobile ? 26 : 38), Math.random() < .62 ? "s" : "e"); }
-    const pos = mobile ? [[.22, .2], [.75, .18], [.2, .55], [.8, .52], [.3, .85], [.72, .86]] : [[.12, .3], [.36, .18], [.62, .22], [.88, .32], [.25, .78], [.72, .78]];
+    const pos = mobile ? [[.2, .14], [.72, .12], [.25, .38], [.8, .36], [.2, .63], [.75, .6], [.3, .87], [.75, .87]]
+      : [[.14, .2], [.42, .14], [.72, .16], [.86, .46], [.16, .56], [.5, .5], [.3, .84], [.72, .82]];
     const n = mobile ? 90 : 220;
-    gal = DOMAINS.map((d, i) => ({ ...d, x: pos[i][0] * W, y: pos[i][1] * H, r: Math.min(W, H) * (mobile ? .16 : .17), heat: .3, info: "", rot: rnd(0, 6), tilt: rnd(.55, .85),
+    gal = DOMAINS.map((d, i) => ({ ...d, x: pos[i][0] * W, y: pos[i][1] * H, r: Math.min(W, H) * (mobile ? .12 : .13), heat: .3, info: "", rot: rnd(0, 6), tilt: rnd(.55, .85),
       dots: Array.from({ length: n }, (_, k) => { const arm = k % 2 * Math.PI, t = Math.random() * 2.4, rr = Math.min(1, .08 * Math.exp(.9 * t)), core = Math.random() < .3;
         return core ? { a: rnd(0, 6.283), rr: Math.pow(Math.random(), 2) * .35, s: rnd(.6, 1.8), tw: rnd(0, 6.283), sp: rnd(.0004, .0009) }
           : { a: arm + t * 1.9 + rnd(-.3, .3), rr, s: rnd(.6, 2), tw: rnd(0, 6.283), sp: .0005 / (rr + .3) }; }) }));
@@ -71,6 +73,10 @@
       if (m) out.push(m.size_scale < 1 ? `size ×${m.size_scale}` : "size · full"); }
     if (id === "memory") { const md = L.mood; if (md) out.push(`mood · ${md.label}`); (L.posts || []).filter(p => p.kind === "exit_win" || p.kind === "exit_loss").slice(0, 3).forEach(p => out.push(p.kind === "exit_win" ? "lesson · win" : "lesson · loss")); }
     if (id === "news") { (L.posts || []).filter(p => p.kind === "musing" && p.text).slice(0, 3).forEach(p => out.push(`${(p.topic || "thought").replace("_", " ")} · ${p.text.split(" ").slice(0, 3).join(" ")}…`)); }
+    const S = L.social;
+    if (id === "social" && S) { (S.hot_tickers || []).slice(0, 3).forEach(t => out.push(`reddit · $${t}`)); (S.x || []).slice(0, 3).forEach(x => out.push(`X · @${x.user}`));
+      if (S.tone) out.push(`crowd · ${S.tone.crypto > .1 ? "greedy" : S.tone.crypto < -.1 ? "fearful" : "mixed"}`); }
+    if (id === "politics" && S) { ((S.reddit || {}).politics || []).slice(0, 3).forEach(h => out.push(`politics · ${h.split(" ").slice(0, 3).join(" ")}…`)); }
     return out.length ? out : [`${id} · scanning`];
   }
   function heat(g) { const L = window.LEDGER || {}, m = L.market && L.market.regime ? L.market : null;
@@ -94,7 +100,6 @@
     tags = tags.slice(-6);
     const w = document.getElementById("wolf"), dr = document.getElementById("dream");  // his breathing glow follows the scan
     if (w) w.style.setProperty("--dream", (0.25 + g.heat * 0.75).toFixed(2));
-    if (dr) dr.textContent = `dreaming of ${g.label}`;
     pushLog(`read  ${g.label.padEnd(11)} ${pick[0] || ""}`);
   }
 

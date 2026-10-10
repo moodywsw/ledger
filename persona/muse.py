@@ -9,7 +9,7 @@ import requests
 
 from . import mood as moodmod
 
-TOPICS = ["reading", "world", "world_markets", "market_read", "market", "culture", "narratives", "kols", "macro", "ai", "bot_life", "lessons", "headline", "trending"]
+TOPICS = ["social", "politics_social", "reading", "world", "world_markets", "market_read", "market", "culture", "narratives", "kols", "macro", "ai", "bot_life", "lessons", "headline", "trending"]
 RSS = [u.strip() for u in os.environ.get("PERSONA_RSS_FEEDS",
        "https://www.coindesk.com/arc/outboundfeeds/rss/,https://decrypt.co/feed,https://www.theblock.co/rss.xml").split(",") if u.strip()]
 UA = {"User-Agent": "LedgerBot/1.0 (+persona)"}
@@ -75,7 +75,18 @@ def market_read() -> dict | None:
 
 def gather() -> dict:
     return {"fng": fear_greed(), "trending": trending(), "headlines": headlines(), "market_read": market_read(),
-            "world": headlines(8, WORLD_RSS), "reading": _reading()}
+            "world": headlines(8, WORLD_RSS), "reading": _reading(), **_social()}
+
+
+def _social() -> dict:
+    try:
+        import social
+        d = social.cached() or {}
+    except Exception:
+        d = {}
+    rd = d.get("reddit") or {}
+    return {"social_beliefs": d.get("beliefs") or [], "social_posts": (rd.get("crypto") or [])[:6] + (rd.get("stocks") or [])[:4],
+            "politics_posts": [h for h in (rd.get("politics") or []) if not _SENSITIVE.search(h)][:6], "hot_tickers": d.get("hot_tickers") or []}
 
 
 def _reading() -> list:
@@ -104,6 +115,15 @@ def pick_world(ctx: dict, rng=random) -> tuple:
 
 
 T = {
+    "social": [
+        "Scrolled the timelines so you don't have to. {sb}",
+        "Reddit thread of the hour: \"{sp}\". {sb}",
+        "Social check: {sb} Tickers people won't shut up about: {ht}.",
+    ],
+    "politics_social": [
+        "Politics feed: \"{pp}\". My take: policy moves slower than the outrage cycle; markets care about the policy.",
+        "Seeing \"{pp}\" everywhere. I keep my politics balanced and my position sizes boring.",
+    ],
     "reading": [
         "Daily reading done. {rd}",
         "From this morning's homework (funds, central banks, tech): {rd}",
@@ -199,6 +219,10 @@ def choose_topic(recent: list, ctx: dict, rng=random) -> str:
         avail = [t for t in avail if t not in ("world", "world_markets")]
     elif not any(market_hook(h) for h in ctx.get("world") or []):
         avail = [t for t in avail if t != "world_markets"]
+    if not ctx.get("social_beliefs"):
+        avail = [t for t in avail if t != "social"]
+    if not ctx.get("politics_posts"):
+        avail = [t for t in avail if t != "politics_social"]
     if not ctx.get("reading"):
         avail = [t for t in avail if t != "reading"]
     if not ctx.get("market_read"):
@@ -217,7 +241,9 @@ def template(topic: str, ctx: dict, recent_texts: list, rng=random) -> str:
             "fng": fng.get("value", "?"), "fngl": fng.get("label", "?"), "fngl_low": str(fng.get("label", "uncertain")).lower(),
             "fng_take": _fng_take(fng.get("value")), "trend": ", ".join(ctx.get("trending") or [])[:90],
             "hl": rng.choice(hl), "belief": rng.choice(ctx.get("beliefs") or ["size small, think big."]),
-            "lessons": ctx.get("lessons_count", 0), "rd": rng.choice(ctx.get("reading") or ["patience pays."]), **_mr_vals(ctx.get("market_read")), "mood": moodmod.label(m), "em": moodmod.emoji(m)}
+            "lessons": ctx.get("lessons_count", 0), "rd": rng.choice(ctx.get("reading") or ["patience pays."]),
+            "sb": rng.choice(ctx.get("social_beliefs") or ["the crowd is mixed."]), "sp": rng.choice(ctx.get("social_posts") or ["gm"])[:120],
+            "pp": rng.choice(ctx.get("politics_posts") or ["politics as usual"])[:120], "ht": ", ".join((ctx.get("hot_tickers") or ["none"])[:4]), **_mr_vals(ctx.get("market_read")), "mood": moodmod.label(m), "em": moodmod.emoji(m)}
     opts = T.get(topic, T["culture"])
     fresh = [o for o in opts if o.split("{")[0][:40] not in " ".join(recent_texts)] or opts
     try:
