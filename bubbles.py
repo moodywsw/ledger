@@ -23,7 +23,7 @@ def get() -> dict:
             items = [{"id": x["id"], "s": x["symbol"].upper()[:8], "mc": x.get("market_cap") or 0,
                       "h1": x.get("price_change_percentage_1h_in_currency"), "d1": x.get("price_change_percentage_24h_in_currency"),
                       "w1": x.get("price_change_percentage_7d_in_currency"), "t": x["id"] in tr}
-                     for x in m if isinstance(x, dict) and x.get("symbol", "").lower() not in stable][:50]
+                     for x in m if isinstance(x, dict) and x.get("symbol", "").lower() not in stable and "usd" not in x.get("symbol", "").lower() and x.get("symbol", "").lower() not in ("xaut", "paxg")][:50]
             if items:
                 _c.update(ts=time.time(), d={"ts": int(time.time()), "items": items})
         except Exception as e:
