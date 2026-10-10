@@ -488,12 +488,66 @@ def api_ask():
             return jsonify({"ok": False, "answer": "Slow down a little and try again."})
     except (TypeError, ValueError):
         return jsonify({"error": "bad request"}), 400
-    return jsonify(ask.answer(body["q"][:1000], security.client_ip(request), "site"))
+    import access
+    ip = security.client_ip(request)
+    if security.locked_for(ip) > 0:
+        return jsonify({"ok": False, "answer": "Too many wrong codes. Try later."}), 429
+    who = access.check(str(body.get("code") or request.headers.get("X-Mirko-Code") or ""))
+    owner = bool(request.headers.get("Authorization")) and privacy.is_owner(request)
+    if not who and not owner:
+        security.record_fail(ip)
+        return jsonify({"ok": False, "locked": True, "answer": "Ask Mirko is invite-only. Enter your access code."}), 403
+    uid = "owner" if owner and not who else "code:" + who["id"]
+    return jsonify(ask.answer(body["q"][:1000], uid, "site", per_day=(500 if owner and not who else who["daily"])))
+
+
+@app.route("/api/ask/check", methods=["POST"])
+def api_ask_check():
+    import access
+    if not security.allow(security.client_ip(request), "owner"):
+        return jsonify({"ok": False}), 429
+    if security.locked_for(security.client_ip(request)) > 0:
+        return jsonify({"ok": False}), 429
+    body = request.get_json(silent=True) or {}
+    who = access.check(str(body.get("code") or ""))
+    if not who:
+        security.record_fail(security.client_ip(request))
+        return jsonify({"ok": False}), 403
+    return jsonify({"ok": True, "label": who["label"], "daily": who["daily"]})
+
+
+@app.route("/api/owner/ask_access", methods=["GET", "POST", "OPTIONS"])
+@owner_only
+def api_owner_ask_access():
+    import access
+    if request.method == "POST":
+        b = request.get_json(silent=True) or {}
+        act = b.get("action")
+        if act == "create":
+            return jsonify(access.create(str(b.get("label", ""))[:40], int(b.get("daily") or 30)))
+        if act == "revoke":
+            return jsonify({"ok": access.revoke(str(b.get("id", ""))[:16])})
+        if act == "feed":
+            access.set_feed(bool(b.get("on")))
+            return jsonify({"ok": True})
+        return jsonify({"error": "bad action"}), 400
+    return jsonify(access.listing())
+
+
+@app.route("/admin")
+def admin_page():
+    r = send_from_directory(SITE_DIR, "admin.html")
+    r.headers["Cache-Control"] = "no-store"
+    r.headers["X-Robots-Tag"] = "noindex"
+    return r
 
 
 @app.route("/api/ask/recent")
 def api_ask_recent():
     import ask
+    import access
+    if not access.public_feed():
+        return jsonify({"items": [], "hidden": True})
     return jsonify(_public({"items": ask.recent(8)}))
 
 

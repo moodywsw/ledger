@@ -1,0 +1,11 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
+<title>Mirko · admin</title><link rel="stylesheet" href="style.css"><link rel="icon" href="favicon.png"></head>
+<body><main class="wrap adm">
+<section class="card"><div class="card-head"><h2>🔑 Ask Mirko access</h2><span class="muted sm" id="adm-st"></span></div>
+ <form id="adm-tok" class="ask-form"><input type="password" id="adm-t" placeholder="Admin token" autocomplete="off"><button class="btn">Unlock</button></form>
+ <div id="adm-body" class="hidden">
+  <form id="adm-new" class="ask-form"><input id="adm-label" maxlength="40" placeholder="Name / label (e.g. João)" required><input id="adm-daily" type="number" min="1" max="500" value="30" title="Questions per day"><button class="btn">Create code</button></form>
+  <div id="adm-code" class="adm-code hidden"></div>
+  <label class="adm-feed"><input type="checkbox" id="adm-feed"> Show public Q&amp;A feed on the site</label>
+  <table class="htable"><thead><tr><th>Label</th><th>Daily</th><th>Uses</th><th>Last used</th><th>Status</th><th></th></tr></thead><tbody id="adm-list"></tbody></table>
+ </div></section></main><script src="admin.js"></script></body></html>

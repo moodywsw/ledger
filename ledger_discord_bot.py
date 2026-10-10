@@ -32,6 +32,7 @@ def _build_client():
         print(f"[DISCORD-BOT] Mirko is live as {client.user} · answers on @mention, DMs and #{ASK_CHANNEL}")
 
     _seen = set()
+    _denied = {}
 
     @client.event
     async def on_message(message):
@@ -45,6 +46,12 @@ def _build_client():
         in_channel = getattr(message.channel, "name", "").lower() == ASK_CHANNEL
         if not (is_dm or mentioned or in_channel):
             return
+        import access, time as _t
+        if not access.discord_allowed(message.author):
+            if not is_dm and _denied.get(message.author.id, 0) < _t.time() - 3600:   # at most one note per hour per user
+                _denied[message.author.id] = _t.time()
+                await message.reply("Mirko chat is invite-only here — ask the owner for the Mirko Access role.", mention_author=False, delete_after=20)
+            return
         text = message.content.replace(f"<@{client.user.id}>", "").replace(f"<@!{client.user.id}>", "").strip()
         if not text:
             return
@@ -55,14 +62,14 @@ def _build_client():
         except Exception:
             pass
         async with message.channel.typing():
-            res = await asyncio.get_running_loop().run_in_executor(None, ask.answer, text, str(message.author.id), "discord")
+            res = await asyncio.get_running_loop().run_in_executor(None, ask.answer, text, str(message.author.id), "discord", None, 100)
         try:
             async for m in message.channel.history(limit=15, after=message):
                 if m.author == client.user and m.reference and m.reference.message_id == message.id:
                     return
         except Exception:
             pass
-        await message.reply(res["answer"][:1900], mention_author=False)
+        await message.reply(res["answer"][:1990], mention_author=False)
 
     return client
 

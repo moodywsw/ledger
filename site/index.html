@@ -138,7 +138,8 @@
 <main class="wrap view hidden" id="view-ask">
   <section class="card ask-card">
     <div class="ask-head"><img src="wolf.webp" alt="" class="ask-av"><div><div class="label">Ask Mirko · same brain as his trades</div><h2>Ask me anything about the market, my positions or my picks</h2>
-      <p class="muted sm">Answers come from my live read, my paper portfolio and my predictions. Not financial advice. Questions are shown publicly without names; 5 per minute, 30 per day.</p></div></div>
+      <p class="muted sm">Answers come from my live read, my paper portfolio and my predictions. Not financial advice. Invite-only: owner-approved access codes.</p></div></div>
+    <form class="ask-lock hidden" id="ask-lock" autocomplete="off"><span class="label">🔒 Access code</span><input type="password" id="ask-code" maxlength="80" placeholder="mk-…"><button class="btn" type="submit">Unlock</button><span class="muted sm" id="ask-lock-msg">No code? Ask the owner for access.</span></form>
     <div class="ask-log" id="ask-log" aria-live="polite"></div>
     <form class="ask-form" id="ask-form" autocomplete="off">
       <input type="text" name="website" id="ask-hp" class="hp" tabindex="-1" aria-hidden="true">
@@ -147,7 +148,7 @@
     </form>
     <div class="ask-chips" id="ask-chips"><button type="button" class="src-chip">What's your read on BTC today?</button><button type="button" class="src-chip">Which trade idea do you like most?</button><button type="button" class="src-chip">Why that football pick?</button><button type="button" class="src-chip">What's the next boom?</button></div>
   </section>
-  <section class="card"><div class="card-head"><h2>Recent questions</h2></div><div id="ask-recent" class="ask-recent"></div></section>
+  <section class="card hidden" id="ask-recent-card"><div class="card-head"><h2>Recent questions</h2></div><div id="ask-recent" class="ask-recent"></div></section>
 </main>
 
 <main class="wrap view hidden" id="view-owner">

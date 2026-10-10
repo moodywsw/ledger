@@ -71,9 +71,9 @@ GEMINI_MODELS = [m for m in [os.environ.get("GEMINI_MODEL"), "gemini-2.5-flash",
 _gem_ok = {"model": None}
 
 
-def gemini_call(body: dict, key: str, timeout: int = 25) -> dict:
+def gemini_call(body: dict, key: str, timeout: int = 25, models: list | None = None) -> dict:
     """POST generateContent, walking a list of free-tier models (old ones get retired). Remembers the one that works."""
-    order = ([_gem_ok["model"]] if _gem_ok["model"] else []) + [m for m in GEMINI_MODELS if m != _gem_ok["model"]]
+    order = list(models) if models else ([_gem_ok["model"]] if _gem_ok["model"] else []) + [m for m in GEMINI_MODELS if m != _gem_ok["model"]]
     last = None
     for m in order:
         try:
@@ -102,7 +102,8 @@ def gemini_call(body: dict, key: str, timeout: int = 25) -> dict:
             if r.status_code == 429:
                 continue
             break
-        _gem_ok["model"] = m
+        if not models:
+            _gem_ok["model"] = m
         return r.json()
     raise RuntimeError(f"gemini unavailable ({last})")
 

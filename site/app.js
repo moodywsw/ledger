@@ -504,8 +504,13 @@ setInterval(() => { if (!document.hidden && !$("view-market").classList.contains
 const ASK = { t0: Date.now(), busy: false };
 function askBubble(who, text, cls = "") { const d = document.createElement("div"); d.className = `ab ${who} ${cls}`; d.textContent = text; $("ask-log").appendChild(d); $("ask-log").scrollTop = 1e9; return d; }
 async function askRecent() {
-  try { const r = await fetchJson("/api/ask/recent"); $("ask-recent").innerHTML = (r.items || []).map(x => `<div class="aq"><div class="aq-q">❓ ${esc(x.q)}</div><div class="aq-a">${esc(x.a)}</div><div class="muted sm mono">${ago(x.ts * 1000)}</div></div>`).join("") || empty("No questions yet — be the first."); } catch {}
+  askLockUi();
+  try { const r = await fetchJson("/api/ask/recent"); $("ask-recent-card").classList.toggle("hidden", !!r.hidden); $("ask-recent").innerHTML = (r.items || []).map(x => `<div class="aq"><div class="aq-q">❓ ${esc(x.q)}</div><div class="aq-a">${esc(x.a)}</div><div class="muted sm mono">${ago(x.ts * 1000)}</div></div>`).join("") || empty("No questions yet — be the first."); } catch {}
 }
+function askLockUi() { const ok = !!(store.get("mirkoCode") || tok()); $("ask-lock").classList.toggle("hidden", ok); $("ask-form").classList.toggle("hidden", !ok); $("ask-chips").classList.toggle("hidden", !ok); }
+$("ask-lock").addEventListener("submit", async e => { e.preventDefault(); const code = $("ask-code").value.trim(); if (!code) return;
+  const r = await fetch("/api/ask/check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) });
+  if (r.ok) { store.set("mirkoCode", code); $("ask-code").value = ""; askLockUi(); askBubble("mirko", "You're in. Ask me anything."); } else $("ask-lock-msg").textContent = r.status === 429 ? "Too many tries, wait a bit." : "That code doesn't work."; });
 $("ask-q").addEventListener("input", e => { $("ask-n").textContent = `${e.target.value.length}/400`; });
 $("ask-chips").addEventListener("click", e => { const b = e.target.closest(".src-chip"); if (b) { $("ask-q").value = b.textContent; $("ask-q").focus(); } });
 $("ask-form").addEventListener("submit", async e => {
@@ -514,8 +519,10 @@ $("ask-form").addEventListener("submit", async e => {
   ASK.busy = true; $("ask-send").disabled = true; askBubble("me", q); $("ask-q").value = ""; $("ask-n").textContent = "0/400";
   const w = askBubble("mirko", "thinking…", "typing");
   try {
-    const r = await fetch("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
-      body: JSON.stringify({ q, website: $("ask-hp").value, ms: Date.now() - ASK.t0 }) });
+    const h = { "Content-Type": "application/json" }; if (!store.get("mirkoCode") && tok()) h.Authorization = `Bearer ${tok()}`;
+    const r = await fetch("/api/ask", { method: "POST", headers: h, credentials: "same-origin",
+      body: JSON.stringify({ q, code: store.get("mirkoCode") || "", website: $("ask-hp").value, ms: Date.now() - ASK.t0 }) });
+    if (r.status === 403) { store.del("mirkoCode"); askLockUi(); }
     const j = await r.json().catch(() => ({}));
     w.classList.remove("typing"); w.textContent = j.answer || (r.status === 429 ? "Too many questions — give me a minute." : "Something went wrong, try again.");
     if (j.ok) setTimeout(askRecent, 800);
