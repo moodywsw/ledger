@@ -534,6 +534,24 @@ def api_owner_ask_access():
     return jsonify(access.listing())
 
 
+@app.route("/api/bubbles")
+def api_bubbles():
+    import bubbles
+    r = jsonify(bubbles.get())
+    r.headers["Cache-Control"] = "public, max-age=120"
+    return r
+
+
+@app.route("/api/owner/llm_health")
+@owner_only
+def api_owner_llm_health():
+    """Which answer providers are configured — booleans and model names only, never key material."""
+    from persona.voice import GEMINI_MODELS, _gem_ok
+    return jsonify({"chain": ["deepseek-reasoner"] * bool(os.environ.get("DEEPSEEK_API_KEY")) + ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"],
+                    "deepseek": bool(os.environ.get("DEEPSEEK_API_KEY")), "gemini": bool(os.environ.get("GEMINI_API_KEY")),
+                    "gemini_last_ok": _gem_ok["model"], "gemini_models": GEMINI_MODELS})
+
+
 @app.route("/admin")
 def admin_page():
     r = send_from_directory(SITE_DIR, "admin.html")

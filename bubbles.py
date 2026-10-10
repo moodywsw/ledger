@@ -1,0 +1,31 @@
+"""Trending bubbles data: CoinGecko free markets (top 50) + trending, cached 10 min server-side."""
+import threading, time
+import requests
+
+_c = {"ts": 0, "d": None}
+_lock = threading.Lock()
+CG = "https://api.coingecko.com/api/v3"
+
+
+def get() -> dict:
+    with _lock:
+        if _c["d"] and time.time() - _c["ts"] < 600:
+            return _c["d"]
+        try:
+            h = {"accept": "application/json", "user-agent": "mirko/1.0"}
+            m = requests.get(f"{CG}/coins/markets", headers=h, timeout=15, params={
+                "vs_currency": "usd", "order": "market_cap_desc", "per_page": 60, "page": 1, "price_change_percentage": "1h,24h,7d"}).json()
+            try:
+                tr = {c["item"]["id"] for c in requests.get(f"{CG}/search/trending", headers=h, timeout=15).json().get("coins", [])}
+            except Exception:
+                tr = set()
+            stable = {"usdt", "usdc", "dai", "usde", "fdusd", "usds", "pyusd", "usd1", "tusd", "busd", "susde", "steth", "wsteth", "wbtc", "weth", "wbeth", "cbbtc", "weeth", "bsc-usd", "usdtb", "rseth", "lbtc", "jitosol", "susds"}
+            items = [{"id": x["id"], "s": x["symbol"].upper()[:8], "mc": x.get("market_cap") or 0,
+                      "h1": x.get("price_change_percentage_1h_in_currency"), "d1": x.get("price_change_percentage_24h_in_currency"),
+                      "w1": x.get("price_change_percentage_7d_in_currency"), "t": x["id"] in tr}
+                     for x in m if isinstance(x, dict) and x.get("symbol", "").lower() not in stable][:50]
+            if items:
+                _c.update(ts=time.time(), d={"ts": int(time.time()), "items": items})
+        except Exception as e:
+            print(f"[BUBBLES] {type(e).__name__}")
+        return _c["d"] or {"ts": 0, "items": []}

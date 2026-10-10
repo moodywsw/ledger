@@ -491,3 +491,5 @@ body{line-height:1.5;-webkit-font-smoothing:antialiased;text-rendering:optimizeL
 .adm-code code{font-size:15px;color:#22d39b}.adm-feed{display:block;margin:12px 0;font-size:13px}.adm input[type=number]{max-width:90px}
 .ask-lock{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}.ask-lock input{flex:1;min-width:180px}
 .adm input:not([type=checkbox]),.ask-lock input{background:rgba(255,255,255,.04);border:1px solid #2a3547;border-radius:10px;color:#e6edf6;padding:10px 12px;font:inherit;outline:none}.adm input:focus,.ask-lock input:focus{border-color:#22d39b}
+.bub-card canvas{display:block;width:100%;height:260px;border-radius:12px;background:radial-gradient(ellipse at center,rgba(255,255,255,.03),transparent 70%)}
+.seg{display:inline-flex;border:1px solid #2a3547;border-radius:9px;overflow:hidden}.seg button{background:none;border:0;color:#9aa6b8;font:600 12px ui-monospace,monospace;padding:5px 10px;cursor:pointer}.seg button.on{background:rgba(34,211,155,.15);color:#22d39b}
