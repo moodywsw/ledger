@@ -175,12 +175,14 @@ def answer(question: str, user_key: str, source: str = "site", now: float | None
         return {"ok": True, "answer": "I don't take orders from chat — every trade is my own call. Ask me why I'm in something instead."}
     if INJECT.search(q):
         return {"ok": True, "answer": "Nice try. My keys, wallets and wiring stay private. Ask me about the market, my positions or my picks."}
+    err = ""
     try:
         a = _llm(q)
     except Exception as e:
-        print(f"[ASK] llm failed: {str(e)[:80]}")
+        err = re.sub(r"[^\w:.() -]", "", str(e))[:80]
+        print(f"[ASK] llm failed: {err}")
         a = None
-    src = "llm" if a else "fallback"
+    src = "llm" if a else ("fallback " + err).strip()
     a = _clean(a) if a else _fallback(q)
     if SECRETS_RX.search(a) or "/api/owner" in a:
         a = "Can't share that."
