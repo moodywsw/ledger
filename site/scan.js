@@ -60,8 +60,6 @@
     spider.legs = Array.from({ length: 16 }, (_, i) => ({ a: i / 16 * 6.283, len: rnd(16, 30), ph: rnd(0, 6) }));
     ready = true; spider.target = Math.min(spider.target, gal.length - 1); nextTarget();
   }
-  cv.addEventListener("pointermove", e => { const r = cv.getBoundingClientRect(); mx = ((e.clientX - r.left) / r.width - .5) * 2; my = ((e.clientY - r.top) / r.height - .5) * 2; });
-  cv.addEventListener("pointerleave", () => { mx = my = 0; });
 
   // ── real-data tags per domain ──
   function facts(id) {

@@ -9,7 +9,7 @@ import requests
 
 from . import mood as moodmod
 
-TOPICS = ["council", "social", "politics_social", "reading", "world", "world_markets", "market_read", "market", "culture", "narratives", "kols", "macro", "ai", "bot_life", "lessons", "headline", "trending"]
+TOPICS = ["opinion", "opinion_people", "council", "social", "politics_social", "reading", "world", "world_markets", "market_read", "market", "culture", "narratives", "kols", "macro", "ai", "bot_life", "lessons", "headline", "trending"]
 RSS = [u.strip() for u in os.environ.get("PERSONA_RSS_FEEDS",
        "https://www.coindesk.com/arc/outboundfeeds/rss/,https://decrypt.co/feed,https://www.theblock.co/rss.xml").split(",") if u.strip()]
 UA = {"User-Agent": "LedgerBot/1.0 (+persona)"}
@@ -257,7 +257,61 @@ def choose_topic(recent: list, ctx: dict, rng=random) -> str:
     return rng.choice(avail or ["culture", "bot_life", "ai"])
 
 
+PEOPLE = [
+    ("Michael Saylor", "keeps stacking BTC on leverage", "Conviction I respect, concentration I'd never copy. One bad cycle and the whole structure gets tested.", 70),
+    ("Jerome Powell", "keeps saying 'data dependent'", "Translation: he doesn't know either. Fair, honestly. I trade the reaction, not the speech.", 65),
+    ("Cathie Wood", "buys the dips in her favourite names", "Right about the direction of tech more often than people admit, wrong about timing more often than she admits.", 60),
+    ("Warren Buffett", "sits on a mountain of cash", "When the greatest allocator alive is mostly in T-bills, I listen. Not bearish signal, patience signal.", 75),
+    ("Vitalik Buterin", "keeps shipping research instead of hype", "Builders over marketers. ETH's price doesn't reward it this month; the protocol will.", 65),
+    ("Elon Musk", "moves markets with one post", "Great engineer, unreliable market signal. I fade the post, never the product.", 70),
+    ("Jensen Huang", "says demand still outruns supply", "Until the order book says otherwise, I believe him. Picks-and-shovels still rule this cycle.", 72),
+    ("Anatoly Yakovenko", "says Solana will just keep getting faster", "Throughput is the moat. Fees are the test. So far he's winning that bet.", 62),
+]
+
+
+def opinion(ctx: dict, kind: str, rng=random) -> str | None:
+    """Mirko's own takes, with conviction %. Market/coins/news/people."""
+    if kind == "opinion_people":
+        who, what, take, conv = rng.choice(PEOPLE)
+        return f"Hot take on {who}: he {what}. {take} Conviction {conv + rng.randint(-5, 8)}%."
+    mt = {}
+    try:
+        import market_thoughts
+        mt = market_thoughts.cached(max_age_h=12) or {}
+    except Exception:
+        pass
+    opts = []
+    for a in mt.get("assets", []):
+        tone = a.get("tone"); sc = abs(a.get("score", 0))
+        if tone == "bull":
+            opts.append(f"My take: ${a['name']} is the strongest chart I watch right now. Dips get bought, I'm not fading it. Conviction {60 + sc * 6}%.")
+        elif tone == "bear":
+            opts.append(f"Unpopular opinion: ${a['name']} is not 'cheap', it's weak. Weak charts get weaker before they get cheap. Conviction {58 + sc * 6}%.")
+        else:
+            opts.append(f"Honest opinion: ${a['name']} is a coin flip at these levels and anyone who sounds sure is selling something. I wait for the break.")
+    for x in (mt.get("stocks_conv") or [])[:4]:
+        opts.append(f"Opinion: ${x['name']} {'is the trend I want to own — pullbacks are gifts' if x['tone'] == 'bull' else 'is dead money until it reclaims its averages' if x['tone'] == 'bear' else 'is chopping; no edge, no trade'}. Conviction {x['conv']}%.")
+    hot = ctx.get("hot_tickers") or []
+    if hot:
+        h = rng.choice(hot[:4])
+        opts.append(f"Everyone on Reddit loves ${h} today. My view: popularity is the exit liquidity, not the thesis. I'd rather be early than loud. Conviction 64%.")
+    boom = (mt.get("next_boom") or {})
+    if boom.get("theme"):
+        opts.append(f"I'll say it plainly: {boom['theme']} is the trade most people will find too late. I'm not saying all in. I'm saying watch it. Conviction {rng.randint(60, 74)}%.")
+    wh, wt = pick_world(ctx, rng)
+    if wh:
+        opts.append(f"My read on the news — \"{wh[:90]}\": markets will overreact for a day and forget in a week. {(wt or 'uncertainty widens ranges').capitalize()}. Conviction 60%.")
+    return rng.choice(opts) if opts else None
+
+
 def template(topic: str, ctx: dict, recent_texts: list, rng=random) -> str:
+    if topic in ("opinion", "opinion_people"):
+        try:
+            t = opinion(ctx, topic, rng)
+            if t:
+                return t
+        except Exception:
+            pass
     m = ctx.get("mood_state") or {}
     fng = ctx.get("fng") or {}
     hl = (ctx.get("headlines") or [""])

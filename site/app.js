@@ -77,7 +77,7 @@ function renderEquity(points) {
 // ── Renderers ───────────────────────────────────────────────────────
 function renderState(state) {
   const ps = state.open_positions || [];
-  $("stat-open-count").textContent = ps.length; const co = $("chip-open"); if (co) co.textContent = `${ps.length} open`;
+  $("stat-open-count").textContent = ps.length; 
   $("positions-body").innerHTML = ps.length ? ps.map(p => `
     <div class="pcard">
       <div class="top"><span class="tk">${esc(p.ticker)}${p.moonbag ? '<span class="tag moon">🌙 MOONBAG</span>' : ""}</span>
@@ -106,6 +106,20 @@ function renderOverview(o) {
       <div class="m">${esc(t.reason || "exit")} · ${ago(t.at)}</div></div><div class="mono ${cls(t.pnl_sol)}">${usdc(t.pnl_sol)}</div></div>`).join("") : empty("No closed trades yet.");
 }
 
+// ── What Mirko read today (dashboard) ───────────────────────────────
+const SRC_ICON = { "fed/ecb": "🏛", "central banks": "🏛", politics: "🗳", ark: "🦉", funds: "💼", "13f": "💼", sec: "💼", hn: "🛠", tech: "🛠", arxiv: "🧪", ai: "🧪", china: "🐉" };
+function renderReading(I) {
+  if (!I || !$("reading")) return;
+  const items = I.items || [], cats = {};
+  items.forEach(x => { cats[x.cat] = (cats[x.cat] || 0) + 1; });
+  $("rd-chips").innerHTML = Object.entries(cats).map(([c, n]) => `<span class="src-chip">${SRC_ICON[String(c).toLowerCase()] || "📰"} ${esc(c)} <b>${n}</b></span>`).join("") || '<span class="muted sm">collecting today\'s sources…</span>';
+  $("rd-beliefs").innerHTML = (I.beliefs || []).slice(0, 4).map((b, i) => `<div class="insight"><span class="in-n mono">0${i + 1}</span><p>${esc(b)}</p></div>`).join("") || empty("Insights land after the morning read.");
+  $("rd-items").innerHTML = items.slice(0, 7).map(x => `<div class="rd-item"><span class="src-dot">${SRC_ICON[String(x.cat).toLowerCase()] || "📰"}</span><span>${esc(x.title)}</span></div>`).join("");
+  const t = Math.max(-1, Math.min(1, I.risk_tilt || 0));
+  $("tilt-dot").style.left = `${(t + 1) * 50}%`; $("tilt-dot").className = t > .15 ? "on" : t < -.15 ? "off" : "flat";
+  $("tilt-v").textContent = `${t > 0 ? "+" : ""}${t.toFixed(2)}`;
+}
+
 // ── Mirko's thoughts (persona feed) ────────────────────────────────
 const KIND = { musing: ["💭", "thought"], mood: ["🫀", "mood"], recap: ["📊", "recap"], entry: ["🟢", "entry"], exit_win: ["💰", "exit"],
   exit_loss: ["🩸", "exit"], refusal: ["🚩", "refused"], thesis_own: ["🧭", "thesis"], thesis_kol: ["👀", "watching"] };
@@ -121,7 +135,8 @@ function renderMind(f) {
     return `<div class="thought ${i === list.length - 1 ? "latest" : ""} k-${esc(p.kind)}"><div class="th-meta"><span class="th-tag">${ic} ${esc(p.topic ? p.topic.replace(/_/g, " ") : lb)}</span><span class="th-time">${ago(new Date(p.ts * 1000))}</span></div><div class="th-text">${esc(p.text)}</div></div>`; }).join("")
     : (f.beliefs || []).length ? f.beliefs.map(b => `<div class="thought"><div class="th-meta"><span>🧭 belief</span></div><div class="th-text">${esc(b)}</div></div>`).join("")
     : empty("Mirko is quiet for now — first thoughts land within a few hours.");
-  if (newest !== LEDGER._lastPost || atBottom) { LEDGER._lastPost = newest; requestAnimationFrame(() => { body.scrollTop = body.scrollHeight; }); }
+  LEDGER._lastPost = newest; const stick = () => { body.scrollTop = body.scrollHeight; };
+  requestAnimationFrame(stick); setTimeout(stick, 400);   // newest thought always in view
 }
 
 function setConn(ok) { $("conn-dot").className = `dot ${ok ? "ok" : "err"}`; $("conn-status").textContent = ok ? "Live" : "Unreachable";
@@ -134,7 +149,7 @@ async function pollOnce() {
     fetchJson("/api/journal?limit=60").then(j => { LEDGER.journal = j; }),
     fetchJson("/api/overview").then(renderOverview),
     fetchJson("/api/persona/feed?limit=40").then(renderMind).catch(() => renderMind(null)),
-    fetchJson("/api/market_thoughts").then(m => { if (m.ready) LEDGER.market = m; }),
+    fetchJson("/api/market_thoughts").then(m => { if (m.ready) { LEDGER.market = m; try { renderReading(m.insights); } catch (e) { console.warn(e); } } }),
   ]);
   setConn(res.slice(0, 2).some(r => r.status === "fulfilled"));
   if (!LEDGER.councilTs || Date.now() - LEDGER.councilTs > 600_000) { LEDGER.councilTs = Date.now(); fetchJson("/api/council").then(x => { LEDGER.council = x; }).catch(() => {}); }
@@ -153,9 +168,6 @@ async function loadMarket() {
   m.regime = m.regime || { label: "Unknown", key: "chop", score: 0 };
   LEDGER.market = m;
   $("mt-regime").textContent = m.regime.label; $("mt-summary").textContent = m.summary;
-  $("mt-stance").textContent = m.stance; $("mt-time").textContent = `updated ${ago(new Date((m.ts || 0) * 1000))}`;
-  $("mt-scale").textContent = m.size_scale < 1 ? `memecoin size ×${m.size_scale}` : "full size allowed";
-  $("mt-stance").className = `chip ${m.regime.key === "risk_off" ? "warn" : m.regime.key === "risk_on" ? "real" : ""}`;
   if (m.fng) { $("fng-v").textContent = m.fng.v; $("fng-l").textContent = `${m.fng.cls} · yesterday ${m.fng.prev}`; drawFng(m.fng.v); }
   const riskEmo = r => r == null ? "" : r <= 3 ? "🟢" : r <= 6 ? "🟡" : r <= 8 ? "🟠" : "🔴";
   const riskOf = i => i.risk ?? Math.max(0, Math.min(10, ({ mid: 4, low: 7, micro: 8 }[i.tier] ?? 2) + (i.venue === "Perp" ? 1 : 0) + ((i.rr || 0) < 1.5 ? 1 : 0) + (i.spec ? 1 : 0)));
@@ -163,8 +175,8 @@ async function loadMarket() {
       <header><span class="ic-tk">${esc(i.name)}</span><span class="ic-side">${i.side.toUpperCase()}</span><span class="ic-venue">${esc(i.venue)}${i.chain ? " · " + esc(i.chain) : ""}</span>
         <span class="ic-risk" title="Risk score 0-10">${riskEmo(i.risk)} ${i.risk ?? "–"}<small>/10</small></span></header>
       <dl class="ic-kv mono"><dt>Entry</dt><dd>${fp(i.entry_lo)} – ${fp(i.entry_hi)}</dd><dt>Stop</dt><dd class="neg">${fp(i.stop)}</dd>
-        <dt>Target</dt><dd class="pos">${fp(i.t1)}${i.t2 ? ` → ${fp(i.t2)}` : ""}</dd><dt>R:R</dt><dd>${i.rr ?? "—"}</dd>${i.mcap ? `<dt>Mcap</dt><dd>${big(i.mcap)}</dd>` : ""}</dl>
-      <p class="ic-why">${esc(i.why)}${i.spec ? " · speculative, small size" : ""}</p></article>`);
+        <dt>Target</dt><dd class="pos">${fp(i.t1)}${i.t2 ? ` → ${fp(i.t2)}` : ""}</dd>${i.mcap ? `<dt>Mcap</dt><dd>${big(i.mcap)}</dd>` : ""}</dl>
+      ${i.tier === "low" || i.tier === "micro" || !i.why ? "" : `<p class="ic-why">${esc(i.why)}</p>`}</article>`);
   const col = (xs, msg) => xs.length ? xs.map(idea).join("") : `<div class="empty sm">${msg}</div>`;
   $("mt-maj").innerHTML = col(m.trade_ideas || [], "No clean setup on the majors.");
   $("mt-mid").innerHTML = col(m.mid_caps || [], "No mid cap is accumulating cleanly.");
@@ -180,25 +192,24 @@ async function loadMarket() {
       <div class="tr-col"><h4>🧺 Accumulate</h4>${li(T.accumulate)}</div><div class="tr-col"><h4>🏛 Long-term</h4>${li(T.long_term)}</div></div>
 ` : empty("Trenches read appears after the next market refresh.");
   const b = m.next_boom;
-  $("boom-w").textContent = b && b.boom_window ? `expected window · ${b.boom_window}${b.since ? ` · featured since ${b.since}` : ""}` : "";
+  $("boom-w").innerHTML = b ? [b.boom_window ? `<span class="bchip">⏳ window <b>${esc(b.boom_window)}</b></span>` : "", b.since ? `<span class="bchip">📌 featured since <b>${esc(b.since)}</b></span>` : ""].join("") : "";
   const prev = (b && b.previous) || [];
-  $("mt-boom-prev").innerHTML = prev.length ? prev.map(x => `<div class="row col"><div class="t"><b>${esc(x.emoji || "🚀")} ${esc(x.theme)}</b> <span class="muted sm">${esc(x.shown_from || "?")} → ${esc(x.shown_to || "")}</span></div>
-      <div class="muted sm">${md(x.thesis || "")}</div><div class="muted sm mono">window ${esc(x.boom_window || "—")} · ${[...(x.crypto || []).map(c => "$" + String(c).replace(/^\$/, "")), ...(x.stocks || [])].map(esc).join(" · ")}</div></div>`).join("")
+  $("mt-boom-prev").innerHTML = prev.length ? prev.map(x => `<div class="bprev"><div class="bprev-t">${esc(x.emoji || "🚀")} ${esc(x.theme)}</div><div class="muted sm mono">${esc(x.shown_from || "?")} → ${esc(x.shown_to || "")} · window ${esc(x.boom_window || "—")}</div>
+      <div class="bt-row">${[...(x.crypto || []).map(c => "$" + String(c).replace(/^\$/, "")), ...(x.stocks || [])].map(t => `<span class="tick">${esc(t)}</span>`).join("")}</div></div>`).join("")
     : empty("The archive starts when today's theme rotates out. Every past boom stays here.");
-  $("mt-boom").innerHTML = b ? `<h3>${esc(b.emoji || "🚀")} ${esc(b.theme)}</h3><p class="boom-t">${md(b.thesis || "")}</p>
-      <div class="grid2 inner"><div><div class="label pad">Why now</div><ul>${(b.why_now || []).slice(0, 4).map(w => `<li>${md(w)}</li>`).join("")}</ul></div>
-      <div><div class="label pad">Crypto</div><div class="trend">${(b.crypto || []).map(c => `<span class="tchip"><b>$${esc(String(c).replace(/^\$/, ""))}</b></span>`).join("") || '<span class="muted">no clean crypto proxy, equities lead this one</span>'}</div>
-      <div class="label pad" style="margin-top:10px">Stocks</div><div class="trend">${(b.stocks || []).map(s => `<span class="tchip"><b>${esc(s)}</b></span>`).join("") || '<span class="muted">—</span>'}</div>
-      ${b.invalidation ? `<div class="label pad" style="margin-top:12px">Invalidation</div><div class="muted">${md(b.invalidation)}</div>` : ""}</div></div>` : empty("No theme in rotation.");
+  const tk = (xs, pre) => xs.map(c => `<span class="tick ${pre ? "c" : "s"}">${pre}${esc(String(c).replace(/^\$/, ""))}</span>`).join("");
+  $("mt-boom").innerHTML = b ? `<div class="boom-title"><span class="boom-emo">${esc(b.emoji || "🚀")}</span><h3>${esc(b.theme)}</h3></div>
+      <div class="bsec"><div class="bsec-h">Thesis</div><p class="boom-t">${md(b.thesis || "")}</p></div>
+      <div class="bsec two"><div><div class="bsec-h">Crypto</div><div class="bt-row">${tk(b.crypto || [], "$") || '<span class="muted sm">equities lead this one</span>'}</div></div>
+        <div><div class="bsec-h">Stocks</div><div class="bt-row">${tk(b.stocks || [], "") || '<span class="muted sm">—</span>'}</div></div></div>
+      ${(b.why_now || []).length ? `<div class="bsec"><div class="bsec-h">Catalysts</div><ul class="cat-list">${b.why_now.slice(0, 4).map(w => `<li>${md(w)}</li>`).join("")}</ul></div>` : ""}
+      ${b.invalidation ? `<div class="callout"><div class="callout-h">⚠ Invalidation</div><div>${md(b.invalidation)}</div></div>` : ""}` : empty("No theme in rotation.");
   try {
-  $("mt-assets").innerHTML = m.assets.map(a => `<div class="card asset t-${a.tone}">
-    <div class="a-head"><div><div class="a-name">${a.name}</div><div class="a-px mono">${fp(a.price)}</div></div>
-      <div class="a-right"><span class="bias b-${a.tone}">${esc(a.bias)}</span><div class="mono muted">24h <span class="${cls(a.chg24)}">${pc(a.chg24)}</span> · 7d <span class="${cls(a.chg7)}">${pc(a.chg7)}</span></div></div></div>
+  $("mt-assets").innerHTML = m.assets.map(a => `<div class="card asset slim t-${a.tone}">
+    <div class="a-head"><div class="a-id"><span class="a-name">${a.name}</span><span class="a-px mono">${fp(a.price)}</span></div>
+      <div class="a-right"><span class="bias b-${a.tone}">${esc(a.bias.split(" ·")[0])}</span><span class="mono sm">24h <span class="${cls(a.chg24)}">${pc(a.chg24)}</span> · 7d <span class="${cls(a.chg7)}">${pc(a.chg7)}</span></span></div></div>
     ${levelBar(a)}
-    <p class="a-struct">${esc(a.structure)}</p>
-    <div class="cases"><div><b class="pos">Bull</b> ${esc(a.bull_case)}</div><div><b class="neg">Bear</b> ${esc(a.bear_case)}</div></div>
-    ${a.notes.length ? `<div class="a-notes">⚙️ ${esc(a.notes.join(" · "))}</div>` : ""}
-    <div class="plan">🎯 ${esc(a.plan)}</div></div>`).join("");
+    <div class="a-plan">🎯 ${esc(a.plan)}</div></div>`).join("");
   const hl = m.hyperliquid;
   $("hl-sub").textContent = hl ? `${hl.accounts} profitable accounts > $1M` : "unavailable";
   $("mt-hl").innerHTML = hl ? Object.entries(hl.coins).map(([c, h]) => { const ls = h.long_share == null ? 0.5 : h.long_share;
@@ -213,10 +224,6 @@ async function loadMarket() {
       <div class="mono ${cls(d.chg24)}">${pc(d.chg24, 0)}</div></div>`).join("") : empty("No DEX flow data this round.");
   $("mt-trend").innerHTML = (m.trending || []).map(t => `<div class="tchip"><b>${esc(t.symbol)}</b><span class="mono ${cls(t.chg24)}">${pc(t.chg24, 0)}</span></div>`).join("") || empty("—");
   } catch (e) { console.warn("market lower", e); }
-  try { const I = m.insights || {}; const it = I.items || [];
-    $("mt-insights").innerHTML = (I.beliefs || []).map(b => `<div class="row"><div class="l"><div class="t">💡 ${esc(b)}</div></div></div>`).join("")
-      + it.slice(0, 12).map(x => `<div class="row"><div class="l"><div class="m"><span class="cn">${esc(x.cat)}</span> ${esc(x.title)}</div></div></div>`).join("") || empty("Today's reading list is being collected.");
-  } catch (e) { console.warn("insights", e); }
 }
 const md = t => esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/\*/g, "");
 function levelBar(a) {
@@ -255,18 +262,12 @@ async function loadPortfolio() {
     const col = vs[vs.length - 1] >= 3000 ? "#22d39b" : "#ff5c7a";
     $("pf-chart").innerHTML = `<svg viewBox="0 0 ${Wd} ${Hh}" preserveAspectRatio="none"><path d="${d}" fill="none" stroke="${col}" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>`; }
   else $("pf-chart").innerHTML = `<div class="empty sm">The chart starts with the next 15-minute snapshot.</div>`;
-  const book = b => b ? `<span class="tier">${esc(b)}</span>` : "";
   $("pf-sleeves").innerHTML = sl.map(([k, v]) => `<div class="card sleeve collapsible" data-key="pf-${k}" data-fold="0">
     <div class="card-head"><div><div class="label"><span class="sw" style="background:${SLV[k][1]}"></span>${SLV[k][0]}</div>
       <div class="big mono">${eur(v.value_eur)} <span class="${cls(v.pnl_pct)}" style="font-size:14px">${pc(v.pnl_pct, 2)}</span></div>
       <div class="muted">cash ${eur(v.cash_eur)} · ${v.positions.length} positions${v.last_decision ? ` · decided ${ago(new Date(v.last_decision * 1000))}` : ""}</div></div>
       <button class="fold" aria-label="Expand">+</button></div>
-    <div class="fold-body"><div class="pf-list">${v.positions.length ? v.positions.map(p => `<article class="pp-card">
-      <header><div class="pp-name"><b>${esc(p.sym)}</b>${book(p.book)}${p.side !== "Spot" ? `<span class="tier">${esc(p.side)} ${p.lev}x</span>` : ""}</div>
-        <div class="pp-val mono" id="lv-${k}-${esc(p.sym)}"><span class="${cls(p.pnl_pct)}">${pc(p.pnl_pct, 1)}</span> · ${eur(p.value_eur)}</div></header>
-      <dl class="kv mono"><dt>Entry</dt><dd>$${price(p.entry_usd)}</dd><dt>Now</dt><dd id="lp-${k}-${esc(p.sym)}">$${price(p.last_usd)}</dd>
-        ${p.stop_usd ? `<dt>Stop</dt><dd class="neg">$${price(p.stop_usd)}</dd>` : ""}${p.target_usd ? `<dt>Target</dt><dd class="pos">$${price(p.target_usd)}</dd>` : ""}</dl>
-      <p class="pp-why">${esc(p.why)}</p></article>`).join("") : empty("Flat. Waiting for a setup.")}</div>
+    <div class="fold-body">${v.positions.length ? (k === "perps" ? perpCards(k, v.positions) : holdTable(k, v.positions)) : empty("Flat. Waiting for a setup.")}
       ${v.note ? `<div class="muted sm" style="margin-top:8px">${esc(v.note)}</div>` : ""}</div></div>`).join("");
   initFold($("pf-sleeves"));
   pfLive();
@@ -276,11 +277,32 @@ async function loadPortfolio() {
   $("pf-comment").innerHTML = `<p>${esc(C.intro || "")}</p><ul>${Object.entries(C.sleeves || {}).filter(([, n]) => n).map(([k, n]) => `<li><b>${SLV[k][0]}:</b> ${esc(n)}</li>`).join("")}</ul>
     ${(C.positions || []).length ? `<div class="label pad" style="margin-top:12px">Why I hold each position</div><ul>${C.positions.map(p => `<li><b>${esc(p.sym)}</b> — ${esc(p.why)}</li>`).join("")}</ul>` : ""}`;
 }
+const book = b => b ? `<span class="tier">${esc(b)}</span>` : "";
+const tone = v => v == null ? "flat" : v > 0.005 ? "pos" : v < -0.005 ? "neg" : "flat";
+const qty = q => q == null ? "—" : q >= 1000 ? Math.round(q).toLocaleString() : q >= 1 ? q.toFixed(2) : q.toPrecision(3);
+const ICOL = ["#f7931a", "#9945ff", "#627eea", "#22d3e6", "#ff6ec7", "#f5b84b", "#22d39b", "#7c8cff"];
+const icon = sym => `<span class="aicon" style="--c:${ICOL[[...sym].reduce((a, c) => a + c.charCodeAt(0), 0) % ICOL.length]}">${esc(sym.slice(0, 1))}</span>`;
+const riskEmo10 = r => r == null ? "" : r <= 3 ? "🟢" : r <= 6 ? "🟡" : r <= 8 ? "🟠" : "🔴";
+function holdTable(k, ps) {
+  return `<div class="tbl-wrap"><table class="htbl mono"><thead><tr><th>Asset</th><th>Holdings</th><th>Value</th><th>Avg entry</th><th>Price</th><th>24h</th><th>PnL</th></tr></thead><tbody>
+  ${ps.map(p => `<tr><td class="asset-c">${icon(p.sym)}<div><b>${esc(p.sym)}</b>${book(p.book)}</div></td>
+    <td>${qty(p.qty)}</td><td>${eur(p.value_eur)}</td><td>$${price(p.entry_usd)}</td><td id="lp-${k}-${esc(p.sym)}">$${price(p.last_usd)}</td>
+    <td class="${tone(p.chg24)}">${p.chg24 == null ? "—" : pc(p.chg24, 2)}</td>
+    <td id="lv-${k}-${esc(p.sym)}" class="${tone(p.pnl_pct)}">${p.pnl_eur == null ? "" : (p.pnl_eur >= 0 ? "+" : "−") + eur(Math.abs(p.pnl_eur)) + " · "}${pc(p.pnl_pct, 2)}</td></tr>
+    <tr class="why-row"><td colspan="7">${esc(p.why)}</td></tr>`).join("")}</tbody></table></div>`;
+}
+function perpCards(k, ps) {
+  return `<div class="perp-grid">${ps.map(p => `<article class="perp ${p.side === "Short" ? "short" : "long"}">
+    <header><div class="asset-c">${icon(p.sym)}<b>${esc(p.sym)}</b><span class="ic-side">${esc(p.side.toUpperCase())} ${p.lev}×</span></div><span class="ic-risk">${riskEmo10(p.risk)} ${p.risk ?? "–"}<small>/10</small></span></header>
+    <div class="perp-kv mono"><div><span>Entry</span><b>$${price(p.entry_usd)}</b></div><div><span>TP</span><b class="pos">${p.target_usd ? "$" + price(p.target_usd) : "—"}</b></div>
+      <div><span>SL</span><b class="neg">${p.stop_usd ? "$" + price(p.stop_usd) : "—"}</b></div><div><span>PnL</span><b id="lv-${k}-${esc(p.sym)}" class="${tone(p.pnl_pct)}">${pc(p.pnl_pct, 2)}</b></div></div>
+    <p class="pp-why">${esc(String(p.why || "").replace(/\s*\(R:R[^)]*\)/g, ""))}</p></article>`).join("")}</div>`;
+}
 async function pfLive() {
   let L; try { L = await fetchJson("/api/portfolio/live"); } catch { return; }
   Object.entries(L.positions || {}).forEach(([k, ps]) => Object.entries(ps).forEach(([sym, p]) => {
     const e = document.getElementById(`lv-${k}-${sym}`), q = document.getElementById(`lp-${k}-${sym}`);
-    if (e) e.innerHTML = `<span class="${cls(p.pnl_pct)}">${pc(p.pnl_pct, 1)}</span> · ${eur(p.value_eur)} <span class="live-dot" title="live"></span>`;
+    if (e) { e.className = tone(p.pnl_pct); e.innerHTML = `${pc(p.pnl_pct, 2)} <span class="live-dot" title="live"></span>`; }
     if (q && p.last_usd != null) q.textContent = k === "poly" ? `${Math.round(p.last_usd * 100)}¢` : `$${price(p.last_usd)}`;
   }));
 }
@@ -289,44 +311,75 @@ setInterval(() => { if (pfOpen()) pfLive(); }, 20_000);
 setInterval(() => { if (pfOpen()) loadPortfolio(); }, 300_000);
 
 // ── Predictions (paper) ─────────────────────────────────────────────
-const lis = iso => new Date(iso).toLocaleString("en-GB", { timeZone: "Europe/Lisbon", weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
-const SPORT = { soccer: "⚽", nba: "🏀", ufc: "🥊" };
+const when = iso => new Date(iso).toLocaleString("en-GB", { timeZone: "Europe/Lisbon", weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).replace(",", " ·");
+const CATS = [["all", "All", "✦"], ["football", "Football", "⚽"], ["ucl", "Champions League", "⭐"], ["nba", "NBA", "🏀"], ["nfl", "NFL", "🏈"], ["ufc", "UFC", "🥊"],
+  ["tennis", "Tennis", "🎾"], ["f1", "F1", "🏎"], ["poly", "Polymarket", "🔮"], ["hist", "History", "📜"]];
+const CICON = Object.fromEntries(CATS.map(c => [c[0], c[2]]));
 const pctp = p => `${Math.round(p * 100)}%`;
-const res = r => r === "won" ? '<span class="res won">WON</span>' : r === "lost" ? '<span class="res lost">LOST</span>' : r === "void" ? '<span class="res void">VOID</span>' : "";
-function betCard(b, settled) {
-  const m = b.main;
-  return `<article class="bet">
-    <header><span class="bet-lg">${SPORT[b.sport] || "🎯"} ${esc(b.league)}</span><span class="bet-ko mono">${settled ? esc(b.final || "") : lis(b.kickoff) + " Lisbon"}</span></header>
+const res = r => r === "won" ? '<span class="res won">W</span>' : r === "lost" ? '<span class="res lost">L</span>' : r === "void" ? '<span class="res void">VOID</span>' : "";
+const PR = { cat: "all", hf: "all", hr: "all", data: null };
+function betCard(b) {
+  const m = b.main, side = b.side || [];
+  return `<article class="bet c-${esc(b.cat)}">
+    <header><span class="bet-lg">${CICON[b.cat] || "🎯"} ${esc(b.league)}</span><span class="bet-ko mono">${when(b.kickoff)}</span></header>
     <h3>${esc(b.title)}</h3>
-    <div class="bet-main"><div><div class="hud-label">Main pick · ${esc(m.market)}</div><div class="bet-pick">${esc(m.pick)} ${res(m.result)}</div></div>
-      <div class="bet-prob"><b class="mono">${pctp(m.p)}</b><span class="mono muted">@ ${m.odds} · €${m.stake}</span></div></div>
-    <div class="conf"><i style="width:${Math.round(m.p * 100)}%"></i></div>
-    <ul class="bet-side">${(b.side || []).map(x => `<li><span>${esc(x.market)} ${res(x.result)}</span><span class="mono muted">${pctp(x.p)} · €${x.stake}</span></li>`).join("")}</ul>
-    <p class="bet-why">💭 ${esc(m.why)}${settled && b.pnl != null ? ` · <b class="${cls(b.pnl)}">${b.pnl > 0 ? "+" : ""}€${b.pnl.toFixed(2)}</b>` : ""}</p></article>`;
+    <div class="bet-main"><div class="bm-l"><span class="hud-label">${esc(m.market)}</span><b class="bet-pick">${esc(m.pick || m.market)}</b></div>
+      <div class="bet-prob"><b class="mono">${pctp(m.p)}</b><span class="mono">@${m.odds} · €${m.stake}</span></div></div>
+    <div class="conf"><i style="width:${Math.round(m.p * 100)}%"></i><s style="left:${Math.round((m.q || m.p) * 100)}%" title="market"></s></div>
+    ${m.why ? `<p class="bet-why">${esc(m.why)}</p>` : ""}
+    ${side.length ? `<details class="more"><summary>+${side.length} markets${side.some(x => x.player) ? " · player props" : ""}</summary><ul class="bet-side">${side.map(x => `<li class="${x.player ? "prop" : ""}"><span>${x.player ? "👤 " : ""}${esc(x.market)}</span><span class="mono">${pctp(x.p)} · @${x.odds} · €${x.stake}</span></li>`).join("")}</ul></details>` : ""}
+  </article>`;
+}
+function polyCard(p) {
+  return `<article class="bet c-poly"><header><span class="bet-lg">🔮 Polymarket</span><span class="bet-ko mono">${p.end ? "resolves " + new Date(p.end).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) : ""}</span></header>
+    <h3>${esc(p.title || p.sym)}</h3>
+    <div class="bet-main"><div class="bm-l"><span class="hud-label">Mirko says</span><b class="bet-pick">${esc(p.side)}</b></div>
+      <div class="bet-prob"><b class="mono">${Math.round((p.mirko_p || 0) * 100)}%</b><span class="mono">mkt ${Math.round(p.entry_usd * 100)}¢→${Math.round((p.last_usd || 0) * 100)}¢</span></div></div>
+    <div class="conf"><i style="width:${Math.round((p.mirko_p || 0) * 100)}%"></i><s style="left:${Math.round((p.last_usd || 0) * 100)}%"></s></div>
+    <p class="bet-why">${esc(p.why)} · €${(p.value_eur || 0).toFixed(2)} <span class="${tone(p.pnl_pct)}">${pc(p.pnl_pct, 1)}</span></p></article>`;
+}
+function renderPred() {
+  const P = PR.data; if (!P) return;
+  const S = P.sports || {}, pm = P.polymarket || { positions: [] }, open = S.open || [];
+  const n = c => c === "all" ? open.length + (pm.positions || []).length : c === "poly" ? (pm.positions || []).length : c === "hist" ? (S.settled || []).length : open.filter(b => b.cat === c).length;
+  $("pr-cats").innerHTML = CATS.map(([k, l, i]) => `<button class="cat ${PR.cat === k ? "active" : ""} ${n(k) ? "" : "zero"}" data-c="${k}"><span>${i}</span>${l}<b>${n(k)}</b></button>`).join("");
+  const hist = PR.cat === "hist";
+  $("pr-board").classList.toggle("hidden", hist); $("pr-hist").classList.toggle("hidden", !hist);
+  if (!hist) {
+    const list = PR.cat === "poly" ? [] : open.filter(b => PR.cat === "all" || b.cat === PR.cat);
+    const polys = PR.cat === "all" || PR.cat === "poly" ? (pm.positions || []) : [];
+    $("pr-board").innerHTML = list.map(betCard).join("") + polys.map(polyCard).join("") || empty("No big fixtures in this category in the next few days. Mirko only bets the important ones.");
+    return;
+  }
+  const st = S.settled || [], by = S.by_cat || {};
+  $("hist-stats").innerHTML = [["Settled", st.length], ["Hit rate · legs", S.hit_rate == null ? "—" : pctp(S.hit_rate)], ["Hit rate · main", S.main_hit_rate == null ? "—" : pctp(S.main_hit_rate)],
+    ["PnL", `<span class="${tone(S.pnl)}">${S.pnl >= 0 ? "+" : "−"}€${Math.abs(S.pnl || 0).toFixed(2)}</span>`]].map(([k, v]) => `<div class="pr-stat"><span class="hud-label">${k}</span><b class="mono">${v}</b></div>`).join("")
+    + Object.entries(by).map(([c, x]) => `<div class="pr-stat sm"><span class="hud-label">${CICON[c] || ""} ${c}</span><b class="mono">${x.won}/${x.n} · <span class="${tone(x.pnl)}">€${x.pnl.toFixed(0)}</span></b></div>`).join("");
+  const cats = ["all", ...new Set(st.map(b => b.cat))];
+  $("hist-filters").innerHTML = cats.map(c => `<button class="hf ${PR.hf === c ? "active" : ""}" data-hf="${c}">${c === "all" ? "All sports" : (CICON[c] || "") + " " + c}</button>`).join("")
+    + `<span class="sep"></span>` + ["all", "won", "lost"].map(r => `<button class="hf ${PR.hr === r ? "active" : ""}" data-hr="${r}">${r === "all" ? "All results" : r === "won" ? "✓ Won" : "✗ Lost"}</button>`).join("");
+  const rows = st.filter(b => (PR.hf === "all" || b.cat === PR.hf) && (PR.hr === "all" || b.main.result === PR.hr));
+  $("hist-list").innerHTML = rows.length ? rows.map(b => { const legs = [b.main, ...(b.side || [])], w = legs.filter(l => l.result === "won").length, l = legs.filter(x => x.result === "lost").length;
+    return `<details class="hrow"><summary><span class="hr-date mono">${new Date(b.kickoff).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}</span><span class="hr-ic">${CICON[b.cat] || "🎯"}</span>
+      <span class="hr-t"><b>${esc(b.title)}</b><small>${esc(b.main.pick || b.main.market)} · ${esc(b.final || "")}</small></span>${res(b.main.result)}<span class="hr-legs mono">${w}W ${l}L</span>
+      <span class="hr-pnl mono ${tone(b.pnl)}">${b.pnl >= 0 ? "+" : "−"}€${Math.abs(b.pnl || 0).toFixed(2)}</span></summary>
+      <ul class="bet-side">${legs.map(x => `<li><span>${esc(x.market)}${x.pick ? " — " + esc(x.pick) : ""}</span><span>${res(x.result)} <span class="mono">@${x.odds} · €${x.stake}</span></span></li>`).join("")}</ul></details>`; }).join("")
+    : empty("Nothing settled yet — results land ~2–3h after the final whistle.");
 }
 async function loadPredictions() {
   let P; try { P = await fetchJson("/api/predictions"); } catch { return; }
-  const S = P.sports || {}, pm = P.polymarket || { positions: [] };
+  PR.data = P;
+  const S = P.sports || {}, pm = P.polymarket || {};
   const tot = (S.value || 0) + (pm.value_eur || 0), start = (S.start || 0) + 1000;
-  $("pr-total").innerHTML = `${eur(tot)} <span class="${cls(tot - start)}" style="font-size:18px">${pc((tot / start - 1) * 100, 2)}</span>`;
-  $("pr-sub").textContent = `Paper bankroll €${start.toLocaleString()} (sports €${S.start || 1000} · Polymarket €1,000). Nothing real is placed.`;
-  $("pr-stats").innerHTML = [["Open", (S.open || []).length + (pm.positions || []).length], ["Settled", S.n_settled ?? 0],
-    ["Hit rate", S.hit_rate == null ? "—" : pctp(S.hit_rate)], ["Main picks", S.main_hit_rate == null ? "—" : pctp(S.main_hit_rate)], ["PnL", `€${(S.pnl || 0).toFixed(2)}`]]
+  $("pr-total").innerHTML = `${eur(tot)} <span class="${tone(tot - start)}" style="font-size:18px">${pc((tot / start - 1) * 100, 2)}</span>`;
+  $("pr-sub").textContent = `Paper bankroll €${start.toLocaleString()} · sports €${S.start || 1000} + Polymarket €1,000. Reference odds from Kalshi. Nothing real is placed.`;
+  $("pr-stats").innerHTML = [["Open", (S.open || []).length + (pm.positions || []).length], ["At stake", `€${(S.open_stake || 0).toFixed(0)}`], ["Settled", S.n_settled ?? 0],
+    ["Hit rate", S.hit_rate == null ? "—" : pctp(S.hit_rate)], ["PnL", `<span class="${tone(S.pnl)}">€${(S.pnl || 0).toFixed(2)}</span>`]]
     .map(([k, v]) => `<div class="pr-stat"><span class="hud-label">${k}</span><b class="mono">${v}</b></div>`).join("");
-  $("pr-sports").innerHTML = (S.open || []).length ? S.open.map(b => betCard(b, false)).join("") : empty("No big fixtures in the next 72h. Mirko only bets the important ones.");
-  $("pr-done").innerHTML = (S.settled || []).length ? S.settled.map(b => betCard(b, true)).join("") : empty("Nothing settled yet — results land ~2h after the final whistle.");
-  $("pr-poly").innerHTML = (pm.positions || []).length ? pm.positions.map(p => `<article class="bet poly">
-    <header><span class="bet-lg">🔮 Polymarket</span><span class="bet-ko mono">${p.end ? "resolves " + new Date(p.end).toLocaleDateString("en-GB", { timeZone: "Europe/Lisbon" }) : ""}</span></header>
-    <h3>${esc(p.title || p.sym)}</h3>
-    <div class="bet-main"><div><div class="hud-label">Mirko says</div><div class="bet-pick">${esc(p.side)}</div></div>
-      <div class="bet-prob"><b class="mono">${Math.round((p.mirko_p || 0) * 100)}%</b><span class="mono muted">market ${Math.round(p.entry_usd * 100)}¢ → ${Math.round((p.last_usd || 0) * 100)}¢</span></div></div>
-    <div class="conf"><i style="width:${Math.round((p.mirko_p || 0) * 100)}%"></i></div>
-    <p class="bet-why">💭 ${esc(p.why)} · stake €${(p.value_eur || 0).toFixed(2)} now <span class="${cls(p.pnl_pct)}">${pc(p.pnl_pct, 1)}</span></p></article>`).join("")
-    : empty("Mirko picks up to 4 live Polymarket questions once a day.");
+  renderPred();
 }
-$("pr-tabs").addEventListener("click", e => { const t = e.target.closest(".tab"); if (!t) return;
-  document.querySelectorAll("#pr-tabs .tab").forEach(x => x.classList.toggle("active", x === t));
-  ["sports", "poly", "done"].forEach(k => $(`pr-${k}`).classList.toggle("hidden", k !== t.dataset.p)); });
+$("pr-cats").addEventListener("click", e => { const t = e.target.closest(".cat"); if (!t) return; PR.cat = t.dataset.c; renderPred(); });
+$("hist-filters").addEventListener("click", e => { const t = e.target.closest(".hf"); if (!t) return; if (t.dataset.hf) PR.hf = t.dataset.hf; if (t.dataset.hr) PR.hr = t.dataset.hr; renderPred(); });
 setInterval(() => { if (!document.hidden && !$("view-predictions").classList.contains("hidden")) loadPredictions(); }, 120_000);
 
 // ── Owner view (same admin token as the switch) ─────────────────────

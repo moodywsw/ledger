@@ -577,6 +577,43 @@ def commentary(s: dict, include_poly: bool = False) -> dict:
             "positions": [{"sleeve": k, "sym": p["sym"] if p.get("kind") == "poly" else sym, "why": p.get("why", "")} for k in ks for sym, p in s["sleeves"][k]["positions"].items()]}
 
 
+_chg = {"ts": 0.0, "m": {}}
+
+
+def chg24_map(syms_crypto: list, syms_stock: list) -> dict:
+    """24h % change for display only (cached 10 min). Binance for majors, Yahoo for stocks."""
+    if time.time() - _chg["ts"] < 600:
+        return _chg["m"]
+    m = {}
+    try:
+        import requests as _rq
+        for x in syms_crypto:
+            for host in ("https://api.binance.com", "https://data-api.binance.vision"):
+                try:
+                    r = _rq.get(f"{host}/api/v3/ticker/24hr", params={"symbol": f"{x}USDT"}, timeout=6)
+                    if r.ok:
+                        m[x] = float(r.json()["priceChangePercent"]); break
+                except Exception:
+                    continue
+        for x in syms_stock:
+            try:
+                r = _rq.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{x}", params={"range": "5d", "interval": "1d"}, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
+                meta = r.json()["chart"]["result"][0]["meta"]
+                m[x] = (meta["regularMarketPrice"] / meta["chartPreviousClose"] - 1) * 100
+            except Exception:
+                continue
+    except Exception:
+        pass
+    _chg.update(ts=time.time(), m={**_chg["m"], **m})
+    return _chg["m"]
+
+
+def perp_risk(p: dict) -> int:
+    lev = p.get("lev") or 1
+    stop_d = abs(p["entry"] - p["stop"]) / p["entry"] * 100 if p.get("stop") and p.get("entry") else 5
+    return int(max(1, min(10, round(2 + lev * 1.5 + (1 if stop_d > 4 else 0) + (1 if p.get("book") == "snipe" else 0)))))
+
+
 def public_view(include_poly: bool = False) -> dict:
     s = load(); fx = s.get("fx") or 0.86
     sleeves = {}
@@ -584,13 +621,19 @@ def public_view(include_poly: bool = False) -> dict:
         if name == "poly" and not include_poly:
             continue   # Polymarket lives on the Predictions tab
         pos = []
+        try:
+            ch = chg24_map([k for k, q in sl["positions"].items() if q["kind"] == "cex"] if name == "spot" else [],
+                           list(sl["positions"]) if name == "stocks" else [])
+        except Exception:
+            ch = {}
         for sym, p in sl["positions"].items():
             v = pos_value(p, None, fx)
             cost = p["margin"] if p["kind"] == "perp" else p["qty"] * p["entry"] * (1 if p["kind"] == "poly" else fx)
             pos.append({"sym": sym, "kind": p["kind"], "side": p.get("side", "Spot"), "lev": p.get("lev"), "entry_usd": p["entry"],
                         "last_usd": p.get("last_px"), "value_eur": round(v, 2), "pnl_pct": round((v / cost - 1) * 100, 2) if cost else None,
                         "stop_usd": p.get("stop"), "target_usd": p.get("target"), "opened": p.get("opened"), "why": p.get("why", ""),
-                        "chain": p.get("chain"), "book": p.get("book"), "mirko_p": p.get("mirko_p"), "title": p["sym"] if p["kind"] == "poly" else None, "slug": p.get("slug"), "end": p.get("end")})
+                        "chain": p.get("chain"), "book": p.get("book"), "qty": p.get("qty"), "pnl_eur": round(v - cost, 2) if cost else None,
+                        "chg24": round(ch[sym], 2) if sym in ch else None, "risk": perp_risk(p) if p["kind"] == "perp" else None, "mirko_p": p.get("mirko_p"), "title": p["sym"] if p["kind"] == "poly" else None, "slug": p.get("slug"), "end": p.get("end")})
         val = sl["cash"] + sum(x["value_eur"] for x in pos)
         sleeves[name] = {"value_eur": round(val, 2), "cash_eur": round(sl["cash"], 2), "pnl_pct": round((val / sl["start"] - 1) * 100, 2),
                          "positions": sorted(pos, key=lambda x: -x["value_eur"]), "last_decision": sl["last_decision"], "note": sl.get("note", "")}
