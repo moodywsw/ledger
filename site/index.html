@@ -145,14 +145,17 @@
 
 <main class="wrap view hidden" id="view-ta">
   <section class="card ta-card">
-    <div class="ta-top"><div><div class="label">Mirko TA · charts + read</div><h2>Drop a ticker or contract address</h2></div>
-      <form class="ta-form" id="ta-form" autocomplete="off"><input id="ta-q" maxlength="64" placeholder="SOL, PEPE, or a Solana / EVM CA…" spellcheck="false"><button class="btn" type="submit">Analyse</button></form></div>
+    <div class="ta-top"><div><div class="label">Mirko TA · any coin · chart, flows, sentiment, verdict</div><h2>Ticker, name or contract address</h2></div>
+      <form class="ta-form" id="ta-form" autocomplete="off"><input id="ta-q" maxlength="64" placeholder="SOL · dogwifhat · So111… · 0x…" spellcheck="false"><button class="btn" type="submit">Analyse</button></form></div>
     <div class="ta-picks" id="ta-picks"></div>
     <div class="ta-meta" id="ta-meta"></div>
-    <div class="ta-chart" id="ta-chart"></div><div class="ta-rsi" id="ta-rsi"></div>
-    <div class="ta-legend mono"><span class="lg e20">EMA20</span><span class="lg e50">EMA50</span><span class="lg e200">EMA200</span><span class="lg sr">S/R</span><span class="lg tl">Trendlines</span><span class="lg bu">Bull path</span><span class="lg ba">Base</span><span class="lg be">Bear path</span><a class="ta-attr" href="https://www.tradingview.com/" target="_blank" rel="noopener">Charts: TradingView Lightweight Charts™</a></div>
+    <div class="ta-tv hidden" id="ta-tv"></div>
+    <div class="ta-own"><div class="ta-own-h"><span class="hud-label">Mirko's annotated chart</span><span class="ta-legend mono"><span class="lg e20">EMA20</span><span class="lg e50">EMA50</span><span class="lg e200">EMA200</span><span class="lg sr">S/R</span><span class="lg tl">Trend</span><span class="lg poc">POC</span><span class="lg bu">Bull</span><span class="lg ba">Base</span><span class="lg be">Bear</span></span></div>
+      <div class="ta-chart" id="ta-chart"></div><div class="ta-rsi" id="ta-rsi"></div>
+      <a class="ta-attr" href="https://www.tradingview.com/" target="_blank" rel="noopener">Charts: TradingView Lightweight Charts™</a></div>
   </section>
-  <section class="card ta-read hidden" id="ta-read"></section>
+  <section class="ta-verdict hidden" id="ta-verdict"></section>
+  <section class="ta-secs hidden" id="ta-secs"></section>
 </main>
 
 <main class="wrap view hidden" id="view-ask">

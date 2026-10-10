@@ -85,7 +85,7 @@ def record_success(ip: str):
 
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; "
        "style-src-attr 'unsafe-inline'; font-src https://fonts.gstatic.com; img-src 'self' data: https://coin-images.coingecko.com https://assets.coingecko.com https://cdn.dexscreener.com https://dd.dexscreener.com; "
-       "connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; "
+       "connect-src 'self'; frame-src https://s.tradingview.com https://www.tradingview.com https://www.tradingview-widget.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; "
        "upgrade-insecure-requests")
 
 

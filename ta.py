@@ -136,11 +136,149 @@ def analyse(bars):
                        "rsi": [{"time": b["t"], "value": v} for b, v in zip(bars, r) if v is not None]}}
 
 
+# ---------- extra intel ----------
+def volume_profile(bars, bins=24):
+    lo, hi = min(b["l"] for b in bars), max(b["h"] for b in bars)
+    if hi <= lo:
+        return None
+    w = (hi - lo) / bins
+    vol = [0.0] * bins
+    for b in bars:
+        a, z = int((b["l"] - lo) / w), int((b["h"] - lo) / w)
+        a, z = max(0, min(bins - 1, a)), max(0, min(bins - 1, z))
+        share = b["v"] / (z - a + 1)
+        for i in range(a, z + 1):
+            vol[i] += share
+    poc = max(range(bins), key=lambda i: vol[i])
+    tot, inc, lo_i, hi_i = sum(vol), vol[poc], poc, poc
+    while inc < 0.7 * tot and (lo_i > 0 or hi_i < bins - 1):
+        nxt_lo = vol[lo_i - 1] if lo_i > 0 else -1
+        nxt_hi = vol[hi_i + 1] if hi_i < bins - 1 else -1
+        if nxt_hi >= nxt_lo: hi_i += 1; inc += nxt_hi
+        else: lo_i -= 1; inc += nxt_lo
+    mx = max(vol) or 1
+    return {"poc": lo + (poc + .5) * w, "vah": lo + (hi_i + 1) * w, "val": lo + lo_i * w,
+            "bins": [{"p": lo + (i + .5) * w, "v": round(vol[i] / mx, 3)} for i in range(bins)]}
+
+
+def hl_ctx(sym: str):
+    try:
+        m, c = requests.post("https://api.hyperliquid.xyz/info", json={"type": "metaAndAssetCtxs"}, timeout=12).json()
+        names = [u["name"] for u in m["universe"]]
+        if sym not in names:
+            return None
+        x = c[names.index(sym)]
+        px = float(x["markPx"])
+        return {"funding_8h_pct": float(x["funding"]) * 8 * 100, "oi_usd": float(x["openInterest"]) * px, "vol24_usd": float(x["dayNtlVlm"]),
+                "premium_pct": float(x.get("premium") or 0) * 100}
+    except Exception:
+        return None
+
+
+def hl_top(sym: str):
+    try:
+        import market_thoughts as mt
+        return (((mt.cached() or {}).get("hyperliquid") or {}).get("coins") or {}).get(sym)
+    except Exception:
+        return None
+
+
+def gt_holders(chain: str, addr: str):
+    try:
+        d = _get(f"https://api.geckoterminal.com/api/v2/networks/{GT_NET[chain]}/tokens/{addr}/info")["data"]["attributes"]
+    except Exception:
+        return None
+    h = d.get("holders") or {}
+    dist = h.get("distribution_percentage") or {}
+    out = {"count": h.get("count"), "top10_pct": float(dist["top_10"]) if dist.get("top_10") else None,
+           "top11_20_pct": float(dist["11_20"]) if dist.get("11_20") else None, "gt_score": d.get("gt_score"), "twitter": d.get("twitter_handle")}
+    try:   # holder growth vs the last time anyone asked Mirko about this token
+        from pathlib import Path
+        import json as _j
+        f = Path(os.environ.get("DATA_DIR", ".")) / "ta_holders.json"
+        hist = _j.loads(f.read_text()) if f.exists() else {}
+        prev = hist.get(addr)
+        if prev and out["count"] and prev["count"]:
+            out["growth"] = {"delta": out["count"] - prev["count"], "hours": round((time.time() - prev["ts"]) / 3600, 1)}
+        if out["count"] and (not prev or time.time() - prev["ts"] > 3600):
+            hist[addr] = {"count": out["count"], "ts": time.time()}
+            f.write_text(_j.dumps(dict(list(hist.items())[-2000:])))
+    except Exception:
+        pass
+    return out
+
+
+def whale_trades(chain: str, pool: str, min_usd: float = 5000):
+    try:
+        d = _get(f"https://api.geckoterminal.com/api/v2/networks/{GT_NET[chain]}/pools/{pool}/trades", {"trade_volume_in_usd_greater_than": min_usd})["data"]
+    except Exception:
+        return None
+    cut = time.time() - 86400
+    buys = sells = 0.0; nb = ns = 0; biggest = []
+    import datetime as _dt
+    for t in d:
+        a = t["attributes"]
+        try:
+            ts = _dt.datetime.fromisoformat(a["block_timestamp"].replace("Z", "+00:00")).timestamp()
+        except Exception:
+            continue
+        if ts < cut:
+            continue
+        v = float(a.get("volume_in_usd") or 0)
+        if a.get("kind") == "buy": buys += v; nb += 1
+        else: sells += v; ns += 1
+        biggest.append({"kind": a.get("kind"), "usd": round(v), "ago_h": round((time.time() - ts) / 3600, 1)})
+    biggest.sort(key=lambda x: -x["usd"])
+    return {"min_usd": min_usd, "buys_usd": round(buys), "sells_usd": round(sells), "n_buys": nb, "n_sells": ns, "largest": biggest[:5]}
+
+
+BULL = re.compile(r"\b(moon|bull|pump|breakout|undervalued|accumulat|long|buy(ing)?|send it|gem|ath|rally)\b", re.I)
+BEAR = re.compile(r"\b(dump|bear|rug|scam|short|sell(ing)?|dead|crash|overvalued|exit|rekt|down bad)\b", re.I)
+
+
+def social(sym: str, name: str | None):
+    import xml.etree.ElementTree as ET
+    subs = " OR ".join(f"subreddit:{x}" for x in ("CryptoCurrency", "CryptoMarkets", "solana", "SatoshiStreetBets", "altcoin", "memecoins", "ethtrader", "Bitcoin", "CryptoMoonShots"))
+    q = f'"{sym if len(sym) > 2 else (name or sym)}" ({subs})'
+    posts = []
+    SPAM = re.compile(r"referral|exchange|mexc|bydfi|zoomex|signal|airdrop|giveaway|promo|bingx|bitget|bybit|kucoin", re.I)
+    for qq in (q, f'"{sym if len(sym) > 2 else (name or sym)}" crypto'):
+        try:
+            root = ET.fromstring(requests.get("https://www.reddit.com/search.rss", params={"q": qq, "sort": "new", "t": "week"}, headers=UA, timeout=12).content)
+        except Exception:
+            continue
+        ns = {"a": "http://www.w3.org/2005/Atom"}
+        for e in root.findall("a:entry", ns)[:50]:
+            t = (e.findtext("a:title", "", ns) or "").strip()
+            link = (e.find("a:link", ns).get("href") if e.find("a:link", ns) is not None else "")
+            sub = (e.find("a:category", ns).get("label") if e.find("a:category", ns) is not None else "")
+            if "/comments/" not in link or SPAM.search(sub) or any(p["url"] == link for p in posts):
+                continue
+            tone = "bull" if BULL.search(t) and not BEAR.search(t) else "bear" if BEAR.search(t) and not BULL.search(t) else "neutral"
+            posts.append({"src": sub or "Reddit", "text": t[:160], "url": link if link.startswith("https://www.reddit.com/") else "", "tone": tone})
+        if len(posts) >= 5:
+            break
+    news = []
+    try:
+        root = ET.fromstring(requests.get("https://news.google.com/rss/search", params={"q": f"{name or sym} crypto when:7d", "hl": "en-US", "gl": "US", "ceid": "US:en"}, headers=UA, timeout=12).content)
+        for i in list(root.iter("item"))[:6]:
+            news.append({"title": i.findtext("title", "")[:160], "url": i.findtext("link", ""), "src": i.find("source").text if i.find("source") is not None else ""})
+    except Exception:
+        pass
+    nb, nr = sum(p["tone"] == "bull" for p in posts), sum(p["tone"] == "bear" for p in posts)
+    return {"mentions_7d": len(posts), "bull": nb, "bear": nr,
+            "quotes": [p for p in posts if p["tone"] != "neutral"][:4] or posts[:3], "news": news}
+
+
 TA_SYS = ("You are Mirko, a professional crypto technical analyst and trader. Use ONLY the numbers given. Concise trader language, digits, no filler. "
           "Be decisive: if there's no edge, say 'No trade' and why. Conviction 1-10 must reflect R:R and confluence.")
-TA_SCHEMA = ('{"summary": "2 sentences", "structure": "1-2 sentences", "levels": "key S/R with numbers", "indicators": "EMAs, RSI, volume read", '
+TA_SCHEMA = ('{"summary": "2 sentences, the verdict", "structure": "1-2 sentences", "levels": "key S/R with numbers", "indicators": "EMAs, RSI, volume read", '
+             '"volume_profile": "POC/value area read", "smart_money": "holders concentration, holder growth, whale flows, top-trader/HL positioning, funding/OI — whatever data exists", '
+             '"liquidity": "on-chain liquidity/LP read or exchange liquidity", "sentiment": "social + news read", '
+             '"prediction": {"up": 0-100, "sideways": 0-100, "down": 0-100, "horizon": "e.g. 3-7 days", "next_move": "one sentence"}, '
              '"action": {"type": "Long|Short|No trade", "entry": "price or zone", "tp": "targets", "sl": "stop", "rr": "R:R"}, '
-             '"scenarios": {"bull": "trigger -> target", "base": "...", "bear": "trigger -> target"}, "conviction": 1-10}')
+             '"scenarios": {"bull": "trigger -> target", "base": "...", "bear": "trigger -> target"}, "conviction": 1-10, '
+             '"thesis": "2-3 sentence thesis if warranted, else empty"}')
 
 
 def _fp(x):
@@ -176,55 +314,124 @@ def _llm_ok():
         return True
 
 
+def _cg_search(q: str):
+    try:
+        cs = _get("https://api.coingecko.com/api/v3/search", {"query": q}).get("coins") or []
+    except Exception:
+        return None
+    return cs[0] if cs else None
+
+
+def _cg_platforms(cid: str):
+    try:
+        d = _get(f"https://api.coingecko.com/api/v3/coins/{cid}", {"localization": "false", "tickers": "false", "market_data": "false", "community_data": "false", "developer_data": "false"})
+        return d.get("platforms") or {}, (d.get("image") or {}).get("small")
+    except Exception:
+        return {}, None
+
+
+CG_CHAIN = {"solana": "solana", "ethereum": "ethereum", "base": "base", "binance-smart-chain": "bsc", "arbitrum-one": "arbitrum"}
+
+
 def run(q: str) -> dict:
     q = q.strip()[:64]
-    if not q or not re.match(r"^[A-Za-z0-9.$_-]+$", q):
-        return {"error": "Enter a ticker (e.g. SOL) or a contract address."}
-    q = q.lstrip("$")
-    key = q if (SOL_RX.match(q) or EVM_RX.match(q)) else q.upper()
+    if not q or not re.match(r"^[A-Za-z0-9.$_ -]+$", q):
+        return {"error": "Enter a ticker (SOL), a name (dogwifhat) or a contract address."}
+    q = q.lstrip("$").strip()
+    is_ca = bool(SOL_RX.match(q) or EVM_RX.match(q))
+    key = q if is_ca else q.upper()
     with _lock:
         hit = _cache.get(key)
         if hit and time.time() - hit["ts"] < TTL:
             return hit
-    meta, bars, tf = {}, None, "4h"
-    if not (SOL_RX.match(q) or EVM_RX.match(q)) and len(q) <= 12:
-        bars = _binance(q.upper())
-        if bars:
-            meta = {"name": q.upper(), "symbol": q.upper(), "source": "Binance spot", "chain": "CEX"}
-    if not bars:
-        p = _dex_pair(q)
-        if not p:
-            return {"error": "Couldn't find that token on Binance or any DEX."}
-        ch = p["chainId"]
-        bars = _gt(ch, p["pairAddress"], "hour", 1 if (time.time() - (p.get("pairCreatedAt") or 0) / 1000) < 86400 * 10 else 4, 300)
-        tf = "1h" if (time.time() - (p.get("pairCreatedAt") or 0) / 1000) < 86400 * 10 else "4h"
-        bt = p.get("baseToken") or {}
-        meta = {"name": bt.get("name"), "symbol": bt.get("symbol"), "address": bt.get("address"), "chain": ch, "source": f"{p.get('dexId')} via GeckoTerminal",
-                "logo": (p.get("info") or {}).get("imageUrl"), "mcap": p.get("marketCap") or p.get("fdv"), "liq": (p.get("liquidity") or {}).get("usd"),
-                "url": p.get("url")}
+    meta, bars, tf, pair = {}, None, "4h", None
+    sym = None if is_ca else q.upper().replace(" ", "")
+    if sym and len(sym) <= 12:
+        bars = _binance(sym)
+    if not bars and not is_ca:   # name search -> CoinGecko -> Binance symbol or on-chain contract
+        c = _cg_search(q)
+        if c:
+            sym = c["symbol"].upper()
+            meta["logo"] = c.get("large") or c.get("thumb")
+            bars = _binance(sym)
+            if not bars:
+                plats, logo = _cg_platforms(c["id"])
+                meta["logo"] = logo or meta.get("logo")
+                for k, v in plats.items():
+                    if k in CG_CHAIN and v:
+                        q, is_ca = v, True
+                        break
+    if bars:
+        meta.update({"name": meta.get("name") or sym, "symbol": sym, "source": "Binance spot", "chain": "CEX", "tv": f"BINANCE:{sym}USDT"})
+        if sym not in ("BTC", "ETH", "SOL", "BNB", "XRP", "USDC", "USDT"):
+            try:   # canonical on-chain contract via CoinGecko (e.g. WIF on Solana) for holders / whale flows
+                c = _cg_search(sym)
+                plats = _cg_platforms(c["id"])[0] if c and c.get("symbol", "").upper() == sym else {}
+                ca = next((v for k, v in plats.items() if k in CG_CHAIN and v), None)
+                pp = _dex_pair(ca) if ca else None
+                if pp and ((pp.get("liquidity") or {}).get("usd") or 0) > 2e5:
+                    pair = pp
+                    meta.update({"address": pp["baseToken"]["address"], "onchain": pp["chainId"], "liq": (pp.get("liquidity") or {}).get("usd")})
+            except Exception:
+                pass
+    else:
+        try:
+            pair = _dex_pair(q)
+        except Exception:
+            pair = None
+        if not pair:
+            return {"error": "Couldn't find that token on Binance, CoinGecko or any DEX."}
+        ch = pair["chainId"]
+        young = (time.time() - (pair.get("pairCreatedAt") or 0) / 1000) < 86400 * 10
+        bars = _gt(ch, pair["pairAddress"], "hour", 1 if young else 4, 300)
+        tf = "1h" if young else "4h"
+        bt = pair.get("baseToken") or {}
+        sym = (bt.get("symbol") or "?").upper()
+        meta.update({"name": bt.get("name"), "symbol": sym, "address": bt.get("address"), "chain": ch, "source": f"{pair.get('dexId')} via GeckoTerminal",
+                     "logo": (pair.get("info") or {}).get("imageUrl") or meta.get("logo"), "mcap": pair.get("marketCap") or pair.get("fdv"),
+                     "liq": (pair.get("liquidity") or {}).get("usd"), "url": pair.get("url"), "pair_age_d": round((time.time() - (pair.get("pairCreatedAt") or 0) / 1000) / 86400, 1),
+                     "txns24": (pair.get("txns") or {}).get("h24"), "vol24": (pair.get("volume") or {}).get("h24"), "chg24": (pair.get("priceChange") or {}).get("h24")})
     if not bars or len(bars) < 30:
         return {"error": "Not enough price history yet for TA."}
     a = analyse(bars)
-    facts = (f"Token {meta.get('symbol')} ({meta.get('chain')}), timeframe {tf}, {len(bars)} bars. Price {_fp(a['price'])}, change over ~7d {a['chg']:+.1f}%. "
+    vp = volume_profile(bars[-200:])
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(5) as ex:
+        f_soc = ex.submit(social, sym, meta.get("name"))
+        f_hl = ex.submit(hl_ctx, sym) if meta["chain"] == "CEX" else None
+        och = meta.get("onchain") or meta["chain"]
+        f_hold = ex.submit(gt_holders, och, meta["address"]) if meta.get("address") and och in GT_NET else None
+        f_wh = ex.submit(whale_trades, och, pair["pairAddress"], 5000 if (meta.get("liq") or 0) > 2e5 else 1000) if pair and och in GT_NET else None
+        intel = {"social": f_soc.result(), "hl": f_hl.result() if f_hl else None, "hl_top": hl_top(sym) if meta["chain"] == "CEX" else None,
+                 "holders": f_hold.result() if f_hold else None, "whales": f_wh.result() if f_wh else None, "vp": vp}
+    so, ho, wh, hl, ht = intel["social"], intel["holders"], intel["whales"], intel["hl"], intel["hl_top"]
+    facts = (f"Token {sym} ({meta.get('name')}, {meta.get('chain')}), timeframe {tf}, {len(bars)} bars. Price {_fp(a['price'])}, change over the window {a['chg']:+.1f}%. "
              f"Structure: {a['structure']}. EMA20 {_fp(a['ema20'])} EMA50 {_fp(a['ema50'])} EMA200 {_fp(a['ema200'])}. RSI14 {a['rsi'] and round(a['rsi'], 1)}. "
              f"Volume last 20 bars vs prior 20: {a['vol_trend']:.2f}x. Supports {list(map(_fp, a['support']))}. Resistances {list(map(_fp, a['resistance']))}. "
-             f"Upper trendline slope {a['tl_high'] and round(a['tl_high']['slope_pct_bar'], 3)}%/bar, lower {a['tl_low'] and round(a['tl_low']['slope_pct_bar'], 3)}%/bar. "
-             + (f"Mcap ${meta['mcap']:,.0f}, liquidity ${meta['liq']:,.0f}." if meta.get("mcap") and meta.get("liq") else ""))
+             f"Trendline slopes upper {a['tl_high'] and round(a['tl_high']['slope_pct_bar'], 3)}%/bar, lower {a['tl_low'] and round(a['tl_low']['slope_pct_bar'], 3)}%/bar. "
+             + (f"Volume profile: POC {_fp(vp['poc'])}, value area {_fp(vp['val'])}-{_fp(vp['vah'])}. " if vp else "")
+             + (f"Mcap ${meta['mcap']:,.0f}, DEX liquidity ${meta['liq']:,.0f}, pair age {meta.get('pair_age_d')}d, 24h txns {meta.get('txns24')}, 24h vol ${meta.get('vol24') or 0:,.0f}. " if meta.get("mcap") and meta.get("liq") else "")
+             + (f"Holders {ho['count']}, top10 hold {ho['top10_pct']}%" + (f", holder change {ho['growth']['delta']:+} in {ho['growth']['hours']}h" if ho.get("growth") else "") + ". " if ho and ho.get("count") else "")
+             + (f"Whale trades >${wh['min_usd']} last 24h: buys ${wh['buys_usd']:,} ({wh['n_buys']}) vs sells ${wh['sells_usd']:,} ({wh['n_sells']}). " if wh else "")
+             + (f"Hyperliquid perp: funding {hl['funding_8h_pct']:.4f}%/8h, OI ${hl['oi_usd']/1e6:.1f}m, 24h vol ${hl['vol24_usd']/1e6:.0f}m. " if hl else "")
+             + (f"Hyperliquid top traders: {ht['longs']} long / {ht['shorts']} short. " if ht else "")
+             + f"Reddit mentions 7d: {so['mentions_7d']} ({so['bull']} bullish / {so['bear']} bearish titles). "
+             + ("News: " + " | ".join(n["title"] for n in so["news"][:5]) if so["news"] else "No recent news."))
     read, via = None, "rules"
     if _llm_ok():
         try:
             import llm
-            read, via = llm.reason_json(TA_SYS, facts + "\nWrite the TA read as JSON: " + TA_SCHEMA, 1500)
+            read, via = llm.reason_json(TA_SYS, facts + "\nWrite the full read as JSON: " + TA_SCHEMA, 2500)
         except Exception as e:
             print(f"[TA] llm {type(e).__name__}")
     if not read or not read.get("action"):
-        read, via = _rule_read(a, meta.get("symbol") or q), "rules"
+        read, via = _rule_read(a, sym), "rules"
     try:
         read["conviction"] = max(1, min(10, int(read.get("conviction") or 5)))
     except (TypeError, ValueError):
         read["conviction"] = 5
     out = {"ts": time.time(), "q": key, "meta": meta, "tf": tf, "bars": [{"time": b["t"], "open": b["o"], "high": b["h"], "low": b["l"], "close": b["c"], "value": b["v"]} for b in bars],
-           "ta": {k: v for k, v in a.items() if k != "series"}, "series": a["series"], "read": read, "via": via}
+           "ta": {k: v for k, v in a.items() if k != "series"}, "series": a["series"], "read": read, "via": via, "intel": intel}
     with _lock:
         _cache[key] = out
         if len(_cache) > 300:
