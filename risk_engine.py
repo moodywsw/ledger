@@ -67,15 +67,15 @@ class RiskConfig:
     # sizing_mode "risk": fixed-fractional (risk_per_trade_pct / stop).
     # sizing_mode "edge": % of equity chosen from the copied wallet's measured
     # edge (see wallet_edge / edge_position_pct) — top wallets get the most.
-    sizing_mode: str = "risk"
+    sizing_mode: str = "edge"
     risk_per_trade_pct: float = 0.01        # equity lost if the stop is hit (after gap buffer): 1%
-    max_position_pct: float = 0.05          # hard per-position cap: 5% of equity
+    max_position_pct: float = 0.10          # hard per-position cap: 10% of equity (= HARD_RAIL max)
     stop_gap_buffer: float = 1.5            # assume stops slip 50% further than planned when sizing
     min_position_sol: float = 0.01          # below this, fees dominate — skip instead
     # ── Portfolio limits ─────────────────────────────────────────────
     max_concurrent_positions: int = 4
-    max_total_exposure_pct: float = 0.20    # ≤20% of equity in open positions at once
-    daily_loss_limit_pct: float = 0.05      # stop opening trades after -5% on the UTC day
+    max_total_exposure_pct: float = 0.40    # ≤40% of equity in open positions at once
+    daily_loss_limit_pct: float = 0.10      # stop opening trades after -10% on the UTC day
     max_consecutive_losses: int = 3         # then cool down...
     loss_cooldown_minutes: float = 60.0     # ...for this long
     token_reentry_cooldown_minutes: float = 240.0  # don't re-buy a token we just exited
@@ -109,11 +109,11 @@ class RiskConfig:
     wallet_min_expectancy_pct: float = 0.0   # avg pnl per closed copy must stay ≥ this
     wallet_lookback_days: float = 30.0
     # ── Edge-based sizing (sizing_mode="edge") ───────────────────────
-    edge_unknown_pct: float = 0.01           # wallet with < wallet_min_trades outcomes: start small
-    edge_weak_pct: float = 0.01              # measured edge between bench and 0
-    edge_base_pct: float = 0.02              # edge just above 0
-    edge_max_pct: float = 0.04               # edge at edge_target_r
-    edge_top_pct: float = 0.05               # edge ≥ 2x target with a solid sample
+    edge_unknown_pct: float = 0.05           # wallet with < wallet_min_trades outcomes: start small
+    edge_weak_pct: float = 0.05              # measured edge between bench and 0
+    edge_base_pct: float = 0.07              # edge just above 0
+    edge_max_pct: float = 0.09               # edge at edge_target_r
+    edge_top_pct: float = 0.10               # edge ≥ 2x target with a solid sample
     edge_target_r: float = 0.5               # shrunk avg R that earns edge_max_pct
     edge_bench_r: float = -0.25              # shrunk avg R below this (with enough trades) = stop copying
     edge_prior_trades: float = 5.0           # Bayesian shrinkage: pseudo-trades of zero edge

@@ -619,6 +619,9 @@ def execute_real_trade(token: str, amount_usdc: float, side: str, max_price_impa
 
 
 def _execute_buy(token: str, amount_usdc: float) -> dict:
+    import bot_switch
+    if not bot_switch.is_enabled():
+        return _result("blocked", reason="bot switched OFF (kill switch) — no new buys")
     positions = _load_real_positions()
     existing = positions.get(token, {"raw_amount": 0, "cost_basis_usdc": 0.0, "buy_signatures": [], "sell_signatures": []})
 

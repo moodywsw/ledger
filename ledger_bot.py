@@ -52,6 +52,7 @@ Install:
   pip install requests websockets base58 --break-system-packages
 """
 
+import bot_switch
 import os
 import json
 import time
@@ -333,7 +334,7 @@ def load_wallets():
 
     data = json.loads(WALLETS_CONFIG_FILE.read_text())
     # "active": false suspends a wallet (kept in file, not watched/copied).
-    entries = [e for e in data.get("wallets", []) if e.get("active", True)]
+    entries = [e for e in data.get("wallets", []) if e.get("active", True) and e.get("address")]
     watched = [e["address"] for e in entries]
     handles = {e["address"]: e["handle"] for e in entries}
     priority = {e["address"] for e in entries if e.get("priority")}
@@ -2151,6 +2152,10 @@ def risk_gate_entry(state: LedgerState, token: str, symbol: str, source: str, wa
     could push a single memecoin to 30-40% of the wallet).
     """
     result = {"ok": False, "reason": "", "size": 0.0, "info": None, "size_note": ""}
+
+    if not bot_switch.is_enabled():
+        result["reason"] = "bot switched OFF (kill switch) — no new entries"
+        return result
 
     wallet_stat = None
     if wallet:
@@ -4831,6 +4836,8 @@ def main():
 
     state = LedgerState.load()
     print(f"Ledger booting up. Paper balance: {state.balance_sol} SOL")
+    print(f"[SWITCH] bot is {'ON' if bot_switch.is_enabled() else 'OFF'} (new entries) — admin token source: "
+          f"{'LEDGER_ADMIN_TOKEN env' if os.environ.get('LEDGER_ADMIN_TOKEN') else 'auto-generated'}; token={bot_switch.admin_token() if not os.environ.get('LEDGER_ADMIN_TOKEN') else '(env)'}")
     print(f"[RISK] profile={RISK.profile} sizing={RISK.sizing_mode} rails_applied={RISK.rails_applied or 'none'}")
     print(f"[RISK] exit engine={EXIT_ENGINE} paper={PAPER_TRADING_ENABLED} real_armed={REAL_TRADING_ENABLED} "
           f"position_check={POSITION_CHECK_SECONDS}s config={json.dumps(RISK.as_dict())}")

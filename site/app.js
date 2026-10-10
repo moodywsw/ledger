@@ -245,3 +245,45 @@ async function pollOnce() {
 
 pollOnce();
 setInterval(pollOnce, POLL_INTERVAL_MS);
+
+// ── ON/OFF kill switch ──────────────────────────────────────────────
+// Toggling needs the admin token (LEDGER_ADMIN_TOKEN, or the one printed
+// in the Railway boot log as "[SWITCH] ... token=..."). Asked once and
+// kept in this browser's localStorage.
+let switchEnabled = null;
+function renderSwitch(st) {
+  switchEnabled = !!st.enabled;
+  const s = document.getElementById("switch-state");
+  s.textContent = switchEnabled ? "ON" : "OFF";
+  s.className = `switch-state ${switchEnabled ? "on" : "off"}`;
+  const b = document.getElementById("switch-btn");
+  b.disabled = false;
+  b.textContent = switchEnabled ? "TURN OFF" : "TURN ON";
+  b.className = `switch-btn ${switchEnabled ? "turn-off" : "turn-on"}`;
+}
+async function pollSwitch() {
+  try { renderSwitch(await fetchJson("/api/bot_switch")); } catch (e) { console.error(e); }
+}
+document.getElementById("switch-btn").addEventListener("click", async () => {
+  let token = localStorage.getItem("ledgerAdminToken");
+  if (!token) {
+    token = prompt("Admin token (from Railway boot log line [SWITCH] ... token=...):");
+    if (!token) return;
+  }
+  const target = !switchEnabled;
+  if (!confirm(target ? "Turn the bot ON (allow new buys)?" : "Turn the bot OFF (no new buys)?")) return;
+  const b = document.getElementById("switch-btn");
+  b.disabled = true;
+  try {
+    const r = await fetch(`${API_BASE_URL}/api/bot_switch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token.trim()}` },
+      body: JSON.stringify({ enabled: target }),
+    });
+    if (r.status === 401) { localStorage.removeItem("ledgerAdminToken"); alert("Wrong admin token."); }
+    else if (!r.ok) alert(`Failed: HTTP ${r.status}`);
+    else { localStorage.setItem("ledgerAdminToken", token.trim()); renderSwitch(await r.json()); }
+  } finally { b.disabled = false; pollSwitch(); }
+});
+pollSwitch();
+setInterval(pollSwitch, POLL_INTERVAL_MS);
