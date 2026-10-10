@@ -431,7 +431,7 @@ def trade_ideas(assets, hl):
     return out
 
 
-SCHEMA = 11
+SCHEMA = 12
 BOOM_DEFAULT = {"theme": "AI infrastructure", "emoji": "🤖", "thesis": "Compute, power and data centres keep absorbing capital; the picks-and-shovels trade is the patient one.",
                 "boom_window": "Nov 2026 – Dec 2027", "why_now": ["Hyperscaler capex guidance keeps rising", "Power and cooling are the new bottleneck"],
                 "crypto": ["TAO", "RENDER", "FET"], "stocks": ["NVDA", "AVGO", "VRT", "CEG"], "invalidation": "Capex cuts from two or more hyperscalers."}
@@ -662,7 +662,9 @@ def smart_money_rules(reads, dex, lows=None) -> dict:
         import eyes
         e = eyes.cached(12 * 3600) or {}
         for k in ("etf_btc", "etf_eth", "etf_sol"):
-            x = e.get(k)
+            x = e.get(k) or eyes.etf_flows(k[4:])
+            if not x:
+                log(f"smart money: no {k} data")
             if x and abs(x.get("sum5") or 0) >= 10:
                 add(x["asset"], 1 if x["sum5"] > 0 else -1, f"spot ETFs {'+' if x['sum5'] > 0 else '-'}${abs(x['sum5']):.0f}m net over 5 days")
     except Exception:
@@ -990,7 +992,7 @@ def frontrun(max_age_h: float = 6) -> list:
     Tokens: DexScreener search per keyword; the OG (first-launched) token of a narrative ranks first, then volume and holders."""
     try:
         c = json.loads(_fr_path().read_text())
-        if time.time() - c["ts"] < max_age_h * 3600:
+        if c.get("items") and time.time() - c["ts"] < max_age_h * 3600:
             return c["items"]
     except Exception:
         pass
